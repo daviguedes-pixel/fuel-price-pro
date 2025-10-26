@@ -8,7 +8,6 @@ import { Search, MapPin, Building2, X, CheckCircle2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 interface SisEmpresa {
-  id_empresa?: number | string;
   nome_empresa: string;
   cnpj_cpf: string;
   bandeira?: string;
@@ -112,13 +111,10 @@ export const SisEmpresaCombobox = ({
   }, [searchTerm, empresas]);
 
   const handleSelect = (empresa: SisEmpresa) => {
-    // Usar id_empresa para compatibilidade com ID_POSTO na tabela tipos_pagamento
-    // Converter para string para garantir tipo correto
-    const empresaId = empresa.id_empresa ? String(empresa.id_empresa) : (empresa.cnpj_cpf || empresa.nome_empresa);
+    const empresaId = empresa.cnpj_cpf || empresa.nome_empresa;
     
     console.log('🔄 SisEmpresaCombobox - Selecionou empresa:', {
       nome: empresa.nome_empresa,
-      id_empresa: empresa.id_empresa,
       cnpj_cpf: empresa.cnpj_cpf,
       empresaId_selecionado: empresaId
     });
