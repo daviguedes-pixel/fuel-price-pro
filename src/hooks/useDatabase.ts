@@ -95,27 +95,53 @@ export const useDatabase = () => {
     try {
       console.log('🏪 Carregando postos via RPC get_sis_empresa_stations...');
       
-      // Usar RPC que retorna id_empresa
-      const { data, error } = await supabase
-        .rpc('get_sis_empresa_stations');
+      // Tentar RPC primeiro
+      let data: any[] = [];
+      let error: any = null;
+      
+      try {
+        const result = await supabase.rpc('get_sis_empresa_stations');
+        data = result.data || [];
+        error = result.error;
+      } catch (rpcError) {
+        console.warn('⚠️ RPC falhou, usando consulta direta:', rpcError);
+        error = rpcError;
+      }
 
-      if (error) {
-        console.error('❌ Erro ao carregar sis_empresa:', error);
-        throw error;
+      // Fallback: consulta direta se RPC falhar
+      if (error || !data || data.length === 0) {
+        console.log('🔄 Fallback: consultando sis_empresa diretamente...');
+        const { data: directData, error: directError } = await supabase
+          .from('sis_empresa')
+          .select('nome_empresa, cnpj_cpf, latitude, longitude, bandeira, rede, registro_ativo')
+          .order('nome_empresa');
+        
+        if (!directError && directData) {
+          data = directData.map((station: any) => ({
+            nome_empresa: station.nome_empresa,
+            cnpj_cpf: station.cnpj_cpf,
+            id_empresa: null, // Não disponível na consulta direta
+            latitude: station.latitude,
+            longitude: station.longitude,
+            bandeira: station.bandeira,
+            rede: station.rede,
+            registro_ativo: station.registro_ativo
+          }));
+        }
       }
 
       console.log('✅ Postos brutos carregados:', data?.length || 0);
 
       const stationsWithActive = (data as any)
         ?.map((station: any) => ({ 
-          id: String(station.id_empresa || station.cnpj_cpf) || `${station.nome_empresa}-${Math.random()}`,
-          name: station.nome_empresa,
-          code: station.cnpj_cpf,
+          id: String(station.id_empresa || station.cnpj_cpf || '') || `${station.nome_empresa}-${Math.random()}`,
+          name: station.nome_empresa || '',
+          code: station.cnpj_cpf || '',
           id_empresa: station.id_empresa,
           latitude: station.latitude,
           longitude: station.longitude,
-          bandeira: station.bandeira,
-          rede: station.rede,
+          bandeira: station.bandeira || '',
+          rede: station.rede || '',
           active: true 
         })) || [];
 
