@@ -6,6 +6,7 @@ interface Station {
   id: string;
   name: string;
   code: string;
+  id_empresa?: string | number;
   address?: string;
   latitude?: number;
   longitude?: number;
@@ -92,13 +93,11 @@ export const useDatabase = () => {
 
   const loadStations = async () => {
     try {
-      console.log('🏪 Carregando postos diretamente da tabela sis_empresa...');
+      console.log('🏪 Carregando postos via RPC get_sis_empresa_stations...');
       
-      // Usar consulta direta ao invés de RPC
+      // Usar RPC que retorna id_empresa
       const { data, error } = await supabase
-        .from('sis_empresa')
-        .select('nome_empresa, cnpj_cpf, latitude, longitude, bandeira, rede, registro_ativo')
-        .order('nome_empresa');
+        .rpc('get_sis_empresa_stations');
 
       if (error) {
         console.error('❌ Erro ao carregar sis_empresa:', error);
@@ -109,9 +108,10 @@ export const useDatabase = () => {
 
       const stationsWithActive = (data as any)
         ?.map((station: any) => ({ 
-          id: station.cnpj_cpf || `${station.nome_empresa}-${Math.random()}`,
+          id: String(station.id_empresa || station.cnpj_cpf) || `${station.nome_empresa}-${Math.random()}`,
           name: station.nome_empresa,
           code: station.cnpj_cpf,
+          id_empresa: station.id_empresa,
           latitude: station.latitude,
           longitude: station.longitude,
           bandeira: station.bandeira,
