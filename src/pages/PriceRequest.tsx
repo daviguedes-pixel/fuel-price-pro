@@ -9,6 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SisEmpresaCombobox } from "@/components/SisEmpresaCombobox";
 import { ClientCombobox } from "@/components/ClientCombobox";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
+import { FileUploader } from "@/components/FileUploader";
 import { parseBrazilianDecimal, formatBrazilianCurrency } from "@/lib/utils";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
@@ -44,6 +45,7 @@ export default function PriceRequest() {
   const [references, setReferences] = useState<Reference[]>([]);
   const [savedSuggestion, setSavedSuggestion] = useState<any>(null);
   const [stationPaymentMethods, setStationPaymentMethods] = useState<any[]>([]);
+  const [attachments, setAttachments] = useState<string[]>([]);
 
   const initialFormData = {
     station_id: "",
@@ -823,7 +825,7 @@ export default function PriceRequest() {
         reference_id: formData.reference_id === "none" ? null : formData.reference_id,
         payment_method_id: formData.payment_method_id === "none" ? null : formData.payment_method_id,
         observations: formData.observations || null,
-        attachments: formData.attachments,
+        attachments: attachments,
         requested_by: user?.id || null,
         margin_cents: margin, // Margem em centavos
         cost_price: costPriceCents,
@@ -1294,35 +1296,12 @@ export default function PriceRequest() {
                     Documento de Referência (Opcional)
                   </Label>
                   <div className="p-4 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg">
-                    <div className="text-center">
-                      <svg className="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
-                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                      <div className="mt-4">
-                        <label htmlFor="reference_document" className="cursor-pointer">
-                          <span className="mt-2 block text-sm font-medium text-gray-900 dark:text-gray-100">
-                            Clique para anexar documento
-                          </span>
-                          <span className="mt-1 block text-sm text-gray-500 dark:text-gray-400">
-                            PNG, JPG, PDF até 10MB
-                          </span>
-                        </label>
-                        <input
-                          id="reference_document"
-                          name="reference_document"
-                          type="file"
-                          className="sr-only"
-                          accept="image/*,.pdf"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              // Aqui você pode implementar o upload do arquivo
-                              console.log('Arquivo selecionado:', file);
-                            }
-                          }}
-                        />
-                      </div>
-                    </div>
+                    <FileUploader 
+                      onFilesUploaded={setAttachments}
+                      maxFiles={5}
+                      acceptedTypes="image/*,.pdf"
+                      currentFiles={attachments}
+                    />
                   </div>
                 </div>
 
