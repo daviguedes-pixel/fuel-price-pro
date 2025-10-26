@@ -1,0 +1,175 @@
+{
+  "name": "fuel-price-pro-security",
+  "version": "1.0.0",
+  "description": "Sistema de Segurança Avançado para Fuel Price Pro",
+  "scripts": {
+    "deploy-security": "powershell -ExecutionPolicy Bypass -File deploy-security.ps1",
+    "deploy-security-skip-tests": "powershell -ExecutionPolicy Bypass -File deploy-security.ps1 -SkipTests",
+    "test-security": "powershell -ExecutionPolicy Bypass -File deploy-security.ps1 -SkipTests",
+    "check-security": "supabase db query \"SELECT COUNT(*) as audit_logs FROM security_audit_log WHERE created_at > NOW() - INTERVAL '24 hours';\"",
+    "cleanup-logs": "supabase db query \"SELECT cleanup_old_logs();\"",
+    "security-report": "supabase db query \"SELECT 'Security Report' as report, COUNT(*) as total_users FROM user_profiles;\"",
+    "list-functions": "supabase functions list",
+    "logs-auth": "supabase functions logs auth-api",
+    "logs-pricing": "supabase functions logs pricing-api",
+    "logs-research": "supabase functions logs research-api",
+    "logs-admin": "supabase functions logs admin-api"
+  },
+  "keywords": [
+    "security",
+    "jwt",
+    "rate-limiting",
+    "audit",
+    "fuel-price",
+    "supabase"
+  ],
+  "author": "Fuel Price Pro Team",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.2"
+  },
+  "devDependencies": {
+    "supabase": "^1.0.0"
+  },
+  "security": {
+    "rateLimits": {
+      "auth-api": {
+        "maxRequests": 50,
+        "windowMinutes": 15
+      },
+      "pricing-api": {
+        "maxRequests": 100,
+        "windowMinutes": 15
+      },
+      "research-api": {
+        "maxRequests": 200,
+        "windowMinutes": 15
+      },
+      "admin-api": {
+        "maxRequests": 50,
+        "windowMinutes": 15
+      }
+    },
+    "jwt": {
+      "algorithm": "HS256",
+      "expirationHours": 24,
+      "issuer": "fuel-price-pro",
+      "audience": "fuel-price-pro-users"
+    },
+    "validation": {
+      "email": {
+        "regex": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+      },
+      "phone": {
+        "minDigits": 10,
+        "maxDigits": 11
+      },
+      "price": {
+        "minValue": 0,
+        "maxValue": 999999.99
+      },
+      "cnpj": {
+        "length": 14,
+        "validateChecksum": true
+      }
+    },
+    "headers": {
+      "security": [
+        "X-Content-Type-Options: nosniff",
+        "X-Frame-Options: DENY",
+        "X-XSS-Protection: 1; mode=block",
+        "Strict-Transport-Security: max-age=31536000; includeSubDomains",
+        "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
+      ],
+      "cors": {
+        "origin": "*",
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "headers": ["authorization", "x-client-info", "apikey", "content-type", "x-requested-with"],
+        "maxAge": 86400
+      }
+    },
+    "audit": {
+      "retentionDays": 90,
+      "cleanupInterval": "daily",
+      "severityLevels": ["low", "medium", "high", "critical"]
+    },
+    "monitoring": {
+      "checkIntervalMinutes": 5,
+      "alertThresholds": {
+        "failedLogins": 5,
+        "rateLimitExceeded": 10,
+        "securityEvents": 1
+      }
+    }
+  },
+  "endpoints": {
+    "auth": {
+      "baseUrl": "/functions/v1/auth-api",
+      "routes": {
+        "profile": "GET /api/auth/profile",
+        "refresh": "POST /api/auth/refresh",
+        "logout": "POST /api/auth/logout",
+        "permissions": "GET /api/auth/permissions"
+      }
+    },
+    "pricing": {
+      "baseUrl": "/functions/v1/pricing-api",
+      "routes": {
+        "suggestions": "GET|POST /api/pricing/suggestions",
+        "approve": "POST /api/pricing/approve",
+        "history": "GET /api/pricing/history",
+        "cost": "GET /api/pricing/cost"
+      }
+    },
+    "research": {
+      "baseUrl": "/functions/v1/research-api",
+      "routes": {
+        "competitors": "GET /api/research/competitors",
+        "submit": "POST /api/research/submit",
+        "history": "GET /api/research/history",
+        "stations": "GET /api/research/stations"
+      }
+    },
+    "admin": {
+      "baseUrl": "/functions/v1/admin-api",
+      "routes": {
+        "users": "GET|PUT /api/admin/users",
+        "audit-logs": "GET /api/admin/audit-logs",
+        "security-events": "GET /api/admin/security-events",
+        "system-stats": "GET /api/admin/system-stats",
+        "backup": "POST /api/admin/backup"
+      }
+    }
+  },
+  "tables": {
+    "security": [
+      "security_audit_log",
+      "security_events",
+      "rate_limit_log",
+      "active_sessions"
+    ],
+    "business": [
+      "user_profiles",
+      "price_suggestions",
+      "competitor_research",
+      "clients",
+      "stations",
+      "payment_methods"
+    ]
+  },
+  "functions": {
+    "validation": [
+      "validate_email",
+      "validate_phone",
+      "validate_price",
+      "validate_cnpj"
+    ],
+    "security": [
+      "check_rate_limit",
+      "generate_custom_jwt",
+      "verify_custom_jwt",
+      "log_security_changes",
+      "cleanup_old_logs"
+    ]
+  }
+}

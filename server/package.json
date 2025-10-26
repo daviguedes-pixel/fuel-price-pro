@@ -1,0 +1,37 @@
+{
+  "name": "fuel-price-api",
+  "version": "1.0.0",
+  "description": "Backend API for Fuel Price Pro",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3",
+    "@supabase/supabase-js": "^2.57.2",
+    "helmet": "^8.0.0",
+    "express-rate-limit": "^7.5.0",
+    "cookie-parser": "^1.4.6",
+    "express-validator": "^7.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/cors": "^2.8.17",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.16.5",
+    "@types/cookie-parser": "^1.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "@typescript-eslint/parser": "^8.38.0",
+    "@typescript-eslint/eslint-plugin": "^8.38.0"
+  }
+}

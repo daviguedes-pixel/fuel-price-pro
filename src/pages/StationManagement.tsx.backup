@@ -1,0 +1,774 @@
+import React, { useState, useEffect } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { 
+  Building2, 
+  Plus, 
+  Edit, 
+  Trash2, 
+  Search, 
+  Filter,
+  MapPin,
+  Phone,
+  Mail,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Fuel,
+  Users,
+  Map
+} from 'lucide-react'
+import { supabase } from '@/integrations/supabase/client'
+import { toast } from 'sonner'
+
+interface Posto {
+  id: string
+  nome: string
+  tipo: 'proprio' | 'concorrente'
+  endereco?: string
+  cidade?: string
+  estado?: string
+  cep?: string
+  telefone?: string
+  email?: string
+  bandeira?: string
+  rede?: string
+  latitude?: number
+  longitude?: number
+  ativo: boolean
+  created_at: string
+  updated_at: string
+}
+
+export default function StationManagement() {
+  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [postos, setPostos] = useState<Posto[]>([])
+  const [searchTerm, setSearchTerm] = useState('')
+  const [filterActive, setFilterActive] = useState<'all' | 'active' | 'inactive'>('all')
+  const [filterTipo, setFilterTipo] = useState<'all' | 'proprio' | 'concorrente'>('all')
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [editingPosto, setEditingPosto] = useState<Posto | null>(null)
+  const [activeTab, setActiveTab] = useState('proprios')
+  
+  // Estados do formulário
+  const [formData, setFormData] = useState({
+    nome: '',
+    tipo: 'proprio' as 'proprio' | 'concorrente',
+    endereco: '',
+    cidade: '',
+    estado: '',
+    cep: '',
+    telefone: '',
+    email: '',
+    bandeira: '',
+    rede: '',
+    latitude: '',
+    longitude: '',
+    ativo: true
+  })
+
+  // Carregar postos
+  const loadPostos = async () => {
+    try {
+      setLoading(true)
+      
+      // Carregar postos próprios (sis_empresa)
+      const { data: sisEmpresaData, error: sisEmpresaError } = await supabase
+        .from('sis_empresa')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      // Carregar concorrentes
+      const { data: concorrentesData, error: concorrentesError } = await supabase
+        .from('concorrentes')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (sisEmpresaError || concorrentesError) {
+        console.error('Erro ao carregar postos:', sisEmpresaError || concorrentesError)
+        toast.error('Erro ao carregar postos')
+        return
+      }
+
+      // Combinar dados
+      const postosProprios = (sisEmpresaData || []).map(posto => ({
+        ...posto,
+        tipo: 'proprio' as const
+      }))
+
+      const postosConcorrentes = (concorrentesData || []).map(posto => ({
+        ...posto,
+        tipo: 'concorrente' as const
+      }))
+
+      setPostos([...postosProprios, ...postosConcorrentes])
+    } catch (error) {
+      console.error('Erro ao carregar postos:', error)
+      toast.error('Erro ao carregar postos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadPostos()
+  }, [])
+
+  // Filtrar postos
+  const filteredPostos = postos.filter(posto => {
+    const matchesSearch = posto.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         posto.cidade?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         posto.bandeira?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         posto.rede?.toLowerCase().includes(searchTerm.toLowerCase())
+    
+    const matchesFilter = filterActive === 'all' || 
+                         (filterActive === 'active' && posto.ativo) ||
+                         (filterActive === 'inactive' && !posto.ativo)
+    
+    const matchesTipo = filterTipo === 'all' || posto.tipo === filterTipo
+    
+    return matchesSearch && matchesFilter && matchesTipo
+  })
+
+  // Limpar formulário
+  const clearForm = () => {
+    setFormData({
+      nome: '',
+      tipo: 'proprio',
+      endereco: '',
+      cidade: '',
+      estado: '',
+      cep: '',
+      telefone: '',
+      email: '',
+      bandeira: '',
+      rede: '',
+      latitude: '',
+      longitude: '',
+      ativo: true
+    })
+    setEditingPosto(null)
+  }
+
+  // Abrir dialog para criar/editar
+  const openDialog = (posto?: Posto) => {
+    if (posto) {
+      setEditingPosto(posto)
+      setFormData({
+        nome: posto.nome,
+        tipo: posto.tipo,
+        endereco: posto.endereco || '',
+        cidade: posto.cidade || '',
+        estado: posto.estado || '',
+        cep: posto.cep || '',
+        telefone: posto.telefone || '',
+        email: posto.email || '',
+        bandeira: posto.bandeira || '',
+        rede: posto.rede || '',
+        latitude: posto.latitude?.toString() || '',
+        longitude: posto.longitude?.toString() || '',
+        ativo: posto.ativo
+      })
+    } else {
+      clearForm()
+    }
+    setIsDialogOpen(true)
+  }
+
+  // Salvar posto
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!formData.nome.trim()) {
+      toast.error('Nome é obrigatório')
+      return
+    }
+
+    try {
+      setSubmitting(true)
+      
+      const dataToSave = {
+        nome: formData.nome.trim(),
+        endereco: formData.endereco.trim() || null,
+        cidade: formData.cidade.trim() || null,
+        estado: formData.estado.trim() || null,
+        cep: formData.cep.trim() || null,
+        telefone: formData.telefone.trim() || null,
+        email: formData.email.trim() || null,
+        bandeira: formData.bandeira.trim() || null,
+        rede: formData.rede.trim() || null,
+        latitude: formData.latitude ? parseFloat(formData.latitude) : null,
+        longitude: formData.longitude ? parseFloat(formData.longitude) : null,
+        ativo: formData.ativo,
+        updated_at: new Date().toISOString()
+      }
+
+      if (editingPosto) {
+        // Atualizar
+        const tableName = editingPosto.tipo === 'proprio' ? 'sis_empresa' : 'concorrentes'
+        const { error } = await supabase
+          .from(tableName)
+          .update(dataToSave)
+          .eq('id', editingPosto.id)
+
+        if (error) {
+          console.error('Erro ao atualizar posto:', error)
+          toast.error('Erro ao atualizar posto')
+          return
+        }
+
+        toast.success('Posto atualizado com sucesso!')
+      } else {
+        // Criar
+        const tableName = formData.tipo === 'proprio' ? 'sis_empresa' : 'concorrentes'
+        const { error } = await supabase
+          .from(tableName)
+          .insert([dataToSave])
+
+        if (error) {
+          console.error('Erro ao criar posto:', error)
+          toast.error('Erro ao criar posto')
+          return
+        }
+
+        toast.success('Posto criado com sucesso!')
+      }
+
+      setIsDialogOpen(false)
+      clearForm()
+      loadPostos()
+    } catch (error) {
+      console.error('Erro ao salvar posto:', error)
+      toast.error('Erro ao salvar posto')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // Excluir posto
+  const handleDelete = async (posto: Posto) => {
+    if (!confirm('Tem certeza que deseja excluir este posto?')) {
+      return
+    }
+
+    try {
+      const tableName = posto.tipo === 'proprio' ? 'sis_empresa' : 'concorrentes'
+      const { error } = await supabase
+        .from(tableName)
+        .delete()
+        .eq('id', posto.id)
+
+      if (error) {
+        console.error('Erro ao excluir posto:', error)
+        toast.error('Erro ao excluir posto')
+        return
+      }
+
+      toast.success('Posto excluído com sucesso!')
+      loadPostos()
+    } catch (error) {
+      console.error('Erro ao excluir posto:', error)
+      toast.error('Erro ao excluir posto')
+    }
+  }
+
+  // Alternar status ativo/inativo
+  const toggleStatus = async (posto: Posto) => {
+    try {
+      const tableName = posto.tipo === 'proprio' ? 'sis_empresa' : 'concorrentes'
+      const { error } = await supabase
+        .from(tableName)
+        .update({ 
+          ativo: !posto.ativo,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', posto.id)
+
+      if (error) {
+        console.error('Erro ao alterar status:', error)
+        toast.error('Erro ao alterar status')
+        return
+      }
+
+      toast.success(`Posto ${!posto.ativo ? 'ativado' : 'desativado'} com sucesso!`)
+      loadPostos()
+    } catch (error) {
+      console.error('Erro ao alterar status:', error)
+      toast.error('Erro ao alterar status')
+    }
+  }
+
+  // Formatar CEP
+  const formatCEP = (cep: string) => {
+    if (!cep) return ''
+    const cleanCEP = cep.replace(/[^\d]/g, '')
+    return cleanCEP.replace(/(\d{5})(\d{3})/, '$1-$2')
+  }
+
+  // Formatar telefone
+  const formatPhone = (phone: string) => {
+    if (!phone) return ''
+    const cleanPhone = phone.replace(/[^\d]/g, '')
+    if (cleanPhone.length === 11) {
+      return cleanPhone.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3')
+    } else if (cleanPhone.length === 10) {
+      return cleanPhone.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3')
+    }
+    return phone
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Gestão de Postos</h1>
+            <p className="text-gray-600">Gerencie postos próprios e concorrentes</p>
+          </div>
+          <Button onClick={() => openDialog()} className="bg-blue-600 hover:bg-blue-700">
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Posto
+          </Button>
+        </div>
+
+        {/* Estatísticas */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total</p>
+                  <p className="text-2xl font-bold text-gray-900">{postos.length}</p>
+                </div>
+                <Building2 className="h-8 w-8 text-blue-600" />
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Próprios</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {postos.filter(p => p.tipo === 'proprio').length}
+                  </p>
+                </div>
+                <Fuel className="h-8 w-8 text-green-600" />
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Concorrentes</p>
+                  <p className="text-2xl font-bold text-orange-600">
+                    {postos.filter(p => p.tipo === 'concorrente').length}
+                  </p>
+                </div>
+                <Users className="h-8 w-8 text-orange-600" />
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Ativos</p>
+                  <p className="text-2xl font-bold text-purple-600">
+                    {postos.filter(p => p.ativo).length}
+                  </p>
+                </div>
+                <CheckCircle className="h-8 w-8 text-purple-600" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Filtros */}
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="flex-1">
+                <Label htmlFor="search">Buscar</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    id="search"
+                    placeholder="Buscar por nome, cidade, bandeira ou rede..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+              </div>
+              
+              <div className="sm:w-48">
+                <Label htmlFor="filter">Filtrar por Status</Label>
+                <Select value={filterActive} onValueChange={(value: any) => setFilterActive(value)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="active">Ativos</SelectItem>
+                    <SelectItem value="inactive">Inativos</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="sm:w-48">
+                <Label htmlFor="tipo">Filtrar por Tipo</Label>
+                <Select value={filterTipo} onValueChange={(value: any) => setFilterTipo(value)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="proprio">Próprios</SelectItem>
+                    <SelectItem value="concorrente">Concorrentes</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Tabela */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5" />
+              Postos
+            </CardTitle>
+            <CardDescription>
+              Lista de todos os postos cadastrados
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Localização</TableHead>
+                    <TableHead>Contato</TableHead>
+                    <TableHead>Bandeira/Rede</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Criado em</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredPostos.map((posto) => (
+                    <TableRow key={`${posto.tipo}-${posto.id}`}>
+                      <TableCell className="font-medium">{posto.nome}</TableCell>
+                      <TableCell>
+                        <Badge variant={posto.tipo === 'proprio' ? "default" : "secondary"}>
+                          {posto.tipo === 'proprio' ? 'Próprio' : 'Concorrente'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          {posto.endereco && (
+                            <div className="flex items-center gap-1 text-sm">
+                              <MapPin className="h-3 w-3" />
+                              {posto.endereco}
+                            </div>
+                          )}
+                          {posto.cidade && posto.estado && (
+                            <div className="text-sm text-gray-500">
+                              {posto.cidade}, {posto.estado}
+                            </div>
+                          )}
+                          {posto.cep && (
+                            <div className="text-sm text-gray-500">
+                              {formatCEP(posto.cep)}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          {posto.telefone && (
+                            <div className="flex items-center gap-1 text-sm">
+                              <Phone className="h-3 w-3" />
+                              {formatPhone(posto.telefone)}
+                            </div>
+                          )}
+                          {posto.email && (
+                            <div className="flex items-center gap-1 text-sm">
+                              <Mail className="h-3 w-3" />
+                              {posto.email}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="space-y-1">
+                          {posto.bandeira && (
+                            <div className="text-sm font-medium">{posto.bandeira}</div>
+                          )}
+                          {posto.rede && (
+                            <div className="text-sm text-gray-500">{posto.rede}</div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={posto.ativo ? "default" : "secondary"}>
+                          {posto.ativo ? "Ativo" : "Inativo"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {new Date(posto.created_at).toLocaleDateString('pt-BR')}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openDialog(posto)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => toggleStatus(posto)}
+                          >
+                            {posto.ativo ? (
+                              <XCircle className="h-4 w-4 text-red-600" />
+                            ) : (
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                            )}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDelete(posto)}
+                            className="text-red-600 hover:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            
+            {!loading && filteredPostos.length === 0 && (
+              <div className="text-center py-8">
+                <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p className="text-gray-600">Nenhum posto encontrado</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Dialog para criar/editar */}
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {editingPosto ? 'Editar Posto' : 'Novo Posto'}
+              </DialogTitle>
+              <DialogDescription>
+                {editingPosto 
+                  ? 'Atualize as informações do posto'
+                  : 'Preencha os dados para criar um novo posto'
+                }
+              </DialogDescription>
+            </DialogHeader>
+            
+            <form onSubmit={handleSave} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="nome">Nome *</Label>
+                  <Input
+                    id="nome"
+                    value={formData.nome}
+                    onChange={(e) => setFormData({ ...formData, nome: e.target.value })}
+                    placeholder="Nome do posto"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="tipo">Tipo *</Label>
+                  <Select value={formData.tipo} onValueChange={(value: any) => setFormData({ ...formData, tipo: value })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="proprio">Próprio</SelectItem>
+                      <SelectItem value="concorrente">Concorrente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              
+              <div>
+                <Label htmlFor="endereco">Endereço</Label>
+                <Input
+                  id="endereco"
+                  value={formData.endereco}
+                  onChange={(e) => setFormData({ ...formData, endereco: e.target.value })}
+                  placeholder="Rua, número, bairro"
+                />
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label htmlFor="cidade">Cidade</Label>
+                  <Input
+                    id="cidade"
+                    value={formData.cidade}
+                    onChange={(e) => setFormData({ ...formData, cidade: e.target.value })}
+                    placeholder="Cidade"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="estado">Estado</Label>
+                  <Input
+                    id="estado"
+                    value={formData.estado}
+                    onChange={(e) => setFormData({ ...formData, estado: e.target.value })}
+                    placeholder="SP"
+                    maxLength={2}
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="cep">CEP</Label>
+                  <Input
+                    id="cep"
+                    value={formData.cep}
+                    onChange={(e) => setFormData({ ...formData, cep: e.target.value })}
+                    placeholder="00000-000"
+                  />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="telefone">Telefone</Label>
+                  <Input
+                    id="telefone"
+                    value={formData.telefone}
+                    onChange={(e) => setFormData({ ...formData, telefone: e.target.value })}
+                    placeholder="(11) 99999-9999"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    placeholder="email@exemplo.com"
+                  />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="bandeira">Bandeira</Label>
+                  <Input
+                    id="bandeira"
+                    value={formData.bandeira}
+                    onChange={(e) => setFormData({ ...formData, bandeira: e.target.value })}
+                    placeholder="Ex: Shell, Petrobras"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="rede">Rede</Label>
+                  <Input
+                    id="rede"
+                    value={formData.rede}
+                    onChange={(e) => setFormData({ ...formData, rede: e.target.value })}
+                    placeholder="Ex: Rede Nacional"
+                  />
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="latitude">Latitude</Label>
+                  <Input
+                    id="latitude"
+                    type="number"
+                    step="any"
+                    value={formData.latitude}
+                    onChange={(e) => setFormData({ ...formData, latitude: e.target.value })}
+                    placeholder="-23.5505"
+                  />
+                </div>
+                
+                <div>
+                  <Label htmlFor="longitude">Longitude</Label>
+                  <Input
+                    id="longitude"
+                    type="number"
+                    step="any"
+                    value={formData.longitude}
+                    onChange={(e) => setFormData({ ...formData, longitude: e.target.value })}
+                    placeholder="-46.6333"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="ativo"
+                  checked={formData.ativo}
+                  onChange={(e) => setFormData({ ...formData, ativo: e.target.checked })}
+                  className="rounded"
+                />
+                <Label htmlFor="ativo">Ativo</Label>
+              </div>
+              
+              <div className="flex justify-end gap-2 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsDialogOpen(false)}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? 'Salvando...' : editingPosto ? 'Atualizar' : 'Criar'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  )
+}
