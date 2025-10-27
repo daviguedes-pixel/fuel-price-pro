@@ -27,6 +27,7 @@ interface ApprovalDetailsModalProps {
   onApprove: (observations: string) => void;
   onReject: (observations: string) => void;
   loading: boolean;
+  readOnly?: boolean;
 }
 
 export const ApprovalDetailsModal = ({ 
@@ -35,7 +36,8 @@ export const ApprovalDetailsModal = ({
   suggestion, 
   onApprove, 
   onReject,
-  loading 
+  loading,
+  readOnly = false
 }: ApprovalDetailsModalProps) => {
   const [observations, setObservations] = useState("");
   const [approvalHistory, setApprovalHistory] = useState<ApprovalHistory[]>([]);
@@ -43,11 +45,107 @@ export const ApprovalDetailsModal = ({
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string>("");
 
+  const [enrichedSuggestion, setEnrichedSuggestion] = useState(suggestion);
+
   useEffect(() => {
     if (suggestion?.id && isOpen) {
       loadApprovalHistory();
+      
+      // Buscar dados faltantes (stations, clients, payment_methods)
+      if (!suggestion.stations || !suggestion.clients || !suggestion.payment_methods) {
+        loadMissingData();
+      }
     }
-  }, [suggestion?.id, isOpen]);
+  }, [suggestion?.id, isOpen, suggestion]);
+  
+  const loadMissingData = async () => {
+    if (!suggestion) return;
+    
+    // Se os IDs estiverem null, não podemos buscar nada
+    if (!suggestion?.station_id && !suggestion?.client_id) {
+      console.log('⚠️ Não há IDs para buscar - aprovacoes antigas');
+      return;
+    }
+    
+    try {
+      console.log('🔍 Buscando dados faltantes para suggestion:', suggestion.id);
+      
+      // Buscar posto se necessário
+      if (!suggestion.stations && suggestion.station_id) {
+        console.log('🔍 Buscando posto:', suggestion.station_id);
+        const { data: stationData } = await supabase
+          .from('sis_empresa' as any)
+          .select('nome_empresa, cnpj_cpf')
+          .or(`cnpj_cpf.eq.${suggestion.station_id},id.eq.${suggestion.station_id}`)
+          .maybeSingle();
+        
+        if (stationData) {
+          setEnrichedSuggestion({
+            ...suggestion,
+            stations: { name: (stationData as any).nome_empresa, code: (stationData as any).cnpj_cpf }
+          });
+        }
+      }
+      
+      // Buscar cliente se necessário  
+      if (!suggestion.clients && suggestion.client_id) {
+        console.log('🔍 Buscando cliente:', suggestion.client_id);
+        const { data: clientData } = await supabase
+          .from('clientes' as any)
+          .select('nome, id_cliente')
+          .eq('id_cliente', suggestion.client_id)
+          .maybeSingle();
+        
+        if (clientData) {
+          setEnrichedSuggestion(prev => ({
+            ...prev!,
+            clients: { name: (clientData as any).nome, code: String((clientData as any).id_cliente) }
+          }));
+        }
+      }
+      
+      // Buscar método de pagamento se necessário
+      if (!suggestion.payment_methods && suggestion.payment_method_id) {
+        console.log('🔍 Buscando método de pagamento:', suggestion.payment_method_id);
+        
+        // Tentar buscar por ID, ID_POSTO ou CARTAO
+        let paymentData = null;
+        const { data: paymentById } = await supabase
+          .from('tipos_pagamento' as any)
+          .select('CARTAO, TAXA, PRAZO, ID_POSTO')
+          .eq('id', suggestion.payment_method_id)
+          .maybeSingle();
+        
+        if (paymentById) {
+          paymentData = paymentById;
+        } else {
+          const { data: paymentByCard } = await supabase
+            .from('tipos_pagamento' as any)
+            .select('CARTAO, TAXA, PRAZO, ID_POSTO')
+            .or(`CARTAO.eq.${suggestion.payment_method_id},ID_POSTO.eq.${suggestion.payment_method_id}`)
+            .maybeSingle();
+          paymentData = paymentByCard;
+        }
+        
+        if (paymentData) {
+          console.log('✅ Método de pagamento encontrado:', paymentData);
+          setEnrichedSuggestion(prev => ({
+            ...prev!,
+            payment_methods: { 
+              name: (paymentData as any).CARTAO,
+              CARTAO: (paymentData as any).CARTAO,
+              TAXA: (paymentData as any).TAXA,
+              PRAZO: (paymentData as any).PRAZO
+            }
+          }));
+        } else {
+          console.log('❌ Método de pagamento NÃO encontrado para:', suggestion.payment_method_id);
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao buscar dados faltantes:', err);
+    }
+  };
 
   const loadApprovalHistory = async () => {
     if (!suggestion?.id) return;
@@ -69,7 +167,21 @@ export const ApprovalDetailsModal = ({
     }
   };
 
+  useEffect(() => {
+    setEnrichedSuggestion(suggestion);
+  }, [suggestion]);
+
   if (!suggestion) return null;
+  
+  const dataToShow = enrichedSuggestion || suggestion;
+  
+  console.log('🎯 ApprovalDetailsModal - dataToShow:', dataToShow);
+  console.log('🎯 station_id:', dataToShow.station_id);
+  console.log('🎯 client_id:', dataToShow.client_id);
+  console.log('🎯 stations:', dataToShow.stations);
+  console.log('🎯 clients:', dataToShow.clients);
+  console.log('🎯 payment_method_id:', dataToShow.payment_method_id);
+  console.log('🎯 payment_methods:', dataToShow.payment_methods);
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -90,9 +202,49 @@ export const ApprovalDetailsModal = ({
     window.open(url, '_blank');
   };
 
-  const formatPrice = (price: number | null) => {
+  const formatPrice = (price: number | null, decimals: number = 2) => {
     if (!price) return 'R$ 0,00';
-    return price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    return price.toLocaleString('pt-BR', { 
+      style: 'currency', 
+      currency: 'BRL',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    });
+  };
+
+  // Formata preço dinamicamente: mostra até 4 casas, mas remove zeros à direita
+  const formatLucro = (value: number): string => {
+    // Formatar lucro com 3 casas decimais usando ponto
+    return value.toFixed(3).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  };
+
+  const formatPriceDynamic = (price: number | null) => {
+    if (!price) return 'R$ 0,00';
+    
+    // Formatar com 4 casas decimais
+    const formatted = price.toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4
+    });
+    
+    // Remover zeros à direita, mas manter pelo menos 2 casas se houver parte decimal
+    const parts = formatted.split(',');
+    if (parts.length === 2) {
+      let decimal = parts[1];
+      // Remove zeros à direita
+      decimal = decimal.replace(/0+$/, '');
+      // Garantir que há pelo menos 2 casas decimais se o valor tiver parte decimal
+      if (decimal.length === 0) {
+        decimal = '00';
+      } else if (decimal.length === 1) {
+        decimal = decimal + '0';
+      }
+      return parts[0] + ',' + decimal;
+    }
+    
+    return formatted;
   };
 
   const formatDate = (dateString: string) => {
@@ -142,22 +294,53 @@ export const ApprovalDetailsModal = ({
             <CardContent className="pt-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h4 className="font-medium text-sm text-muted-foreground">Cliente</h4>
-                  <p className="font-medium text-lg">{suggestion.clients?.name || 'N/A'}</p>
+                  <h4 className="font-medium text-sm text-muted-foreground">Posto</h4>
+                  <p className="font-medium text-lg">
+                    {dataToShow.stations?.name 
+                      || dataToShow.station_id 
+                      || (dataToShow.station_id === null ? '⚠️ Aprovação antiga (sem posto)' : 'N/A')}
+                  </p>
                 </div>
                 <div>
-                  <h4 className="font-medium text-sm text-muted-foreground">Posto</h4>
-                  <p className="font-medium text-lg">{suggestion.stations?.name || 'N/A'}</p>
+                  <h4 className="font-medium text-sm text-muted-foreground">Cliente</h4>
+                  <p className="font-medium text-lg">
+                    {dataToShow.clients?.name 
+                      || dataToShow.client_id 
+                      || (dataToShow.client_id === null ? '⚠️ Aprovação antiga (sem cliente)' : 'N/A')}
+                  </p>
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Produto</h4>
-                  <p className="font-medium">{suggestion.product}</p>
+                  <p className="font-medium text-lg">
+                    {(() => {
+                      const productNames: { [key: string]: string } = {
+                        'gasolina_comum': 'Gasolina Comum',
+                        'gasolina_aditivada': 'Gasolina Aditivada',
+                        'etanol': 'Etanol',
+                        'diesel_comum': 'Diesel Comum',
+                        's10': 'Diesel S-10',
+                        'diesel_s500': 'Diesel S-500',
+                        'arla32_granel': 'ARLA 32 Granel'
+                      };
+                      return productNames[dataToShow.product] || dataToShow.product;
+                    })()}
+                  </p>
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Status</h4>
-                  {getStatusBadge(suggestion.status)}
+                  {getStatusBadge(dataToShow.status)}
                 </div>
               </div>
+              
+              {/* Informações de Aprovação */}
+              {(dataToShow.current_approver_name || dataToShow.current_approver_id) && (
+                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600">
+                  <h4 className="font-medium text-sm text-muted-foreground">Em aprovação com</h4>
+                  <p className="font-medium text-lg text-orange-600">
+                    {dataToShow.current_approver_name || dataToShow.current_approver_id || 'N/A'}
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -168,28 +351,30 @@ export const ApprovalDetailsModal = ({
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Custo de Compra</h4>
-                  <p className="text-xl font-bold">{formatPrice(suggestion.purchase_cost)}</p>
+                  <p className="text-xl font-bold">{formatPriceDynamic(dataToShow.purchase_cost || 0)}</p>
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Frete</h4>
-                  <p className="text-xl font-bold">{formatPrice(suggestion.freight_cost)}</p>
+                  <p className="text-xl font-bold">{formatPriceDynamic(dataToShow.freight_cost || 0)}</p>
                 </div>
                 <div>
-                  <h4 className="font-medium text-sm text-muted-foreground">Custo Total</h4>
-                  <p className="text-xl font-bold">{formatPrice(fromMaybeCents(suggestion.cost_price))}</p>
+                  <h4 className="font-medium text-sm text-muted-foreground">Custo Base</h4>
+                  <p className="text-xl font-bold">{formatPriceDynamic((dataToShow.purchase_cost || 0) + (dataToShow.freight_cost || 0))}</p>
                 </div>
                 <div>
                   {(() => {
-                    const fp = fromMaybeCents(suggestion.final_price);
-                    const cp = fromMaybeCents(suggestion.cost_price);
-                    const m = fp - cp;
+                    // Ajuste = Preço Sugerido - Preço Atual (não custo total)
+                    const currentPrice = fromMaybeCents(dataToShow.current_price) || (fromMaybeCents(dataToShow.cost_price)) || 0;
+                    const finalPrice = fromMaybeCents(dataToShow.final_price);
+                    const adjustment = finalPrice - currentPrice;
                     return (
                       <>
                         <h4 className="font-medium text-sm text-muted-foreground">
-                          {m > 0 ? 'Aumento' : m < 0 ? 'Diminuição' : 'Margem'}
+                          Ajuste
                         </h4>
-                        <p className={`text-xl font-bold ${m > 0 ? 'text-green-600' : m < 0 ? 'text-red-600' : 'text-blue-600'}`}> 
-                          {formatPrice(Math.abs(m))}
+                        <p className={`text-xl font-bold ${adjustment > 0 ? 'text-green-600' : adjustment < 0 ? 'text-red-600' : 'text-blue-600'}`}> 
+                          {adjustment !== 0 ? (adjustment > 0 ? '+' : '') : ''}
+                          {formatPriceDynamic(adjustment)}
                         </p>
                       </>
                     );
@@ -197,126 +382,366 @@ export const ApprovalDetailsModal = ({
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Preço Sugerido</h4>
-                  <p className="text-xl font-bold text-green-600">{formatPrice(fromMaybeCents(suggestion.final_price))}</p>
+                  <p className="text-xl font-bold text-green-600">{formatPriceDynamic(fromMaybeCents(dataToShow.final_price))}</p>
                 </div>
                 <div>
-                  <h4 className="font-medium text-sm text-muted-foreground">Margem %</h4>
-                  <p className="text-xl font-bold">
+                  <h4 className="font-medium text-sm text-muted-foreground">Margem</h4>
+                  <p className={`text-xl font-bold ${(() => {
+                    const purchaseCost = dataToShow.purchase_cost || 0;
+                    const freightCost = dataToShow.freight_cost || 0;
+                    const totalCost = purchaseCost + freightCost;
+                    const finalPrice = fromMaybeCents(dataToShow.final_price);
+                    const margin = finalPrice - totalCost;
+                    return margin >= 0 ? 'text-green-600' : 'text-red-600';
+                  })()}`}>
                     {(() => {
-                      const fp = fromMaybeCents(suggestion.final_price);
-                      const cp = fromMaybeCents(suggestion.cost_price);
-                      return cp > 0 ? (((fp - cp) / cp) * 100).toFixed(2) + '%' : '0%';
+                      const purchaseCost = dataToShow.purchase_cost || 0;
+                      const freightCost = dataToShow.freight_cost || 0;
+                      const totalCost = purchaseCost + freightCost;
+                      const finalPrice = fromMaybeCents(dataToShow.final_price);
+                      const margin = finalPrice - totalCost;
+                      return formatPriceDynamic(margin);
                     })()}
                   </p>
                 </div>
               </div>
+
+              {/* Volume Realizado e Projetado */}
+              {(dataToShow.volume_made || dataToShow.volume_projected) && (
+                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600">
+                  <div className="grid grid-cols-2 gap-4">
+                    {dataToShow.volume_made && (
+                      <div>
+                        <h4 className="font-medium text-sm text-muted-foreground">Volume Realizado</h4>
+                        <p className="text-xl font-bold">{dataToShow.volume_made.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m³</p>
+                      </div>
+                    )}
+                    {dataToShow.volume_projected && (
+                      <div>
+                        <h4 className="font-medium text-sm text-muted-foreground">Volume Projetado</h4>
+                        <p className="text-xl font-bold text-blue-600">{dataToShow.volume_projected.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m³</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Mostrar Taxa e Tipo de Pagamento se disponível */}
+              {dataToShow.payment_methods && (
+                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600">
+                  <h4 className="font-semibold mb-3 text-orange-600">Informações de Pagamento</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <h4 className="font-medium text-sm text-muted-foreground">Tipo de Pagamento</h4>
+                      <p className="text-lg font-bold">{dataToShow.payment_methods.name || dataToShow.payment_methods.CARTAO || 'N/A'}</p>
+                    </div>
+                    {dataToShow.payment_methods.TAXA && (
+                      <>
+                        <div>
+                          <h4 className="font-medium text-sm text-muted-foreground">Taxa</h4>
+                          <p className="text-lg font-bold text-orange-600">{dataToShow.payment_methods.TAXA}%</p>
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-sm text-muted-foreground">Prazo</h4>
+                          <p className="text-lg font-bold">
+                            {(() => {
+                              const prazo = dataToShow.payment_methods.PRAZO;
+                              if (!prazo) return 'N/A';
+                              // Se for um número, adicionar "dias"
+                              if (!isNaN(Number(prazo))) {
+                                return `${prazo} dias`;
+                              }
+                              return prazo;
+                            })()}
+                          </p>
+                        </div>
+                        <div>
+                          {(() => {
+                            const purchaseCost = dataToShow.purchase_cost || 0;
+                            const freightCost = dataToShow.freight_cost || 0;
+                            const baseCost = purchaseCost + freightCost;
+                            const taxa = dataToShow.payment_methods.TAXA || 0;
+                            const taxValue = baseCost * (taxa / 100);
+                            return (
+                              <>
+                                <h4 className="font-medium text-sm text-muted-foreground">Taxa em R$</h4>
+                                <p className="text-lg font-bold text-orange-600">{formatPriceDynamic(taxValue)}</p>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  
+                  {/* Mostrar cálculo do custo total com taxa */}
+                  {dataToShow.payment_methods.TAXA && (
+                    <div className="mt-4 p-3 bg-orange-50 dark:bg-orange-950/20 rounded-lg border border-orange-200 dark:border-orange-800">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="font-medium text-sm text-slate-700 dark:text-slate-300">Custo Total (Base + Taxa)</span>
+                        </div>
+                        {(() => {
+                          const purchaseCost = dataToShow.purchase_cost || 0;
+                          const freightCost = dataToShow.freight_cost || 0;
+                          const baseCost = purchaseCost + freightCost;
+                          const taxa = dataToShow.payment_methods.TAXA || 0;
+                          const taxValue = baseCost * (taxa / 100);
+                          const totalCost = baseCost + taxValue;
+                          return (
+                            <span className="text-lg font-bold text-orange-600">{formatPriceDynamic(totalCost)}</span>
+                          );
+                        })()}
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                        {formatPriceDynamic((dataToShow.purchase_cost || 0) + (dataToShow.freight_cost || 0))} + {dataToShow.payment_methods.TAXA}% = {(() => {
+                          const purchaseCost = dataToShow.purchase_cost || 0;
+                          const freightCost = dataToShow.freight_cost || 0;
+                          const baseCost = purchaseCost + freightCost;
+                          const taxa = dataToShow.payment_methods.TAXA || 0;
+                          const taxValue = baseCost * (taxa / 100);
+                          const totalCost = baseCost + taxValue;
+                          return formatPriceDynamic(totalCost);
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Análise de Lucro considerando a taxa */}
+                  {dataToShow.payment_methods.TAXA && dataToShow.volume_projected && (
+                    <div className="mt-4 p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
+                      <h4 className="font-semibold mb-3 text-green-700 dark:text-green-300">Análise de Lucro</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <h4 className="font-medium text-sm text-muted-foreground">Margem (com taxa)</h4>
+                          {(() => {
+                            const purchaseCost = dataToShow.purchase_cost || 0;
+                            const freightCost = dataToShow.freight_cost || 0;
+                            const baseCost = purchaseCost + freightCost;
+                            const taxa = dataToShow.payment_methods.TAXA || 0;
+                            const taxValue = baseCost * (taxa / 100);
+                            const totalCost = baseCost + taxValue;
+                            const finalPrice = fromMaybeCents(dataToShow.final_price);
+                            const marginWithTax = finalPrice - totalCost;
+                            return (
+                              <p className={`text-lg font-bold ${marginWithTax >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {formatPriceDynamic(marginWithTax)}
+                              </p>
+                            );
+                          })()}
+                        </div>
+                        <div>
+                          <h4 className="font-medium text-sm text-muted-foreground">Lucro Total Projetado</h4>
+                          {(() => {
+                            const purchaseCost = dataToShow.purchase_cost || 0;
+                            const freightCost = dataToShow.freight_cost || 0;
+                            const baseCost = purchaseCost + freightCost;
+                            const taxa = dataToShow.payment_methods.TAXA || 0;
+                            const taxValue = baseCost * (taxa / 100);
+                            const totalCost = baseCost + taxValue;
+                            const finalPrice = fromMaybeCents(dataToShow.final_price);
+                            const marginWithTax = finalPrice - totalCost;
+                            const lucroTotal = marginWithTax * dataToShow.volume_projected;
+                            return (
+                              <p className="text-lg font-bold text-green-600">
+                                R$ {formatLucro(lucroTotal)}
+                              </p>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
+          {/* Origem do Preço */}
+          {dataToShow.price_origin_base && (
+            <Card>
+              <CardContent className="pt-6">
+                <h3 className="text-lg font-semibold mb-4">Origem do Preço de Custo</h3>
+                <div className="grid grid-cols-4 gap-4">
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground">Base</h4>
+                    <p className="font-medium">{dataToShow.price_origin_base}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground">Código</h4>
+                    <p className="font-medium">{dataToShow.price_origin_code || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground">UF</h4>
+                    <p className="font-medium">{dataToShow.price_origin_uf || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground">Tipo de Entrega</h4>
+                    <p className="font-medium">{dataToShow.price_origin_delivery || 'N/A'}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Volume e Cálculos S10 */}
-          {suggestion.product === 's10' && (
+          {dataToShow.product === 's10' && (
             <>
               <Card>
                 <CardContent className="pt-6">
-                  <h3 className="text-lg font-semibold mb-4">Análise S10 + ARLA</h3>
+                  <h3 className="text-lg font-semibold mb-4">Análise ARLA</h3>
                   <div className="grid grid-cols-2 gap-6">
                     <div className="space-y-4">
                       <div>
-                        <h4 className="font-medium text-sm text-muted-foreground">Volume Realizado (L)</h4>
-                        <p className="text-lg font-bold">{suggestion.volume_made ? suggestion.volume_made.toLocaleString('pt-BR') : '0'}</p>
+                        <h4 className="font-medium text-sm text-muted-foreground">Volume Realizado (m³)</h4>
+                        <p className="text-lg font-bold">{dataToShow.volume_made ? dataToShow.volume_made.toLocaleString('pt-BR') : '0'} m³</p>
                       </div>
                       <div>
-                        <h4 className="font-medium text-sm text-muted-foreground">Volume Projetado (L)</h4>
-                        <p className="text-lg font-bold">{suggestion.volume_projected ? suggestion.volume_projected.toLocaleString('pt-BR') : '0'}</p>
+                        <h4 className="font-medium text-sm text-muted-foreground">Volume Projetado (m³)</h4>
+                        <p className="text-lg font-bold">{dataToShow.volume_projected ? dataToShow.volume_projected.toLocaleString('pt-BR') : '0'} m³</p>
                       </div>
                     </div>
                     <div className="space-y-4">
                       <div>
                         <h4 className="font-medium text-sm text-muted-foreground">Preço de Venda ARLA</h4>
-                        <p className="text-lg font-bold">{formatPrice(suggestion.arla_purchase_price || 0)}</p>
+                        <p className="text-lg font-bold">{formatPriceDynamic(dataToShow.arla_purchase_price || 0)}</p>
                       </div>
                       <div>
                         <h4 className="font-medium text-sm text-muted-foreground">Custo de Compra ARLA</h4>
-                        <p className="text-lg font-bold">{formatPrice(suggestion.arla_cost_price || 0)}</p>
+                        <p className="text-lg font-bold">{formatPriceDynamic(dataToShow.arla_cost_price || 0)}</p>
                       </div>
+                      <div>
+                        {(() => {
+                          const arlaSalePrice = dataToShow.arla_purchase_price || 0;
+                          const arlaCostPrice = dataToShow.arla_cost_price || 0;
+                          const margin = arlaSalePrice - arlaCostPrice;
+                          return (
+                            <>
+                              <h4 className="font-medium text-sm text-muted-foreground">Margem ARLA (por litro)</h4>
+                              <p className={`text-lg font-bold ${margin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {formatPriceDynamic(margin)}
+                              </p>
+                            </>
+                          );
+                        })()}
+                      </div>
+                      {dataToShow.volume_projected && (
+                        <>
+                          <div>
+                            {(() => {
+                              const arlaSalePrice = dataToShow.arla_purchase_price || 0;
+                              const arlaCostPrice = dataToShow.arla_cost_price || 0;
+                              const margin = arlaSalePrice - arlaCostPrice;
+                              const consumoArla = dataToShow.volume_projected * 0.05; // 5% do volume projetado
+                              const lucroTotal = margin * consumoArla;
+                              return (
+                                <>
+                                  <h4 className="font-medium text-sm text-muted-foreground">Lucro no Volume Projetado (5%)</h4>
+                                  <p className="text-lg font-bold text-green-600">R$ {formatLucro(lucroTotal)}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatPriceDynamic(margin)} × {consumoArla.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m³
+                                  </p>
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <div>
+                            {(() => {
+                              const arlaSalePrice = dataToShow.arla_purchase_price || 0;
+                              const arlaCostPrice = dataToShow.arla_cost_price || 0;
+                              const margin = arlaSalePrice - arlaCostPrice;
+                              const consumoArla = dataToShow.volume_projected * 0.10; // 10% do volume projetado
+                              const lucroTotal = margin * consumoArla;
+                              return (
+                                <>
+                                  <h4 className="font-medium text-sm text-muted-foreground">Lucro no Volume Projetado (10%)</h4>
+                                  <p className="text-lg font-bold text-green-600">R$ {formatLucro(lucroTotal)}</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {formatPriceDynamic(margin)} × {consumoArla.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m³
+                                  </p>
+                                </>
+                              );
+                            })()}
+                      </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {/* Cálculos Derivados de ARLA */}
-              <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20">
+              {/* Análise de Lucro Líquido com ARLA */}
+              <Card className="bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/20 dark:to-indigo-950/20">
                 <CardContent className="pt-6">
-                  <h3 className="text-lg font-semibold mb-4">Cálculos de Compensação ARLA</h3>
-                  <div className="grid grid-cols-3 gap-4">
+                  <h3 className="text-lg font-semibold mb-4">Análise de Lucro Líquido</h3>
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Margem ARLA (por litro)</h4>
-                      <p className="text-xl font-bold text-green-600">
-                        {formatPrice((suggestion.arla_purchase_price || 0) - (suggestion.arla_cost_price || 0))}
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Consumo ARLA Estimado (5%)</h4>
-                      <p className="text-xl font-bold">
-                        {suggestion.volume_projected 
-                          ? (suggestion.volume_projected * 0.05).toLocaleString('pt-BR', { maximumFractionDigits: 0 }) + ' L'
-                          : '0 L'}
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Compensação Total ARLA</h4>
-                      <p className="text-xl font-bold text-blue-600">
-                        {(() => {
-                          const margemArla = (suggestion.arla_purchase_price || 0) - (suggestion.arla_cost_price || 0);
-                          const consumoArla = suggestion.volume_projected ? suggestion.volume_projected * 0.05 : 0;
-                          return formatPrice(margemArla * consumoArla);
+                      {(() => {
+                        // Lucro líquido = Lucro Total Projetado (com taxa) + Lucro ARLA 5%
+                        const purchaseCost = dataToShow.purchase_cost || 0;
+                        const freightCost = dataToShow.freight_cost || 0;
+                        const baseCost = purchaseCost + freightCost;
+                        const taxa = dataToShow.payment_methods?.TAXA || 0;
+                        const taxValue = baseCost * (taxa / 100);
+                        const totalCost = baseCost + taxValue;
+                        const finalPrice = fromMaybeCents(dataToShow.final_price);
+                        const marginWithTax = finalPrice - totalCost;
+                        const lucroTotalProjetado = marginWithTax * dataToShow.volume_projected;
+                        
+                        const arlaSalePrice = dataToShow.arla_purchase_price || 0;
+                        const arlaCostPrice = dataToShow.arla_cost_price || 0;
+                        const marginArla = arlaSalePrice - arlaCostPrice;
+                        const consumoArla5 = dataToShow.volume_projected * 0.05;
+                        const lucroArla5 = marginArla * consumoArla5;
+                        
+                        const lucroLiquidoTotal5 = lucroTotalProjetado + lucroArla5;
+                        
+                        return (
+                          <>
+                            <h4 className="font-medium text-sm text-muted-foreground">Lucro Total Líquido + ARLA 5%</h4>
+                            <p className="text-2xl font-bold text-purple-600">
+                              R$ {formatLucro(lucroLiquidoTotal5)}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Lucro S10: R$ {formatLucro(lucroTotalProjetado)} + Lucro ARLA: R$ {formatLucro(lucroArla5)}
+                            </p>
+                          </>
+                        );
                         })()}
-                      </p>
                     </div>
                     <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Compensação por Litro S10</h4>
-                      <p className="text-xl font-bold text-indigo-600">
                         {(() => {
-                          const margemArla = (suggestion.arla_purchase_price || 0) - (suggestion.arla_cost_price || 0);
-                          const consumoArla = suggestion.volume_projected ? suggestion.volume_projected * 0.05 : 0;
-                          const compensacaoTotal = margemArla * consumoArla;
-                          return suggestion.volume_projected > 0 
-                            ? formatPrice(compensacaoTotal / suggestion.volume_projected)
-                            : formatPrice(0);
+                        // Lucro líquido = Lucro Total Projetado (com taxa) + Lucro ARLA 10%
+                        const purchaseCost = dataToShow.purchase_cost || 0;
+                        const freightCost = dataToShow.freight_cost || 0;
+                        const baseCost = purchaseCost + freightCost;
+                        const taxa = dataToShow.payment_methods?.TAXA || 0;
+                        const taxValue = baseCost * (taxa / 100);
+                        const totalCost = baseCost + taxValue;
+                        const finalPrice = fromMaybeCents(dataToShow.final_price);
+                        const marginWithTax = finalPrice - totalCost;
+                        const lucroTotalProjetado = marginWithTax * dataToShow.volume_projected;
+                        
+                        const arlaSalePrice = dataToShow.arla_purchase_price || 0;
+                        const arlaCostPrice = dataToShow.arla_cost_price || 0;
+                        const marginArla = arlaSalePrice - arlaCostPrice;
+                        const consumoArla10 = dataToShow.volume_projected * 0.10;
+                        const lucroArla10 = marginArla * consumoArla10;
+                        
+                        const lucroLiquidoTotal10 = lucroTotalProjetado + lucroArla10;
+                        
+                        return (
+                          <>
+                            <h4 className="font-medium text-sm text-muted-foreground">Lucro Total Líquido + ARLA 10%</h4>
+                            <p className="text-2xl font-bold text-purple-600">
+                              R$ {formatLucro(lucroLiquidoTotal10)}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Lucro S10: R$ {formatLucro(lucroTotalProjetado)} + Lucro ARLA: R$ {formatLucro(lucroArla10)}
+                            </p>
+                          </>
+                        );
                         })()}
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Margem Efetiva S10</h4>
-                      <p className="text-xl font-bold text-purple-600">
-                        {(() => {
-                          const fp = fromMaybeCents(suggestion.final_price);
-                          const cp = fromMaybeCents(suggestion.cost_price);
-                          const margemS10 = fp - cp;
-                          const margemArla = (suggestion.arla_purchase_price || 0) - (suggestion.arla_cost_price || 0);
-                          const consumoArla = suggestion.volume_projected ? suggestion.volume_projected * 0.05 : 0;
-                          const compensacaoTotal = margemArla * consumoArla;
-                          const compensacaoPorLitro = suggestion.volume_projected > 0 ? compensacaoTotal / suggestion.volume_projected : 0;
-                          return formatPrice(margemS10 + compensacaoPorLitro);
-                        })()}
-                      </p>
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-sm text-muted-foreground">Margem Efetiva %</h4>
-                      <p className="text-xl font-bold text-purple-600">
-                        {(() => {
-                          const fp = fromMaybeCents(suggestion.final_price);
-                          const cp = fromMaybeCents(suggestion.cost_price);
-                          const custoTotal = cp;
-                          const margemS10 = fp - cp;
-                          const margemArla = (suggestion.arla_purchase_price || 0) - (suggestion.arla_cost_price || 0);
-                          const consumoArla = suggestion.volume_projected ? suggestion.volume_projected * 0.05 : 0;
-                          const compensacaoTotal = margemArla * consumoArla;
-                          const compensacaoPorLitro = suggestion.volume_projected > 0 ? compensacaoTotal / suggestion.volume_projected : 0;
-                          const margemEfetiva = margemS10 + compensacaoPorLitro;
-                          return custoTotal > 0 ? ((margemEfetiva / custoTotal) * 100).toFixed(2) + '%' : '0%';
-                        })()}
-                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -324,52 +749,13 @@ export const ApprovalDetailsModal = ({
             </>
           )}
 
-          {/* Origem do Preço */}
-          <Card>
-            <CardContent className="pt-6">
-              <h3 className="text-lg font-semibold mb-4">Origem do Preço de Custo</h3>
-              {suggestion.price_origin_base ? (
-                <div className="grid grid-cols-4 gap-4">
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground">Base</h4>
-                    <p className="font-medium">{suggestion.price_origin_base}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground">Código</h4>
-                    <p className="font-medium">{suggestion.price_origin_code || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground">UF</h4>
-                    <p className="font-medium">{suggestion.price_origin_uf || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium text-sm text-muted-foreground">Tipo de Entrega</h4>
-                    <p className="font-medium">{suggestion.price_origin_delivery || 'N/A'}</p>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Informação não disponível</p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Forma de Pagamento */}
-          {suggestion.payment_methods && (
-            <Card>
-              <CardContent className="pt-6">
-                <h4 className="font-medium text-sm text-muted-foreground">Forma de Pagamento</h4>
-                <p className="font-medium text-lg">{suggestion.payment_methods.name}</p>
-              </CardContent>
-            </Card>
-          )}
-
           {/* Observações do Solicitante */}
-          {suggestion.observations && (
+          {dataToShow.observations && (
             <Card>
               <CardContent className="pt-6">
                 <h4 className="font-medium text-sm text-muted-foreground mb-2">Observações do Solicitante</h4>
                 <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 max-h-32 overflow-y-auto">
-                  <p className="text-sm whitespace-pre-wrap break-words">{suggestion.observations}</p>
+                  <p className="text-sm whitespace-pre-wrap break-words">{dataToShow.observations}</p>
                 </div>
               </CardContent>
             </Card>
@@ -419,27 +805,27 @@ export const ApprovalDetailsModal = ({
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Nível de Aprovação</h4>
-                  <p className="text-lg font-bold">{suggestion.approval_level || 1} de {suggestion.total_approvers || 3}</p>
+                  <p className="text-lg font-bold">{dataToShow.approval_level || 1} de {dataToShow.total_approvers || 3}</p>
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Aprovações</h4>
-                  <p className="text-lg font-bold text-green-600">{suggestion.approvals_count || 0}</p>
+                  <p className="text-lg font-bold text-green-600">{dataToShow.approvals_count || 0}</p>
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Rejeições</h4>
-                  <p className="text-lg font-bold text-red-600">{suggestion.rejections_count || 0}</p>
+                  <p className="text-lg font-bold text-red-600">{dataToShow.rejections_count || 0}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
           {/* Anexos */}
-          {suggestion.attachments && suggestion.attachments.length > 0 && (
+          {dataToShow.attachments && dataToShow.attachments.length > 0 && (
             <Card>
               <CardContent className="pt-6">
                 <h4 className="font-medium text-sm text-muted-foreground mb-3">Anexos</h4>
                 <div className="grid grid-cols-2 gap-2">
-                  {suggestion.attachments.map((url: string, index: number) => {
+                  {dataToShow.attachments.map((url: string, index: number) => {
                     const fileName = url.split('/').pop() || `Anexo ${index + 1}`;
                     const isImage = url.match(/\.(jpg|jpeg|png|gif|webp)$/i);
                     
@@ -500,12 +886,12 @@ export const ApprovalDetailsModal = ({
           <Card>
             <CardContent className="pt-6">
               <h4 className="font-medium text-sm text-muted-foreground">Data da Solicitação</h4>
-              <p className="font-medium">{formatDate(suggestion.created_at)}</p>
+              <p className="font-medium">{formatDate(dataToShow.created_at)}</p>
             </CardContent>
           </Card>
 
-          {/* Ações de Aprovação - Apenas se status for pending */}
-          {suggestion.status === 'pending' && (
+          {/* Ações de Aprovação - Apenas se status for pending E não for readOnly */}
+          {dataToShow.status === 'pending' && !readOnly && (
             <Card className="bg-slate-50 dark:bg-slate-900">
               <CardContent className="pt-6">
                 <div className="space-y-4">

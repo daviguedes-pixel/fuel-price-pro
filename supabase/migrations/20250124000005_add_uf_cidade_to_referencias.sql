@@ -23,3 +23,4 @@ SET
   )
 WHERE uf IS NULL OR cidade IS NULL;
 
+

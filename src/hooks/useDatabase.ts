@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -92,8 +92,29 @@ export const useDatabase = () => {
 
   const loadStations = async () => {
     try {
-      console.log('🏪 Carregando postos diretamente da tabela sis_empresa...');
+      // Tentar usar a função RPC que já busca id_empresa
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_sis_empresa_stations');
       
+      if (!rpcError && rpcData) {
+        console.log('✅ Postos carregados via RPC:', rpcData.length);
+        const stationsWithActive = (rpcData as any)?.map((station: any) => ({ 
+          id: String(station.id_empresa || station.cnpj_cpf || `${station.nome_empresa}-${Math.random()}`),
+          name: station.nome_empresa,
+          code: station.cnpj_cpf,
+          latitude: station.latitude,
+          longitude: station.longitude,
+          bandeira: station.bandeira,
+          rede: station.rede,
+          active: true 
+        })) || [];
+        
+        setStations(stationsWithActive);
+        console.log('📊 Total de postos:', stationsWithActive.length);
+        return;
+      }
+      
+      // Fallback: buscar diretamente sem id_empresa
+      console.log('🏪 Carregando postos diretamente da tabela sis_empresa...');
       const { data, error } = await supabase
         .from('sis_empresa')
         .select('nome_empresa, cnpj_cpf, latitude, longitude, bandeira, rede, registro_ativo')
@@ -101,7 +122,8 @@ export const useDatabase = () => {
 
       if (error) {
         console.error('❌ Erro ao carregar sis_empresa:', error);
-        throw error;
+        setStations([]);
+        return;
       }
 
       console.log('✅ Postos brutos carregados:', data?.length || 0);
@@ -120,10 +142,6 @@ export const useDatabase = () => {
 
       setStations(stationsWithActive);
       console.log('📊 Total de postos:', stationsWithActive.length);
-      console.log('📊 Postos por bandeira:', stationsWithActive.reduce((acc: any, s: any) => {
-        acc[s.bandeira || 'Sem bandeira'] = (acc[s.bandeira || 'Sem bandeira'] || 0) + 1;
-        return acc;
-      }, {}));
     } catch (error) {
       console.error('Error loading stations:', error);
       setStations([]);
@@ -178,50 +196,31 @@ export const useDatabase = () => {
     }
   };
 
-  const getPaymentMethodsForStation = async (stationId: string) => {
+  const getPaymentMethodsForStation = useCallback(async (stationId: string) => {
     try {
-      console.log('========================================');
-      console.log('🔍 getPaymentMethodsForStation chamado');
-      console.log('stationId recebido:', stationId);
-      console.log('tipo stationId:', typeof stationId);
-      console.log('========================================');
-      
-      // Buscar TODOS os tipos de pagamento primeiro
-      const allPaymentMethods = await supabase
-        .from('tipos_pagamento' as any)
-        .select('*');
-      
-      if (allPaymentMethods.error) {
-        console.error('❌ Erro ao buscar tipos de pagamento:', allPaymentMethods.error);
-        return [];
-      }
-      
-      const allMethods = allPaymentMethods.data || [];
-      
       // Validar stationId
       if (!stationId || stationId === '' || stationId === 'none') {
         return [];
       }
       
-      // Filtrar métodos que correspondem ao stationId
-      const filteredMethods = allMethods.filter((method: any) => {
-        const idPostoStr = String(method.ID_POSTO || '').trim();
-        const idPostoNum = isNaN(Number(method.ID_POSTO)) ? null : Number(method.ID_POSTO);
-        const stationIdStr = String(stationId || '').trim();
-        const stationIdNum = isNaN(Number(stationId)) ? null : Number(stationId);
-        
-        // Comparar como string ou número
-        return idPostoStr === stationIdStr || 
-               (idPostoNum !== null && stationIdNum !== null && idPostoNum === stationIdNum);
-      });
+      // Buscar tipos de pagamento que correspondem ao stationId (id_empresa)
+      const { data, error } = await supabase
+        .from('tipos_pagamento' as any)
+        .select('*')
+        .eq('ID_POSTO', stationId);
       
-      return filteredMethods as any[];
+      if (error) {
+        console.error('❌ Erro ao buscar tipos de pagamento:', error);
+        return [];
+      }
+      
+      return (data || []) as any[];
       
     } catch (error) {
       console.error('❌ Erro em getPaymentMethodsForStation:', error);
       return [];
     }
-  };
+  }, []);
 
   const loadPriceHistoryFunc = async () => {
     try {

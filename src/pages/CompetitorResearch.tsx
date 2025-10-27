@@ -123,13 +123,15 @@ export default function PublicPriceResearch() {
           setStationPaymentMethods([]);
         }
       } else {
+        // Reset apenas se realmente não houver station
         setStationPaymentMethods([]);
         setPaymentMethod("");
       }
     };
 
     loadStationPaymentMethods();
-  }, [selectedStation, getPaymentMethodsForStation]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStation]);
 
   // Buscar postos (concorrentes + próprios)
   const searchStations = async (query: string) => {

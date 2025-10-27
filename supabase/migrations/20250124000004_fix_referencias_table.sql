@@ -99,3 +99,4 @@ INSERT INTO public.referencias (
   ('550e8400-e29b-41d4-a716-446655440002', '660e8400-e29b-41d4-a716-446655440002', 'gasolina_aditivada', 5.80, '770e8400-e29b-41d4-a716-446655440002', 'Referência de teste 4', 'anexo4.jpg')
 ON CONFLICT DO NOTHING;
 
+

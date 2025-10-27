@@ -6,17 +6,20 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { SisEmpresaCombobox } from "@/components/SisEmpresaCombobox";
 import { ClientCombobox } from "@/components/ClientCombobox";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
 import { FileUploader } from "@/components/FileUploader";
+import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
 import { parseBrazilianDecimal, formatBrazilianCurrency } from "@/lib/utils";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, Send, Save, Calculator, CheckCircle, AlertCircle, Eye, DollarSign } from "lucide-react";
+import { ArrowLeft, Send, Save, Calculator, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 interface Reference {
@@ -44,6 +47,7 @@ export default function PriceRequest() {
   const [loading, setLoading] = useState(false);
   const [references, setReferences] = useState<Reference[]>([]);
   const [savedSuggestion, setSavedSuggestion] = useState<any>(null);
+  const [saveAsDraft, setSaveAsDraft] = useState(false);
   const [stationPaymentMethods, setStationPaymentMethods] = useState<any[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
 
@@ -105,6 +109,10 @@ export default function PriceRequest() {
   const [calculatedPrice, setCalculatedPrice] = useState(0);
   const [margin, setMargin] = useState(0);
   const [priceIncreaseCents, setPriceIncreaseCents] = useState(0);
+  const [activeTab, setActiveTab] = useState("new");
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  const [showRequestDetails, setShowRequestDetails] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string>("");
   const [costCalculations, setCostCalculations] = useState({
@@ -130,6 +138,13 @@ export default function PriceRequest() {
     message?: string;
   } | null>(null);
 
+  // Load my requests
+  useEffect(() => {
+    if (activeTab === 'my-requests' && user) {
+      loadMyRequests();
+    }
+  }, [activeTab, user]);
+
   // Load references when component mounts (realtime desabilitado para reduzir requisições)
   useEffect(() => {
     loadReferences();
@@ -144,6 +159,9 @@ export default function PriceRequest() {
   }, []);
 
   // Auto-fill lowest cost + freight when station and product are selected
+  const [lastSearchedStation, setLastSearchedStation] = useState<string>('');
+  const [lastSearchedProduct, setLastSearchedProduct] = useState<string>('');
+  
   useEffect(() => {
     // console.log('🔄 ===== useEffect BUSCA DE CUSTO INICIADO =====');
     // console.log('🔄 station_id:', formData.station_id, 'tipo:', typeof formData.station_id); 
@@ -153,15 +171,18 @@ export default function PriceRequest() {
     // console.log('🔄 Condição (!formData.product):', !formData.product);
 
     const fetchLowestCostAndFreight = async () => {
-      if (!formData.station_id || !formData.product) {
-        console.log('⏭️ IGNORANDO busca - campos vazios:', { 
-          station_id: formData.station_id, 
-          product: formData.product,
-          station_id_empty: !formData.station_id,
-          product_empty: !formData.product
-        });
+      // Só buscar se mudou o posto ou o produto
+      if (formData.station_id === lastSearchedStation && formData.product === lastSearchedProduct) {
         return;
       }
+      
+      if (!formData.station_id || !formData.product) {
+        return;
+      }
+      
+      // Atualizar referências
+      setLastSearchedStation(formData.station_id);
+      setLastSearchedProduct(formData.product);
       
       try {
         const today = new Date().toISOString().split('T')[0];
@@ -209,19 +230,9 @@ export default function PriceRequest() {
           }
         } catch (_e) {}
 
-        console.log('🔎 Candidatos de posto_id:', candidates);
-        
         // Tentar a função RPC com múltiplos candidatos
         let resultData: any[] | null = null;
-        let resultError: any = null;
         for (const cand of candidates) {
-          console.log('🔍 Tentando RPC com candidato:', { 
-            candidato: cand, 
-            produto: produtoBusca, 
-            data: today,
-            station: selectedStation.name 
-          });
-          
           const { data: d, error: e } = await supabase
             .rpc('get_lowest_cost_freight', {
               p_posto_id: cand,
@@ -229,27 +240,18 @@ export default function PriceRequest() {
               p_date: today
             });
           
-          console.log('📡 Resposta RPC:', { 
-            candidato: cand,
-            resultado: d, 
-            erro: e?.message,
-            temDados: d && Array.isArray(d) && d.length > 0
-          });
-          
           if (!e && d && Array.isArray(d) && d.length > 0) {
             resultData = d;
-            console.log('✅ Sucesso! Dados encontrados:', resultData);
             break;
           }
-          if (e) resultError = e;
         }
 
         // Fallback 1: buscar direto na schema cotacao (mais recente do geral + frete)
+        let resultError: any = null;
         if (!resultData) {
           try {
             const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
             if (cot) {
-              console.log('🔄 Fallback cotacao iniciado para produto:', produtoBusca);
               // 1) IDs do produto (ex.: S10)
               const { data: gci } = await cot
                 .from('grupo_codigo_item')
@@ -257,7 +259,6 @@ export default function PriceRequest() {
                 .ilike('nome', `%${produtoBusca}%`)
                 .limit(20);
               const ids = (gci as any[])?.map((r: any) => r.id_grupo_codigo_item) || [];
-              console.log('📌 IDs de produto encontrados:', ids);
 
               if (ids.length > 0) {
                 // 2) Última data disponível
@@ -381,13 +382,8 @@ export default function PriceRequest() {
           }
         }
 
-        // Se houver dados de qualquer etapa (RPC ou fallbacks), ignorar erros anteriores
-        if (resultData && Array.isArray(resultData) && resultData.length > 0) {
-          resultError = null;
-        }
-
         const data = resultData;
-        const error = resultError;
+        const error = null;
 
         console.log('📊 Resposta da função (com fallback):', { data, error });
 
@@ -428,11 +424,12 @@ export default function PriceRequest() {
             const statusType: 'today' | 'latest' | 'reference' = isReference ? 'reference' : (refDateIso === today ? 'today' : 'latest');
             setFetchStatus({ type: statusType, date: result.data_referencia || null });
             
-            if (frete > 0) {
-              toast.success(`Menor custo+frete encontrado: R$ ${custo.toFixed(4)} + R$ ${frete.toFixed(4)} = R$ ${custoTotal.toFixed(4)}`);
-            } else {
-              toast.success(`Preço de referência encontrado: R$ ${custo.toFixed(4)}`);
-            }
+            // Remover toasts para não incomodar
+            // if (frete > 0) {
+            //   toast.success(`Menor custo+frete encontrado: R$ ${custo.toFixed(4)} + R$ ${frete.toFixed(4)} = R$ ${custoTotal.toFixed(4)}`);
+            // } else {
+            //   toast.success(`Preço de referência encontrado: R$ ${custo.toFixed(4)}`);
+            // }
             
             // Se for S10, buscar também o preço do ARLA
             if (formData.product === 's10') {
@@ -506,7 +503,8 @@ export default function PriceRequest() {
                       ...prev,
                       arla_cost_price: arlaCusto.toFixed(4)
                     }));
-                    toast.success(`Preço do ARLA encontrado: R$ ${arlaCusto.toFixed(4)}`);
+                    // Remover toast para não incomodar
+                    // toast.success(`Preço do ARLA encontrado: R$ ${arlaCusto.toFixed(4)}`);
                   }
                 } else {
                   console.log('⚠️ Preço do ARLA não encontrado');
@@ -532,7 +530,60 @@ export default function PriceRequest() {
     };
 
     fetchLowestCostAndFreight();
-  }, [formData.station_id, formData.product, stations]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.station_id, formData.product, lastSearchedStation, lastSearchedProduct]);
+
+  const loadMyRequests = async () => {
+    if (!user) return;
+
+    try {
+      const { data, error } = await supabase
+        .from('price_suggestions')
+        .select('*')
+        .eq('requested_by', user.id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      // Carregar postos e clientes para enriquecer dados
+      const [stationsRes, clientsRes] = await Promise.all([
+        supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
+        supabase.from('clientes' as any).select('id_cliente, nome')
+      ]);
+
+      // Enriquecer dados
+      const enrichedData = (data || []).map((request: any) => {
+        let station = null;
+        if (request.station_id) {
+          station = (stationsRes.data as any)?.find((s: any) => {
+            const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
+            const suggId = String(request.station_id);
+            return stationId === suggId || s.cnpj_cpf === suggId || s.id_empresa === suggId;
+          });
+        }
+        
+        let client = null;
+        if (request.client_id) {
+          client = (clientsRes.data as any)?.find((c: any) => {
+            const clientId = String(c.id_cliente || c.id || '');
+            const suggId = String(request.client_id);
+            return clientId === suggId;
+          });
+        }
+
+        return {
+          ...request,
+          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
+          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
+        };
+      });
+
+      setMyRequests(enrichedData);
+    } catch (error) {
+      console.error('Erro ao carregar minhas solicitações:', error);
+    }
+  };
 
   const loadReferences = async () => {
     try {
@@ -633,19 +684,26 @@ export default function PriceRequest() {
       const purchaseCost = parseFloat(formData.purchase_cost) || 0;
       const freightCost = parseFloat(formData.freight_cost) || 0;
       
+      // Os custos JÁ estão em R$/L
+      const baseCost = purchaseCost + freightCost;
+      
       // Buscar taxa específica do posto ou taxa padrão
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-        const stationMethod = stationPaymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
+        const stationMethod = stationPaymentMethods.find(pm => {
+          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+        });
+        
         if (stationMethod) {
           feePercentage = stationMethod.TAXA || 0;
         } else {
-          const defaultMethod = paymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
+          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
           feePercentage = defaultMethod?.TAXA || 0;
         }
       }
       
-      const finalCost = (purchaseCost + freightCost) * (1 + feePercentage / 100);
+      const finalCost = baseCost * (1 + feePercentage / 100);
 
       if (!isNaN(suggestedPrice) && suggestedPrice > 0) {
         const marginCents = Math.round((suggestedPrice - finalCost) * 100);
@@ -678,45 +736,95 @@ export default function PriceRequest() {
       // Buscar taxa específica do posto ou taxa padrão
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-        const stationMethod = stationPaymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
+        // Buscar tanto pelo ID quanto pelo CARTAO
+        const stationMethod = stationPaymentMethods.find(pm => {
+          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+        });
+        
         if (stationMethod) {
           feePercentage = stationMethod.TAXA || 0;
         } else {
-          const defaultMethod = paymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
+          // Tentar em paymentMethods padrão
+          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
           feePercentage = defaultMethod?.TAXA || 0;
         }
       }
       
-      // Calcular custo final: (custo de compra + frete) * (1 + taxa/100)
+      // NOTA: Os valores de purchase_cost e freight_cost JÁ VÊM em R$/L
+      // O preço sugerido também já vem em R$/L
+      
+      // Converter m³ para litros (1 m³ = 1000 litros)
+      const volumeProjectedLiters = volumeProjected * 1000;
+      
+      // Os custos JÁ estão em R$/L, então não precisa converter
+      // Calcular base cost em R$/L
       const baseCost = purchaseCost + freightCost;
+      
+      // Calcular custo final em R$/L (aplicando taxa)
       const finalCost = baseCost * (1 + feePercentage / 100);
       
-      // Calcular receita total (volume projetado * preço sugerido)
-      const totalRevenue = volumeProjected * suggestedPrice;
+      // Calcular receita total (volume projetado em litros * preço sugerido)
+      const totalRevenue = volumeProjectedLiters * suggestedPrice;
       
-      // Calcular custo total (volume projetado * custo final)
-      const totalCost = volumeProjected * finalCost;
+      // Calcular custo total (volume projetado em litros * custo final)
+      const totalCost = volumeProjectedLiters * finalCost;
       
-      // Lucro bruto
+      // Lucro bruto = receita - custo
       const grossProfit = totalRevenue - totalCost;
       
+      console.log('🛢️ Cálculo Lucro Diesel:', {
+        volumeProjetadoM3: volumeProjected,
+        volumeProjetadoLitros: volumeProjectedLiters,
+        compraPorL: purchaseCost,
+        fretePorL: freightCost,
+        baseCostPorL: baseCost,
+        taxaPercentual: feePercentage,
+        custoFinalPorL: finalCost,
+        precoSugerido: suggestedPrice,
+        receitaTotal: totalRevenue,
+        custoTotal: totalCost,
+        lucroBruto: grossProfit,
+        lucroPorLitro: grossProfit / volumeProjectedLiters
+      });
+      
+      // Verificação manual
+      const expectedLucro = (suggestedPrice - finalCost) * volumeProjectedLiters;
+      console.log('✅ Verificação:', {
+        'Preço - Custo por L': (suggestedPrice - finalCost).toFixed(4),
+        '× Volume (L)': volumeProjectedLiters,
+        '= Lucro Esperado': expectedLucro,
+        'Lucro Calculado': grossProfit,
+        'Diferença': Math.abs(expectedLucro - grossProfit)
+      });
+      
       // Lucro por litro
-      const profitPerLiter = volumeProjected > 0 ? grossProfit / volumeProjected : 0;
+      const profitPerLiter = volumeProjectedLiters > 0 ? grossProfit / volumeProjectedLiters : 0;
       
       // Compensação do ARLA (margem ARLA * volume)
       // Para S10: ARLA é vendido junto, então calculamos a margem do ARLA
       // Volume do ARLA é proporcional ao diesel (aprox. 5% do volume)
-      const arlaVolume = volumeProjected * 0.05;
+      const arlaVolume = volumeProjectedLiters * 0.05;
       let arlaCompensation = 0;
       
       if (formData.product === 's10') {
         // Para S10: margem = preço de venda do ARLA - preço de compra do ARLA
         const arlaMargin = parseFloat(formData.arla_purchase_price) - parseFloat(formData.arla_cost_price);
+        // Volume de ARLA é 5% do volume de diesel (já em litros)
+        // arlaVolume já está em litros (volumeProjectedLiters * 0.05)
         arlaCompensation = arlaVolume * arlaMargin;
+        console.log('🔍 Cálculo ARLA S10:', {
+          volumeDieselLitros: volumeProjectedLiters,
+          volumeARLALitros: arlaVolume,
+          arlaPurchasePrice: formData.arla_purchase_price,
+          arlaCostPrice: formData.arla_cost_price,
+          arlaMargin,
+          arlaCompensation
+        });
       } else if (formData.product === 'arla32_granel') {
         // Para ARLA: margem = preço sugerido - preço de compra
         const arlaMargin = suggestedPrice - parseFloat(formData.arla_cost_price);
-        arlaCompensation = volumeProjected * arlaMargin;
+        arlaCompensation = volumeProjectedLiters * arlaMargin;
       }
       
       // Resultado líquido (lucro bruto + compensação ARLA)
@@ -756,15 +864,40 @@ export default function PriceRequest() {
     stationPaymentMethods
   ]);
 
-  // Recalcular margem quando os campos relevantes mudarem
+  // Recalcular margem quando os campos relevantes mudarem (com debounce)
   useEffect(() => {
-    calculateMargin();
-  }, [calculateMargin]);
+    const timeout = setTimeout(() => {
+      calculateMargin();
+    }, 100);
+    return () => clearTimeout(timeout);
+  }, [
+    formData.suggested_price,
+    formData.current_price,
+    formData.purchase_cost,
+    formData.freight_cost,
+    formData.payment_method_id,
+    stationPaymentMethods,
+    paymentMethods
+  ]);
 
-  // Recalcular custos quando os campos relevantes mudarem
+  // Recalcular custos quando os campos relevantes mudarem (com debounce)
   useEffect(() => {
-    calculateCosts();
-  }, [calculateCosts]);
+    const timeout = setTimeout(() => {
+      calculateCosts();
+    }, 100);
+    return () => clearTimeout(timeout);
+  }, [
+    formData.purchase_cost,
+    formData.freight_cost,
+    formData.volume_made,
+    formData.volume_projected,
+    formData.suggested_price,
+    formData.arla_purchase_price,
+    formData.product,
+    formData.payment_method_id,
+    stationPaymentMethods,
+    paymentMethods
+  ]);
 
   const getFilteredReferences = () => {
     try {
@@ -801,34 +934,89 @@ export default function PriceRequest() {
     });
   };
 
+  // Formatação com 4 casas decimais para valores unitários (custo/L, preço/L)
+  const formatPrice4Decimals = (price: number) => {
+    if (typeof price !== 'number' || isNaN(price)) return 'R$ 0,0000';
+    return price.toLocaleString('pt-BR', {
+      minimumFractionDigits: 4,
+      maximumFractionDigits: 4,
+      style: 'currency',
+      currency: 'BRL'
+    });
+  };
+
   const handleSubmit = async (isDraft: boolean = false) => {
-    if (!formData.station_id || !formData.client_id || !formData.product || !formData.suggested_price) {
+    // Só validar campos obrigatórios se não for rascunho
+    if (!isDraft && (!formData.station_id || !formData.client_id || !formData.product || !formData.suggested_price)) {
       toast.error("Por favor, preencha todos os campos obrigatórios");
       return;
     }
 
     setLoading(true);
     try {
+      // Converter preços para formato de reais (NÃO centavos)
       const suggestedPriceNum = parseBrazilianDecimal(formData.suggested_price);
       const currentPriceNum = parseBrazilianDecimal(formData.current_price);
-      const finalPriceCents = isNaN(suggestedPriceNum) ? null : Math.round(suggestedPriceNum * 100);
-      const currentPriceCents = isNaN(currentPriceNum) ? null : Math.round(currentPriceNum * 100);
-      const suggestedPriceCents = isNaN(suggestedPriceNum) ? null : Math.round(suggestedPriceNum * 100);
-      const costPriceCents = Math.round((parseBrazilianDecimal(formData.purchase_cost) || 0) * 100);
+      const purchaseCostNum = parseBrazilianDecimal(formData.purchase_cost);
+      const freightCostNum = parseBrazilianDecimal(formData.freight_cost);
+      
+      // Salvar valores em REAIS (o banco espera numeric(10,4) que já aceita decimais)
+      const finalPrice = isNaN(suggestedPriceNum) ? null : suggestedPriceNum;
+      const currentPrice = isNaN(currentPriceNum) ? null : currentPriceNum;
+      const suggestedPrice = isNaN(suggestedPriceNum) ? null : suggestedPriceNum;
+      const costPrice = purchaseCostNum + freightCostNum;
+      
+      console.log('💰 Valores de preço:', {
+        final_price: finalPrice,
+        current_price: currentPrice,
+        suggested_price: suggestedPrice,
+        cost_price: costPrice
+      });
+      
+      // Como as colunas foram alteradas para TEXT, podemos salvar qualquer ID
+      const stationIdToSave = (!formData.station_id || formData.station_id === 'none') 
+        ? null 
+        : String(formData.station_id);
+        
+      const clientIdToSave = (!formData.client_id || formData.client_id === 'none')
+        ? null
+        : String(formData.client_id);
+        
+      const referenceIdToSave = (!formData.reference_id || formData.reference_id === 'none')
+        ? null
+        : String(formData.reference_id);
+      
+      const paymentMethodIdToSave = (!formData.payment_method_id || formData.payment_method_id === 'none')
+        ? null
+        : String(formData.payment_method_id);
+      
+      console.log('📝 IDs DO FORMULÁRIO:', {
+        station_id_form: formData.station_id,
+        client_id_form: formData.client_id,
+        reference_id_form: formData.reference_id,
+        payment_method_id_form: formData.payment_method_id
+      });
+      console.log('📝 IDs VALIDADOS PARA SALVAR:', {
+        station_id: stationIdToSave,
+        client_id: clientIdToSave,
+        reference_id: referenceIdToSave,
+        payment_method_id: paymentMethodIdToSave
+      });
+      
       const requestData = {
-        station_id: formData.station_id,
-        client_id: formData.client_id,
+        station_id: stationIdToSave,
+        client_id: clientIdToSave,
         product: formData.product as any,
-        current_price: currentPriceCents,
-        suggested_price: suggestedPriceCents,
-        final_price: finalPriceCents ?? 0,
-        reference_id: formData.reference_id === "none" ? null : formData.reference_id,
-        payment_method_id: formData.payment_method_id === "none" ? null : formData.payment_method_id,
+        current_price: currentPrice,
+        suggested_price: suggestedPrice,
+        final_price: finalPrice ?? 0,
+        reference_id: referenceIdToSave,
+        payment_method_id: paymentMethodIdToSave,
         observations: formData.observations || null,
         attachments: attachments,
-        requested_by: user?.id || null,
-        margin_cents: margin, // Margem em centavos
-        cost_price: costPriceCents,
+        requested_by: user?.id,
+        margin_cents: Math.round(margin * 100), // Margem em centavos para cálculo
+        cost_price: costPrice,
         status: isDraft ? 'draft' as any : 'pending' as any,
         // Dados de cálculo para análise
         purchase_cost: parseBrazilianDecimal(formData.purchase_cost) || null,
@@ -849,6 +1037,9 @@ export default function PriceRequest() {
         rejections_count: 0
       };
 
+      console.log('🔍 Dados a serem inseridos:', requestData);
+      console.log('📝 isDraft:', isDraft, 'status:', isDraft ? 'draft' : 'pending');
+      
       const { data, error } = await supabase
         .from('price_suggestions')
         .insert([requestData])
@@ -856,24 +1047,106 @@ export default function PriceRequest() {
         .single();
 
       if (error) {
+        console.error('❌ Erro completo:', error);
+        console.error('❌ Código do erro:', error.code);
+        console.error('❌ Detalhes do erro:', error.details);
+        console.error('❌ Mensagem:', error.message);
         toast.error("Erro ao salvar solicitação: " + error.message);
         return;
       }
 
       // Carregar dados completos da solicitação com nomes
-      const [stationData, clientData] = await Promise.all([
-        supabase.from('sis_empresa' as any).select('nome_empresa').eq('cnpj_cpf', formData.station_id).maybeSingle(),
-        supabase.from('clientes' as any).select('nome').eq('id_cliente', formData.client_id).maybeSingle()
-      ]);
+      let stationData = null;
+      let clientData = null;
+      
+      console.log('🔍 Buscando dados do posto e cliente...');
+      console.log('station_id:', stationIdToSave, 'client_id:', clientIdToSave);
+      console.log('stations disponíveis:', stations.length);
+      console.log('clients disponíveis:', clients.length);
+      
+      // Buscar posto - tentar vários campos
+      if (stationIdToSave) {
+        try {
+          // Tentar por cnpj_cpf primeiro
+          const { data: seByCnpj, error: cnpjError } = await supabase
+            .from('sis_empresa' as any)
+            .select('nome_empresa, cnpj_cpf')
+            .eq('cnpj_cpf', stationIdToSave)
+            .maybeSingle();
+          
+          if (!cnpjError && seByCnpj) {
+            stationData = { name: (seByCnpj as any).nome_empresa, code: (seByCnpj as any).cnpj_cpf };
+            console.log('✅ Posto encontrado por CNPJ:', stationData.name);
+          } else {
+            // Tentar como UUID direto
+            const { data: seById, error: idError } = await supabase
+              .from('sis_empresa' as any)
+              .select('nome_empresa, cnpj_cpf')
+              .eq('id', stationIdToSave)
+              .maybeSingle();
+            
+            if (!idError && seById) {
+              stationData = { name: (seById as any).nome_empresa, code: (seById as any).cnpj_cpf || stationIdToSave };
+              console.log('✅ Posto encontrado por ID:', stationData.name);
+            } else {
+              // Buscar da lista de stations que já temos carregada
+              const foundStation = stations.find(s => s.id === stationIdToSave || s.code === stationIdToSave);
+              if (foundStation) {
+                stationData = { name: foundStation.name, code: foundStation.code || foundStation.id };
+                console.log('✅ Posto encontrado na lista:', stationData.name);
+              } else {
+                console.warn('⚠️ Posto não encontrado para:', stationIdToSave);
+                console.warn('IDs disponíveis:', stations.map(s => ({ id: s.id, code: s.code })));
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao buscar dados do posto:', err);
+        }
+      }
+      
+      // Buscar cliente
+      if (clientIdToSave) {
+        try {
+          const { data: client, error: clientError } = await supabase
+            .from('clientes' as any)
+            .select('nome, id_cliente')
+            .eq('id_cliente', clientIdToSave)
+            .maybeSingle();
+          
+          if (!clientError && client) {
+            clientData = { name: (client as any).nome, code: String((client as any).id_cliente) };
+            console.log('✅ Cliente encontrado:', clientData.name);
+          } else {
+            // Buscar da lista de clients que já temos carregada
+            const foundClient = clients.find(c => c.id === clientIdToSave || c.code === clientIdToSave);
+            if (foundClient) {
+              clientData = { name: foundClient.name, code: foundClient.code || foundClient.id };
+              console.log('✅ Cliente encontrado na lista:', clientData.name);
+            } else {
+              console.warn('⚠️ Cliente não encontrado para:', clientIdToSave);
+              console.warn('IDs disponíveis:', clients.map(c => ({ id: c.id, code: c.code })));
+            }
+          }
+        } catch (err) {
+          console.error('Erro ao buscar dados do cliente:', err);
+        }
+      }
 
       const enrichedData = {
         ...data,
-        stations: stationData.data ? { name: (stationData.data as any).nome_empresa, code: formData.station_id } : null,
-        clients: clientData.data ? { name: (clientData.data as any).nome, code: formData.client_id } : null,
-        payment_methods: paymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id) || null
+        stations: stationData || { name: formData.station_id, code: formData.station_id },
+        clients: clientData || { name: formData.client_id, code: formData.client_id },
+        payment_methods: stationPaymentMethods.find(pm => {
+          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+        }) || paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id) || null
       };
+      
+      console.log('📊 Dados enriquecidos:', enrichedData);
 
       toast.success(isDraft ? "Rascunho salvo com sucesso!" : "Solicitação enviada para aprovação!");
+      setSaveAsDraft(isDraft);
       setSavedSuggestion(enrichedData);
       
     } catch (error) {
@@ -934,9 +1207,13 @@ export default function PriceRequest() {
                 </div>
               </div>
               <CardTitle className="text-2xl font-bold text-green-600 dark:text-green-400 mb-2">
-                Solicitação Enviada com Sucesso!
+                {saveAsDraft ? "Rascunho Salvo com Sucesso!" : "Solicitação Enviada com Sucesso!"}
               </CardTitle>
-              <p className="text-slate-600 dark:text-slate-400">Os dados foram salvos e estão em processo de aprovação</p>
+              <p className="text-slate-600 dark:text-slate-400">
+                {saveAsDraft 
+                  ? "O rascunho foi salvo e você pode continuar editando depois" 
+                  : "Os dados foram salvos e estão em processo de aprovação"}
+              </p>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1051,6 +1328,19 @@ export default function PriceRequest() {
           </div>
         </div>
 
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-2 mb-6">
+            <TabsTrigger value="new" className="flex items-center gap-2">
+              <DollarSign className="h-4 w-4" />
+              Nova Solicitação
+            </TabsTrigger>
+            <TabsTrigger value="my-requests" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Minhas Solicitações
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="new">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Form */}
         <div className="lg:col-span-2">
@@ -1133,6 +1423,7 @@ export default function PriceRequest() {
                       placeholder="0.00"
                       value={formData.current_price}
                       onChange={(e) => handleInputChange("current_price", e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
                     />
                   </div>
@@ -1152,6 +1443,7 @@ export default function PriceRequest() {
                       placeholder="0.00"
                       value={formData.suggested_price}
                       onChange={(e) => handleInputChange("suggested_price", e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
                     />
                   </div>
@@ -1170,19 +1462,18 @@ export default function PriceRequest() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Nenhum</SelectItem>
-                        {stationPaymentMethods.length > 0 ? (
-                          stationPaymentMethods.map((method, index) => (
-                            <SelectItem key={`station-payment-${index}`} value={method.CARTAO || `method-${index}`}>
+                        {(stationPaymentMethods.filter(m => m.TAXA != null).length > 0 ? 
+                          stationPaymentMethods.filter(m => m.TAXA != null) : 
+                          paymentMethods?.filter(m => m.TAXA != null) || []
+                        ).map((method, index) => {
+                          // Use ID_POSTO as the value, or id if available
+                          const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
+                          return (
+                            <SelectItem key={`payment-${index}`} value={String(methodId)}>
                               {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
                             </SelectItem>
-                          ))
-                        ) : (
-                          paymentMethods?.map((method, index) => (
-                            <SelectItem key={`payment-method-${index}`} value={method.CARTAO || `method-${index}`}>
-                              {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
-                            </SelectItem>
-                          ))
-                        )}
+                          );
+                        })}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1201,6 +1492,7 @@ export default function PriceRequest() {
                           placeholder="0.00"
                           value={formData.suggested_price}
                           onChange={(e) => handleInputChange("suggested_price", e.target.value)}
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="h-11 bg-white dark:bg-slate-800 text-lg font-semibold"
                         />
                         <p className="text-xs text-green-600 dark:text-green-400 mt-2">
@@ -1224,6 +1516,7 @@ export default function PriceRequest() {
                           placeholder="0.00"
                           value={formData.arla_purchase_price}
                           onChange={(e) => handleInputChange("arla_purchase_price", e.target.value)}
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="h-11 bg-white dark:bg-slate-800"
                         />
                         <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
@@ -1248,6 +1541,7 @@ export default function PriceRequest() {
                       placeholder="0"
                       value={formData.volume_made}
                       onChange={(e) => handleInputChange("volume_made", e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
                     />
                   </div>
@@ -1267,6 +1561,7 @@ export default function PriceRequest() {
                       placeholder="0"
                       value={formData.volume_projected}
                       onChange={(e) => handleInputChange("volume_projected", e.target.value)}
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
                     />
                   </div>
@@ -1353,6 +1648,7 @@ export default function PriceRequest() {
                       placeholder="0.00"
                       value={formData.purchase_cost}
                       readOnly
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                     />
                     {priceOrigin && (
@@ -1399,6 +1695,7 @@ export default function PriceRequest() {
                       placeholder="0.00"
                       value={formData.freight_cost}
                       readOnly
+                      onWheel={(e) => e.currentTarget.blur()}
                       className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                     />
                     <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -1421,6 +1718,7 @@ export default function PriceRequest() {
                           placeholder="0.00"
                           value={formData.arla_cost_price}
                           readOnly
+                          onWheel={(e) => e.currentTarget.blur()}
                           className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                         />
                         <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
@@ -1548,28 +1846,83 @@ export default function PriceRequest() {
               <CardContent className="space-y-4">
                 <div className="space-y-3">
                   {/* Custo Final por Litro */}
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50">
-                    <div className="flex flex-col">
+                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50">
+                    <div className="flex justify-between items-center mb-1">
                       <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Custo Final/L:</span>
-                      {(() => {
-                        let feePercentage = 0;
-                        if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-                          const stationMethod = stationPaymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
-                          if (stationMethod) {
-                            feePercentage = stationMethod.TAXA || 0;
-                          } else {
-                            const defaultMethod = paymentMethods.find(pm => pm.ID_POSTO === formData.payment_method_id);
-                            feePercentage = defaultMethod?.TAXA || 0;
-                          }
-                        }
-                        return feePercentage > 0 ? (
-                          <span className="text-xs text-slate-500 dark:text-slate-500">
-                            Taxa: {feePercentage.toFixed(2)}%
-                          </span>
-                        ) : null;
-                      })()}
+                      <span className="font-bold text-slate-800 dark:text-slate-200">{formatPrice4Decimals(costCalculations.finalCost)}</span>
                     </div>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">{formatPrice(costCalculations.finalCost)}</span>
+                    {(() => {
+                      let feePercentage = 0;
+                      if (formData.payment_method_id && formData.payment_method_id !== 'none') {
+                        const stationMethod = stationPaymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
+                        if (stationMethod) {
+                          feePercentage = stationMethod.TAXA || 0;
+                        } else {
+                          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
+                          feePercentage = defaultMethod?.TAXA || 0;
+                        }
+                      }
+                      const purchaseCost = parseFloat(formData.purchase_cost) || 0;
+                      const freightCost = parseFloat(formData.freight_cost) || 0;
+                      // Os custos JÁ estão em R$/L
+                      const baseCostTotal = purchaseCost + freightCost;
+                      return feePercentage > 0 ? (
+                        <div className="text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-600 pt-1 mt-1">
+                          <div className="flex justify-between">
+                            <span>Base (compra + frete)/L:</span>
+                            <span>{formatPrice4Decimals(baseCostTotal)}</span>
+                          </div>
+                          <div className="flex justify-between text-orange-600 dark:text-orange-400 font-medium">
+                            <span>Taxa ({feePercentage.toFixed(2)}%):</span>
+                            <span>+{formatPrice4Decimals(costCalculations.finalCost - baseCostTotal)}</span>
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
+                    
+                    {/* Sempre mostrar informações de taxa se houver */}
+                    {(() => {
+                      let feePercentage = 0;
+                      if (formData.payment_method_id && formData.payment_method_id !== 'none') {
+                        const stationMethod = stationPaymentMethods.find(pm => {
+                          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+                          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+                        });
+                        
+                        if (stationMethod) {
+                          feePercentage = stationMethod.TAXA || 0;
+                        } else {
+                          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
+                          feePercentage = defaultMethod?.TAXA || 0;
+                        }
+                      }
+                      
+                      if (feePercentage > 0) {
+                        const purchaseCost = parseFloat(formData.purchase_cost) || 0;
+                        const freightCost = parseFloat(formData.freight_cost) || 0;
+                        const baseCost = purchaseCost + freightCost;
+                        
+                        const taxValue = baseCost * (feePercentage / 100);
+                        
+                        return (
+                          <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 pt-2 border-t border-slate-300 dark:border-slate-600">
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">Taxa aplicada:</span>
+                              <span className="font-bold">{feePercentage.toFixed(2)}%</span>
+                            </div>
+                            <div className="flex justify-between items-center mt-1">
+                              <span className="text-slate-500 dark:text-slate-400">Custo base (sem taxa):</span>
+                              <span className="text-slate-600 dark:text-slate-300">{formatPrice4Decimals(baseCost)}</span>
+                            </div>
+                            <div className="flex justify-between items-center mt-1">
+                              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Acréscimo da taxa:</span>
+                              <span className="text-emerald-700 dark:text-emerald-300 font-bold">+{formatPrice4Decimals(taxValue)}</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
 
                   {/* Receita Total */}
@@ -1597,7 +1950,7 @@ export default function PriceRequest() {
                   {/* Lucro por Litro */}
                   <div className="flex justify-between items-center p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20">
                     <span className="text-sm font-medium text-purple-600 dark:text-purple-400">Lucro/Litro:</span>
-                    <span className="font-bold text-purple-700 dark:text-purple-300">{formatPrice(costCalculations.profitPerLiter)}</span>
+                    <span className="font-bold text-purple-700 dark:text-purple-300">{formatPrice4Decimals(costCalculations.profitPerLiter)}</span>
                   </div>
 
                   {/* Compensação ARLA */}
@@ -1649,8 +2002,145 @@ export default function PriceRequest() {
               </CardContent>
             </Card>
           )}
-        </div>
-        </div>
+
+          {/* Card: Origem do Preço de Custo */}
+          {priceOrigin && (
+            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+              <CardHeader className="text-center pb-4">
+                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-200">
+                  Origem do Preço de Custo
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Base:</Label>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_nome}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Código:</Label>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_codigo}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">UF:</Label>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_uf}</p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Tipo de Entrega:</Label>
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.forma_entrega}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          </div>
+          </TabsContent>
+
+          <TabsContent value="my-requests">
+            <div className="space-y-6">
+              {/* Stats */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Total</p>
+                        <p className="text-2xl font-bold">{myRequests.length}</p>
+                      </div>
+                      <FileText className="h-6 w-6 text-blue-500" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Pendentes</p>
+                        <p className="text-2xl font-bold text-yellow-600">{myRequests.filter(r => r.status === 'pending').length}</p>
+                      </div>
+                      <Clock className="h-6 w-6 text-yellow-500" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Aprovadas</p>
+                        <p className="text-2xl font-bold text-green-600">{myRequests.filter(r => r.status === 'approved').length}</p>
+                      </div>
+                      <Check className="h-6 w-6 text-green-500" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">Rejeitadas</p>
+                        <p className="text-2xl font-bold text-red-600">{myRequests.filter(r => r.status === 'rejected').length}</p>
+                      </div>
+                      <X className="h-6 w-6 text-red-500" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* My Requests List */}
+              <div className="space-y-4">
+                {myRequests.map((request) => (
+                  <Card key={request.id} className="hover:shadow-lg transition-shadow">
+                    <CardContent className="p-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 gap-4">
+                          <div className="flex items-center gap-3 mb-2">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">
+                              {request.stations?.name || 'Posto'} - {request.clients?.name || 'Cliente'}
+                            </span>
+                            {request.status === 'pending' && (
+                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>
+                            )}
+                            {request.status === 'approved' && (
+                              <Badge className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>
+                            )}
+                            {request.status === 'rejected' && (
+                              <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedRequest(request);
+                            setShowRequestDetails(true);
+                          }}
+                        >
+                          <Eye className="h-4 w-4 mr-2" />
+                          Ver Detalhes
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+                
+                {myRequests.length === 0 && (
+                  <Card>
+                    <CardContent className="p-12 text-center">
+                      <p className="text-slate-600 dark:text-slate-400">Nenhuma solicitação encontrada</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Image Viewer Modal */}
@@ -1660,6 +2150,22 @@ export default function PriceRequest() {
         imageUrl={selectedImage}
         imageName="Anexo da Referência"
       />
+
+      {/* Approval Details Modal - Read Only */}
+      {showRequestDetails && selectedRequest && (
+        <ApprovalDetailsModal
+          isOpen={showRequestDetails}
+          onClose={() => {
+            setShowRequestDetails(false);
+            setSelectedRequest(null);
+          }}
+          suggestion={selectedRequest}
+          onApprove={() => {}}
+          onReject={() => {}}
+          loading={false}
+          readOnly={true}
+        />
+      )}
     </div>
   );
 }

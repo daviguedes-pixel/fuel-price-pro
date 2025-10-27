@@ -7,6 +7,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { Bell, Check, CheckCheck, X, Clock, AlertTriangle, CheckCircle, XCircle, Info } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { useNavigate } from "react-router-dom";
 
 interface NotificationCenterProps {
   isOpen: boolean;
@@ -28,43 +29,55 @@ const getNotificationIcon = (type: string) => {
   }
 };
 
-const getNotificationColor = (type: string) => {
+const getNotificationColor = (type: string, read: boolean) => {
+  const baseDark = read ? 'dark:bg-slate-800/50' : 'dark:bg-slate-800';
+  const baseLight = read ? 'bg-slate-50/30' : 'bg-slate-50';
+  
   switch (type) {
     case 'rate_expiry':
-      return 'border-l-orange-500 bg-orange-50';
+      return `border-l-orange-500 ${baseLight} dark:bg-orange-900/20 dark:border-orange-600 ${baseDark}`;
     case 'approval_pending':
-      return 'border-l-yellow-500 bg-yellow-50';
+      return `border-l-yellow-500 ${baseLight} dark:bg-yellow-900/20 dark:border-yellow-600 ${baseDark}`;
     case 'price_approved':
-      return 'border-l-green-500 bg-green-50';
+    case 'approved':
+      return `border-l-green-500 ${baseLight} dark:bg-green-900/20 dark:border-green-600 ${baseDark}`;
     case 'price_rejected':
-      return 'border-l-red-500 bg-red-50';
+    case 'rejected':
+      return `border-l-red-500 ${baseLight} dark:bg-red-900/20 dark:border-red-600 ${baseDark}`;
     default:
-      return 'border-l-blue-500 bg-blue-50';
+      return `border-l-blue-500 ${baseLight} dark:bg-blue-900/20 dark:border-blue-600 ${baseDark}`;
   }
 };
 
 export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps) {
   const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
+  const navigate = useNavigate();
+
+  const handleNotificationClick = (notification: any) => {
+    // Navegar para a página de aprovações
+    onClose();
+    navigate('/approvals');
+  };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80" onClick={onClose}>
       <div 
-        className="fixed right-4 top-20 w-96 max-h-[600px] bg-background border rounded-lg shadow-lg"
+        className="fixed right-4 top-20 w-96 max-h-[600px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <CardHeader className="pb-3">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Bell className="h-5 w-5" />
-              Notificações
+            <div className="flex items-center gap-2">
+              <Bell className="h-5 w-5 text-slate-900 dark:text-slate-100" />
+              <h3 className="font-semibold text-slate-900 dark:text-slate-100">Notificações</h3>
               {unreadCount > 0 && (
                 <Badge variant="destructive" className="ml-2">
                   {unreadCount}
                 </Badge>
               )}
-            </CardTitle>
+            </div>
             <div className="flex items-center gap-2">
               {unreadCount > 0 && (
                 <Button
@@ -82,24 +95,24 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
               </Button>
             </div>
           </div>
-        </CardHeader>
+        </div>
         
-        <CardContent className="p-0">
+        <div className="p-0">
           <ScrollArea className="h-[500px]">
             {notifications.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400">
                 <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p>Nenhuma notificação</p>
               </div>
             ) : (
-              <div className="space-y-1">
+              <div className="space-y-1 p-2">
                 {notifications.map((notification) => (
                   <div
                     key={notification.id}
+                    onClick={() => handleNotificationClick(notification)}
                     className={`
-                      border-l-4 p-4 hover:bg-muted/50 transition-colors cursor-pointer
-                      ${getNotificationColor(notification.type)}
-                      ${!notification.read ? 'bg-opacity-100' : 'bg-opacity-30'}
+                      border-l-4 p-4 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer rounded
+                      ${getNotificationColor(notification.type, notification.read)}
                     `}
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -107,17 +120,17 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
                         {getNotificationIcon(notification.type)}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <h4 className={`text-sm font-medium ${!notification.read ? 'text-foreground' : 'text-muted-foreground'}`}>
+                            <h4 className={`text-sm font-medium ${!notification.read ? 'text-slate-900 dark:text-slate-100' : 'text-slate-600 dark:text-slate-400'}`}>
                               {notification.title}
                             </h4>
                             {!notification.read && (
-                              <div className="w-2 h-2 bg-primary rounded-full" />
+                              <div className="w-2 h-2 bg-blue-500 rounded-full" />
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1">
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                             {notification.message}
                           </p>
-                          <p className="text-xs text-muted-foreground mt-2">
+                          <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">
                             {formatDistanceToNow(new Date(notification.created_at), {
                               addSuffix: true,
                               locale: ptBR
@@ -160,7 +173,7 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
               </div>
             )}
           </ScrollArea>
-        </CardContent>
+        </div>
       </div>
     </div>
   );

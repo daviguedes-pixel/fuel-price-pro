@@ -27,7 +27,7 @@ export function RealtimeNotifications() {
           
           // Mostrar toast para notificações não lidas
           if (!notification.read) {
-            toast.info(notification.title, {
+            toast.info(notification.title || 'Nova notificação', {
               description: notification.message,
               duration: 5000,
               action: {

@@ -52,6 +52,50 @@ export default function Approvals() {
     loadSuggestions();
   }, []);
 
+  // Buscar todos os usuários que podem aprovar (dinâmico)
+  const loadApprovers = async () => {
+    try {
+      // Buscar perfis que podem aprovar
+      const { data: profilesWithPermission, error: profilesError } = await supabase
+        .from('profile_permissions')
+        .select('perfil')
+        .eq('can_approve', true);
+      
+      if (profilesError) {
+        console.error('Erro ao buscar perfis com permissão:', profilesError);
+        return [];
+      }
+      
+      const perfisComPermissao = profilesWithPermission?.map(p => p.perfil) || [];
+      
+      if (perfisComPermissao.length === 0) {
+        console.log('⚠️ Nenhum perfil tem permissão de aprovar');
+        return [];
+      }
+      
+      console.log('📋 Perfis que podem aprovar:', perfisComPermissao);
+      
+      // Buscar usuários com esses perfis
+      const { data: users, error: usersError } = await supabase
+        .from('user_profiles')
+        .select('user_id, email, perfil')
+        .in('perfil', perfisComPermissao)
+        .order('email');
+      
+      if (usersError) {
+        console.error('Erro ao buscar usuários:', usersError);
+        return [];
+      }
+      
+      console.log('👥 Usuários que podem aprovar:', users);
+      
+      return users || [];
+    } catch (error) {
+      console.error('Erro ao carregar aprovadores:', error);
+      return [];
+    }
+  };
+
   const loadSuggestions = async () => {
     try {
       console.log('=== CARREGANDO SUGESTÕES ===');
@@ -62,8 +106,19 @@ export default function Approvals() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      console.log('Dados carregados:', data);
+      console.log('🔍 Total de sugestões carregadas:', data?.length);
+      console.log('📊 Dados carregados (primeiras 3):', data?.slice(0, 3));
       console.log('Erro:', error);
+      
+      // Log detalhado de IDs salvos
+      data?.forEach((s, i) => {
+        console.log(`\n📝 Sugestão ${i + 1}:`, {
+          id: s.id,
+          station_id: s.station_id,
+          client_id: s.client_id,
+          created_at: s.created_at
+        });
+      });
 
       if (error) {
         console.error('Erro na consulta:', error);
@@ -73,36 +128,147 @@ export default function Approvals() {
       // Carregar postos, clientes e métodos de pagamento separadamente
       const [stationsRes, clientsRes, paymentMethodsRes] = await Promise.all([
         supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clients').select('id, name'),
-        supabase.from('payment_methods').select('*')
+        supabase.from('clientes' as any).select('id_cliente, nome'),
+        supabase.from('tipos_pagamento' as any).select('CARTAO, TAXA, PRAZO, ID_POSTO')
       ]);
+
+      console.log('✅ stationsRes (completo):', JSON.stringify(stationsRes, null, 2));
+      console.log('✅ clientsRes (completo):', JSON.stringify(clientsRes, null, 2));
+      console.log('📊 Total de stations:', (stationsRes.data as any)?.length);
+      console.log('📊 Total de clients:', (clientsRes.data as any)?.length);
+      
+      // Mostrar estrutura do primeiro station
+      if (stationsRes.data && (stationsRes.data as any).length > 0) {
+        console.log('📋 Estrutura do primeiro station:', (stationsRes.data as any)[0]);
+      }
+      
+      // Mostrar estrutura do primeiro client
+      if (clientsRes.data && (clientsRes.data as any).length > 0) {
+        console.log('📋 Estrutura do primeiro client:', (clientsRes.data as any)[0]);
+      }
 
       // Enriquecer dados localmente
       const enrichedData = (data || []).map((suggestion: any) => {
-        const station = (stationsRes.data as any)?.find((s: any) => 
-          s.id === suggestion.station_id || String(s.id) === String(suggestion.station_id)
-        );
-        const client = (clientsRes.data as any)?.find((c: any) => 
-          String(c.id) === String(suggestion.client_id)
-        );
+        console.log('\n🔍 Processando sugestão:', suggestion.id);
+        console.log('   station_id:', suggestion.station_id);
+        console.log('   client_id:', suggestion.client_id);
+        
+        // Buscar posto - tentar várias formas
+        let station = null;
+        if (suggestion.station_id) {
+          console.log('   🔎 Buscando posto para:', suggestion.station_id);
+          
+          station = (stationsRes.data as any)?.find((s: any) => {
+            const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
+            const suggId = String(suggestion.station_id);
+            
+            const match1 = stationId === suggId;
+            const match2 = s.cnpj_cpf === suggId;
+            const match3 = s.id_empresa === suggId;
+            const match4 = s.id === suggId;
+            
+            if (match1 || match2 || match3 || match4) {
+              console.log('   ✅ MATCH encontrado:', s);
+            }
+            
+            return match1 || match2 || match3 || match4;
+          });
+          
+          if (station) {
+            console.log('   ✅ Posto encontrado:', station);
+          } else {
+            console.log('   ❌ Posto NÃO encontrado');
+            console.log('   🗂️ Primeiros IDs disponíveis:', (stationsRes.data as any)?.slice(0, 3).map((s: any) => ({ 
+              id: s.id, 
+              id_empresa: s.id_empresa, 
+              cnpj_cpf: s.cnpj_cpf,
+              nome: s.nome_empresa 
+            })));
+          }
+        }
+        
+        // Buscar cliente
+        let client = null;
+        if (suggestion.client_id) {
+          console.log('   🔎 Buscando cliente para:', suggestion.client_id);
+          
+          client = (clientsRes.data as any)?.find((c: any) => {
+            const clientId = String(c.id_cliente || c.id || '');
+            const suggId = String(suggestion.client_id);
+            
+            if (clientId === suggId) {
+              console.log('   ✅ MATCH cliente encontrado:', c);
+            }
+            
+            return clientId === suggId;
+          });
+          
+          if (client) {
+            console.log('   ✅ Cliente encontrado:', client);
+          } else {
+            console.log('   ❌ Cliente NÃO encontrado');
+            console.log('   🗂️ Primeiros IDs disponíveis:', (clientsRes.data as any)?.slice(0, 3).map((c: any) => ({ 
+              id: c.id, 
+              id_cliente: c.id_cliente, 
+              nome: c.nome 
+            })));
+          }
+        }
+        
+        // Buscar tipo de pagamento
         const paymentMethod = paymentMethodsRes.data?.find((pm: any) => 
-          pm.id === suggestion.payment_method_id
+          pm.CARTAO === suggestion.payment_method_id ||
+          String(pm.ID_POSTO) === String(suggestion.payment_method_id)
         );
 
+        console.log('   resultado - station:', station?.nome_empresa || station?.name || 'não encontrado');
+        console.log('   resultado - client:', client?.nome || client?.name || 'não encontrado');
+        
         return {
           ...suggestion,
-          stations: station ? { name: station.name, code: station.id } : null,
-          clients: client ? { name: client.name, code: String(client.id) } : null,
-          payment_methods: paymentMethod ? { name: paymentMethod.name } : null
+          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
+          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null,
+          payment_methods: paymentMethod ? { 
+            name: paymentMethod.CARTAO,
+            TAXA: paymentMethod.TAXA,
+            PRAZO: paymentMethod.PRAZO
+          } : null
         };
       });
       
-      setSuggestions(enrichedData);
-      setFilteredSuggestions(enrichedData);
+      // Filtrar aprovações baseado no approval_level do usuário atual
+      const approvers = await loadApprovers();
+      const userIndex = approvers.findIndex(approver => approver.user_id === user?.id);
+      const userApprovalLevel = userIndex >= 0 ? userIndex + 1 : 1;
+      
+      console.log('👤 Posição do usuário na fila de aprovadores:', userApprovalLevel);
+      console.log('📋 Total de aprovadores:', approvers.length);
+      
+      // Enriquecer com informação de qual usuário está com a aprovação
+      const enrichedWithCurrentApprover = enrichedData.map(suggestion => {
+        if (suggestion.status !== 'pending') {
+          return suggestion;
+        }
+        
+        const currentLevel = suggestion.approval_level || 1;
+        const currentApprover = approvers[currentLevel - 1]; // -1 porque array é 0-indexed
+        
+        return {
+          ...suggestion,
+          current_approver_name: currentApprover?.email || null,
+          current_approver_id: currentApprover?.user_id || null,
+        };
+      });
+      
+      // Mostrar TODAS as aprovações, mas enriquecer com informação de qual usuário está com cada uma
+      console.log(`📊 Total de aprovações: ${enrichedData.length}`);
+      
+      setSuggestions(enrichedWithCurrentApprover);
+      setFilteredSuggestions(enrichedWithCurrentApprover); // Mostrar todas
       
       // Calculate stats
       const total = enrichedData.length;
-      const pending = enrichedData.filter(s => s.status === 'pending').length;
+      const pending = enrichedWithCurrentApprover.filter(s => s.status === 'pending').length;
       const approved = enrichedData.filter(s => s.status === 'approved').length;
       const rejected = enrichedData.filter(s => s.status === 'rejected').length;
       
@@ -148,6 +314,8 @@ export default function Approvals() {
   };
 
   const handleApprove = async (suggestionId: string, observations: string) => {
+    console.log('🔵 handleApprove chamado para:', suggestionId);
+    
     if (!observations.trim()) {
       toast.error("Por favor, adicione uma observação");
       return;
@@ -156,6 +324,7 @@ export default function Approvals() {
     setLoading(true);
     try {
       // Buscar a sugestão atual
+      console.log('🔍 Buscando sugestão:', suggestionId);
       const { data: currentSuggestion, error: fetchError } = await supabase
         .from('price_suggestions')
         .select('*')
@@ -163,9 +332,20 @@ export default function Approvals() {
         .single();
 
       if (fetchError) throw fetchError;
+      
+      console.log('✅ Sugestão encontrada:', currentSuggestion);
+      console.log('👤 requested_by:', currentSuggestion.requested_by);
 
+      // Buscar TODOS os aprovadores dinamicamente
+      const approvers = await loadApprovers();
+      const totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      
+      console.log('📋 Aprovadores encontrados:', approvers.length);
+      console.log('📝 IDs dos aprovadores:', approvers.map(a => ({ id: a.user_id, email: a.email })));
+      console.log('🔍 Approval level atual:', currentSuggestion.approval_level);
+      console.log('👤 Usuário atual:', user?.email);
+      
       const currentLevel = currentSuggestion.approval_level || 1;
-      const totalApprovers = currentSuggestion.total_approvers || 3;
       const approvalsCount = (currentSuggestion.approvals_count || 0) + 1;
       
       // Registrar no histórico
@@ -182,31 +362,103 @@ export default function Approvals() {
 
       if (historyError) throw historyError;
 
-      // Se pelo menos um aprovador aprovar, a solicitação é aprovada
-      const newStatus = approvalsCount >= 1 ? 'approved' : 'pending';
-      const nextLevel = currentLevel < totalApprovers ? currentLevel + 1 : totalApprovers;
+      // Se QUALQUER um aprovar, a briga está feita! Aprovado!
+      const newStatus = 'approved'; // Uma aprovação = aprovado
+      const nextLevel = totalApprovers; // Finaliza
 
       // Atualizar a sugestão
-      const { error: updateError } = await supabase
-        .from('price_suggestions')
-        .update({
-          status: newStatus,
-          approval_level: newStatus === 'approved' ? totalApprovers : nextLevel,
-          approvals_count: approvalsCount,
-          approved_at: newStatus === 'approved' ? new Date().toISOString() : null,
-          approved_by: newStatus === 'approved' ? user?.id : null
-        })
-        .eq('id', suggestionId);
+      const updateData: any = {
+        status: newStatus,
+        approval_level: nextLevel, // Sempre atualiza o nível
+        approvals_count: approvalsCount,
+      };
+      
+      // Atualizar total_approvers com o número dinâmico
+      updateData.total_approvers = totalApprovers;
+      
+      if (newStatus === 'approved') {
+        updateData.approved_at = new Date().toISOString();
+        updateData.approved_by = user?.id;
+      }
+      
+      // Atualizar com retry
+      let updateError: any = null;
+      let retries = 3;
+      
+      while (retries > 0) {
+        try {
+          const { error } = await supabase
+            .from('price_suggestions')
+            .update(updateData)
+            .eq('id', suggestionId);
+          
+          if (!error) {
+            break;
+          }
+          updateError = error;
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (err: any) {
+          console.warn('Erro ao atualizar, tentando novamente...', err.message);
+          updateError = err;
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
 
       if (updateError) throw updateError;
+
+      console.log('✅ Aprovação concluída, criando notificação...');
+
+      // Criar notificação manualmente
+      try {
+        console.log('📧 Criando notificação para:', currentSuggestion.requested_by);
+        console.log('📧 Sugestão status:', currentSuggestion.status);
+        
+        const notificationData = {
+          user_id: currentSuggestion.requested_by,
+          suggestion_id: suggestionId,
+          type: newStatus,
+          title: newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
+          message: newStatus === 'approved' ? 'Sua solicitação de preço foi aprovada!' : 'Sua solicitação de preço foi rejeitada.'
+        };
+        
+        console.log('📧 Dados da notificação:', notificationData);
+        
+        const { data: notifData, error: notifError } = await supabase
+          .from('notifications')
+          .insert([notificationData])
+          .select();
+        
+        if (notifError) {
+          console.error('❌ Erro ao criar notificação:', notifError);
+        } else {
+          console.log('✅ Notificação criada com sucesso:', notifData);
+        }
+      } catch (notifError) {
+        console.error('❌ Erro ao criar notificação:', notifError);
+        // Não bloquear a aprovação se a notificação falhar
+      }
 
       toast.success(newStatus === 'approved' ? "Sugestão aprovada com sucesso!" : "Aprovação registrada, aguardando outros aprovadores");
       setShowDetails(false);
       setSelectedSuggestion(null);
       loadSuggestions();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao aprovar sugestão:', error);
-      toast.error("Erro ao aprovar sugestão");
+      
+      // Tratar erro de conexão
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('ERR_CONNECTION')) {
+        toast.error("Erro de conexão. Tente novamente em alguns instantes.");
+      } else if (error?.code === 'PGRST301' || error?.message?.includes('Time out')) {
+        toast.error("O servidor demorou para responder. Tente novamente.");
+      } else {
+        toast.error(`Erro ao aprovar sugestão: ${error?.message || 'Erro desconhecido'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -229,8 +481,11 @@ export default function Approvals() {
 
       if (fetchError) throw fetchError;
 
+      // Buscar TODOS os aprovadores dinamicamente
+      const approvers = await loadApprovers();
+      const totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      
       const currentLevel = currentSuggestion.approval_level || 1;
-      const totalApprovers = currentSuggestion.total_approvers || 3;
       const rejectionsCount = (currentSuggestion.rejections_count || 0) + 1;
       
       // Registrar no histórico
@@ -247,33 +502,92 @@ export default function Approvals() {
 
       if (historyError) throw historyError;
 
-      // Mesmo que um rejeite, continua para o próximo aprovador
+      // Se rejeitar, continua para o próximo aprovador (se houver)
       const nextLevel = currentLevel < totalApprovers ? currentLevel + 1 : totalApprovers;
       
-      // Apenas rejeita definitivamente se todos rejeitarem
-      const newStatus = rejectionsCount >= totalApprovers ? 'rejected' : 'pending';
+      // Permanece pendente quando rejeitar (não rejeita definitivamente)
+      const newStatus = 'pending';
 
-      // Atualizar a sugestão
-      const { error: updateError } = await supabase
-        .from('price_suggestions')
-        .update({
-          status: newStatus,
-          approval_level: newStatus === 'rejected' ? totalApprovers : nextLevel,
-          rejections_count: rejectionsCount,
-          approved_at: newStatus === 'rejected' ? new Date().toISOString() : null,
-          approved_by: newStatus === 'rejected' ? user?.id : null
-        })
-        .eq('id', suggestionId);
+      // Atualizar a sugestão com nextLevel para passar para o próximo aprovador
+      // Com retry
+      let updateError: any = null;
+      let retries = 3;
+      
+      while (retries > 0) {
+        try {
+          const { error } = await supabase
+            .from('price_suggestions')
+            .update({
+              status: newStatus,
+              approval_level: nextLevel,
+              rejections_count: rejectionsCount,
+            })
+            .eq('id', suggestionId);
+
+          if (!error) {
+            break;
+          }
+          updateError = error;
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        } catch (err: any) {
+          console.warn('Erro ao atualizar, tentando novamente...', err.message);
+          updateError = err;
+          retries--;
+          if (retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
 
       if (updateError) throw updateError;
 
-      toast.success(newStatus === 'rejected' ? "Sugestão rejeitada" : "Rejeição registrada, passando para próximo aprovador");
+      // Criar notificação manualmente
+      try {
+        console.log('📧 Criando notificação de rejeição para:', currentSuggestion.requested_by);
+        
+        const notificationData = {
+          user_id: currentSuggestion.requested_by,
+          suggestion_id: suggestionId,
+          type: newStatus === 'pending' ? 'rejected' : newStatus,
+          title: 'Preço Rejeitado',
+          message: 'Sua solicitação de preço foi rejeitada.'
+        };
+        
+        console.log('📧 Dados da notificação:', notificationData);
+        
+        const { data: notifData, error: notifError } = await supabase
+          .from('notifications')
+          .insert([notificationData])
+          .select();
+        
+        if (notifError) {
+          console.error('❌ Erro ao criar notificação:', notifError);
+        } else {
+          console.log('✅ Notificação criada com sucesso:', notifData);
+        }
+      } catch (notifError) {
+        console.error('❌ Erro ao criar notificação:', notifError);
+        // Não bloquear a rejeição se a notificação falhar
+      }
+
+      toast.success("Rejeição registrada, passando para próximo aprovador");
       setShowDetails(false);
       setSelectedSuggestion(null);
       loadSuggestions();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao rejeitar sugestão:', error);
-      toast.error("Erro ao rejeitar sugestão");
+      
+      // Tratar erro de conexão
+      if (error?.message?.includes('Failed to fetch') || error?.message?.includes('ERR_CONNECTION')) {
+        toast.error("Erro de conexão. Tente novamente em alguns instantes.");
+      } else if (error?.code === 'PGRST301' || error?.message?.includes('Time out')) {
+        toast.error("O servidor demorou para responder. Tente novamente.");
+      } else {
+        toast.error(`Erro ao rejeitar sugestão: ${error?.message || 'Erro desconhecido'}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -482,10 +796,22 @@ export default function Approvals() {
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {suggestion.stations?.name || 'Posto não encontrado'} - {suggestion.clients?.name || 'Cliente não encontrado'}
+                        {suggestion.stations?.name 
+                          || suggestion.station_id 
+                          || '⚠️ Sem posto'
+                        } - {suggestion.clients?.name 
+                          || suggestion.client_id 
+                          || '⚠️ Sem cliente'
+                        }
                       </span>
                       {getStatusBadge(suggestion.status)}
                     </div>
+                    {suggestion.status === 'pending' && suggestion.current_approver_name && (
+                      <div className="mb-2">
+                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Em aprovação com: </span>
+                        <span className="text-xs font-bold text-orange-600">{suggestion.current_approver_name}</span>
+                      </div>
+                    )}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-slate-700 dark:text-slate-300">Produto:</span> 
@@ -497,32 +823,54 @@ export default function Approvals() {
                         <div>
                           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Preço Atual</p>
                           <p className="text-lg font-bold text-slate-800 dark:text-slate-200">
-                            {suggestion.cost_price ? formatPrice(suggestion.cost_price) : 'N/A'}
+                            {(() => {
+                              // Converter de centavos para reais se necessário
+                              const price = suggestion.current_price || suggestion.cost_price || 0;
+                              const priceInReais = price >= 100 ? price / 100 : price;
+                              return priceInReais > 0 ? formatPrice(priceInReais) : 'N/A';
+                            })()}
                           </p>
                         </div>
                         
                         <div>
                           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Preço Sugerido</p>
                           <p className="text-lg font-bold text-green-600 dark:text-green-400">
-                            {formatPrice(suggestion.final_price)}
+                            {(() => {
+                              // Converter de centavos para reais se necessário
+                              const price = suggestion.final_price || suggestion.suggested_price || 0;
+                              const priceInReais = price >= 100 ? price / 100 : price;
+                              return priceInReais > 0 ? formatPrice(priceInReais) : 'N/A';
+                            })()}
                           </p>
                         </div>
                         
                         <div>
-                          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Margem</p>
+                          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Ajuste</p>
                           <p className={`text-lg font-bold ${
                             suggestion.margin_cents > 0 
                               ? 'text-green-600 dark:text-green-400' 
                               : 'text-red-600 dark:text-red-400'
                           }`}>
-                            {suggestion.margin_cents ? (
-                              <>
-                                {suggestion.margin_cents > 0 ? '+' : ''}
-                                {formatPrice(suggestion.margin_cents / 100)}
-                                {' '}
-                                ({suggestion.cost_price ? ((suggestion.margin_cents / 100) / suggestion.cost_price * 100).toFixed(2) : '0'}%)
-                              </>
-                            ) : 'N/A'}
+                            {(() => {
+                              // Converter valores de centavos para reais
+                              const currentPrice = (suggestion.current_price || suggestion.cost_price || 0);
+                              const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
+                              
+                              const finalPrice = (suggestion.final_price || suggestion.suggested_price || 0);
+                              const finalPriceReais = finalPrice >= 100 ? finalPrice / 100 : finalPrice;
+                              
+                              const margin = finalPriceReais - currentPriceReais;
+                              const marginPercent = currentPriceReais > 0 ? ((margin / currentPriceReais) * 100).toFixed(2) : '0';
+                              
+                              return (
+                                <>
+                                  {margin > 0 ? '+' : ''}
+                                  {formatPrice(Math.abs(margin))}
+                                  {' '}
+                                  ({marginPercent}%)
+                                </>
+                              );
+                            })()}
                           </p>
                         </div>
                       </div>
@@ -532,7 +880,7 @@ export default function Approvals() {
                           <span className="font-medium">Criado:</span> {formatDate(suggestion.created_at)}
                         </div>
                         <div>
-                          <span className="font-medium">Código:</span> {suggestion.stations?.code}
+                          <span className="font-medium">Código:</span> {suggestion.stations?.code || suggestion.station_id || '-'}
                         </div>
                       </div>
                     </div>

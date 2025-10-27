@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useNotifications } from "@/hooks/useNotifications";
 import { useNavigate, useLocation } from "react-router-dom";
 import { SaoRoqueLogo } from "./SaoRoqueLogo";
 import { ThemeToggle } from "./ThemeToggle";
@@ -44,12 +45,14 @@ const getProfileDisplayName = (perfil: string) => {
 const allMenuItems = [
   { icon: Home, label: "Página Inicial", href: "/dashboard", permission: "dashboard" },
   { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
+  { icon: FileText, label: "Minhas Solicitações", href: "/my-requests", permission: "price_request" },
   { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
   { icon: Search, label: "Pesquisa de Preços Públicos", href: "/competitor-research", permission: "research" },
   { icon: Map, label: "Mapa de Preços", href: "/map", permission: "map" },
   { icon: History, label: "Histórico", href: "/price-history", permission: "price_history" },
   { icon: FileText, label: "Referências", href: "/reference-registration", permission: "reference_registration" },
-  { icon: Building2, label: "Gestão de Postos", href: "/station-management", permission: "admin" },
+  { icon: Users, label: "Gestão", href: "/gestao", permission: "admin" },
+  { icon: Settings, label: "Configurações", href: "/settings", permission: "admin" },
 ];
 
 function Layout({ children }: LayoutProps) {
@@ -57,6 +60,7 @@ function Layout({ children }: LayoutProps) {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { profile, signOut } = useAuth();
   const { canAccess, permissions } = usePermissions();
+  const { unreadCount } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -107,6 +111,11 @@ function Layout({ children }: LayoutProps) {
               data-notification-bell
             >
               <Bell className="h-5 w-5" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                  {unreadCount}
+                </span>
+              )}
             </Button>
             
             <div className="flex items-center gap-2 text-white">
