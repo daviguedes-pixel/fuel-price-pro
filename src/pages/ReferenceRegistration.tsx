@@ -776,13 +776,13 @@ useEffect(() => {
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
                     <Upload className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-                    Anexos (Fotos)
+                    Anexos
                   </Label>
                   <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 bg-slate-50 dark:bg-slate-900/50">
                 <FileUploader
                   onFilesUploaded={setAttachments}
                   maxFiles={3}
-                  acceptedTypes="image/*"
+                  acceptedTypes="image/*,.pdf"
                 />
                   </div>
                 </div>
