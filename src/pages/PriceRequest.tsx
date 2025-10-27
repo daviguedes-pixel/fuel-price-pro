@@ -109,7 +109,7 @@ export default function PriceRequest() {
   const [calculatedPrice, setCalculatedPrice] = useState(0);
   const [margin, setMargin] = useState(0);
   const [priceIncreaseCents, setPriceIncreaseCents] = useState(0);
-  const [activeTab, setActiveTab] = useState("new");
+  const [activeTab, setActiveTab] = useState("my-requests");
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [showRequestDetails, setShowRequestDetails] = useState(false);
@@ -1328,7 +1328,19 @@ export default function PriceRequest() {
           </div>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        {/* Header com botão de Nova Solicitação */}
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">Minhas Solicitações</h2>
+          <Button
+            onClick={() => setActiveTab('new')}
+            className="flex items-center gap-2"
+          >
+            <DollarSign className="h-4 w-4" />
+            Nova Solicitação
+          </Button>
+        </div>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full hidden">
           <TabsList className="grid w-full grid-cols-2 mb-6">
             <TabsTrigger value="new" className="flex items-center gap-2">
               <DollarSign className="h-4 w-4" />
