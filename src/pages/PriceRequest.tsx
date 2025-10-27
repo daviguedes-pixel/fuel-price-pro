@@ -2033,8 +2033,9 @@ export default function PriceRequest() {
               </CardContent>
             </Card>
           )}
-          </div>
-          </TabsContent>
+        </div>
+      </div>
+        </TabsContent>
 
           <TabsContent value="my-requests">
             <div className="space-y-6">
