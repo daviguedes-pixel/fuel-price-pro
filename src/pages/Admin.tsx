@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Settings, Users, Shield, Plus, Trash2 } from "lucide-react";
-import { useMapConfig } from "@/context/MapConfigContext";
 import { toast } from "sonner";
 import { ClientForm } from "@/components/ClientForm";
 import { StationForm } from "@/components/StationForm";
@@ -19,7 +18,6 @@ import { Select as UiSelect, SelectContent as UiSelectContent, SelectItem as UiS
 import { Switch } from "@/components/ui/switch";
 
 export default function Admin() {
-  const { mapboxToken, setMapboxToken } = useMapConfig();
   const { stations, clients, paymentMethods, suggestions } = useDatabase();
   const [newUser, setNewUser] = useState({
     nome: "",
@@ -467,40 +465,6 @@ export default function Admin() {
                   <span className="text-sm font-medium">Clientes Cadastrados:</span>
                   <span className="text-sm font-bold">{clients.length}</span>
                 </div>
-              </CardContent>
-            </Card>
-
-            {/* Database Tables Management */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Configuração do Mapa</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="mapboxToken">Token do Mapbox</Label>
-                  <Input 
-                    id="mapboxToken" 
-                    type="password" 
-                    placeholder="pk.eyJ1..."
-                    defaultValue={mapboxToken}
-                    onBlur={(e) => setMapboxToken(e.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Obtenha seu token gratuito em <a href="https://mapbox.com" target="_blank" className="text-primary underline">mapbox.com</a>
-                  </p>
-                </div>
-                <Button 
-                  className="w-full bg-primary hover:bg-primary-hover text-primary-foreground"
-                  onClick={() => {
-                    const token = (document.getElementById('mapboxToken') as HTMLInputElement)?.value;
-                    if (token) {
-                      setMapboxToken(token);
-                      toast.success('Token do Mapbox salvo com sucesso!');
-                    }
-                  }}
-                >
-                  Salvar Token
-                </Button>
               </CardContent>
             </Card>
 

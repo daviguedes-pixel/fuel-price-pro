@@ -6,7 +6,6 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { NotificationsProvider } from "@/hooks/useNotifications";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
-import { MapConfigProvider } from "@/context/MapConfigContext";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -84,8 +83,7 @@ const App = () => {
           <Sonner />
           <BrowserRouter>
             <AuthProvider>
-              <MapConfigProvider>
-                <Routes>
+              <Routes>
                   <Route path="/login" element={<Login />} />
                   <Route path="/" element={<Navigate to="/dashboard" replace />} />
                   <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -106,7 +104,6 @@ const App = () => {
                   <Route path="/change-password" element={<PasswordChange />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
-              </MapConfigProvider>
             </AuthProvider>
           </BrowserRouter>
         </TooltipProvider>

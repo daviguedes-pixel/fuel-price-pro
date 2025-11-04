@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { useMapConfig } from '@/context/MapConfigContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,7 +31,6 @@ export const RealMap: React.FC<RealMapProps> = ({ stations, selectedStation, onS
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markers = useRef<mapboxgl.Marker[]>([]);
-  const { mapboxToken, isMapConfigured } = useMapConfig();
   const navigate = useNavigate();
   const { toast } = useToast();
 

@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MapPin, Navigation, Fuel, DollarSign, Filter, Search, RefreshCw, ChevronUp, ChevronDown } from "lucide-react";
-import { useMapConfig } from "@/context/MapConfigContext";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useDatabase } from "@/hooks/useDatabase";
@@ -19,7 +18,6 @@ import QuotationTable from "@/components/QuotationTable";
 import { formatBrazilianCurrency } from "@/lib/utils";
 
 export default function MapView() {
-  const { mapboxToken, isMapConfigured } = useMapConfig();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { stations, suggestions, priceHistory } = useDatabase();
@@ -446,18 +444,7 @@ export default function MapView() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {!isMapConfigured ? (
-                <div className="space-y-4 p-8 text-center">
-                  <p className="text-muted-foreground">
-                    Token do Mapbox não configurado. Configure nas Configurações do Admin para habilitar o mapa.
-                  </p>
-                  <Button onClick={() => navigate('/admin')} variant="outline">
-                    <Navigation className="h-4 w-4 mr-2" />
-                    Ir para Configurações
-                  </Button>
-                </div>
-              ) : (
-                <RealMap 
+              <RealMap
                   stations={allStations.map(station => {
                     console.log('🗺️ Enviando estação para o mapa:', station);
                     return {
@@ -498,7 +485,6 @@ export default function MapView() {
                     }
                   }}
                 />
-              )}
             </CardContent>
           </Card>
         </div>
