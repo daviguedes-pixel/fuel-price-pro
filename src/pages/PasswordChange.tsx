@@ -34,7 +34,7 @@ export default function PasswordChange() {
       return;
     }
 
-    if (newPassword === "SR@123") {
+    if (newPassword === "sr123" || newPassword === "SR@123") {
       toast.error("A nova senha deve ser diferente da senha padrão");
       return;
     }
@@ -150,7 +150,7 @@ export default function PasswordChange() {
                 <p className="text-sm text-yellow-800">
                   <strong>Requisitos da senha:</strong>
                   <br />• Mínimo de 6 caracteres
-                  <br />• Diferente da senha padrão (SR@123)
+                  <br />• Diferente da senha padrão (sr123)
                 </p>
               </div>
 

@@ -344,10 +344,14 @@ export default function Gestao() {
       </div>
       
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="stations">Postos</TabsTrigger>
           <TabsTrigger value="clients">Clientes</TabsTrigger>
           <TabsTrigger value="payment-methods">Tipos de Pagamento</TabsTrigger>
+          <TabsTrigger value="permissions" className="flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            Permissões
+          </TabsTrigger>
         </TabsList>
         
         <TabsContent value="stations" className="space-y-4">
@@ -554,6 +558,18 @@ export default function Gestao() {
                   )}
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        <TabsContent value="permissions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Gerenciar Permissões</CardTitle>
+              <CardDescription>Configure as permissões para cada perfil de usuário</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <PermissionsManager />
             </CardContent>
           </Card>
         </TabsContent>

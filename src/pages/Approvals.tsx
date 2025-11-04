@@ -53,9 +53,17 @@ export default function Approvals() {
     loadSuggestions();
   }, []);
 
-  // Buscar todos os usuários que podem aprovar (dinâmico)
+  // Buscar todos os usuários que podem aprovar em ordem hierárquica
+  // Ordem: supervisor_comercial -> diretor_comercial -> diretor_pricing
   const loadApprovers = async () => {
     try {
+      // Ordem hierárquica de aprovação
+      const approvalOrder = [
+        'supervisor_comercial',
+        'diretor_comercial', 
+        'diretor_pricing'
+      ];
+      
       // Buscar perfis que podem aprovar
       const { data: profilesWithPermission, error: profilesError } = await supabase
         .from('profile_permissions')
@@ -76,21 +84,32 @@ export default function Approvals() {
       
       console.log('📋 Perfis que podem aprovar:', perfisComPermissao);
       
-      // Buscar usuários com esses perfis
-      const { data: users, error: usersError } = await supabase
-        .from('user_profiles')
-        .select('user_id, email, perfil')
-        .in('perfil', perfisComPermissao)
-        .order('email');
+      // Ordenar perfis pela ordem hierárquica
+      const orderedProfiles = approvalOrder.filter(p => perfisComPermissao.includes(p));
       
-      if (usersError) {
-        console.error('Erro ao buscar usuários:', usersError);
-        return [];
+      // Buscar usuários com esses perfis, mantendo a ordem
+      const approvers: any[] = [];
+      
+      for (const perfil of orderedProfiles) {
+        const { data: users, error: usersError } = await supabase
+          .from('user_profiles')
+          .select('user_id, email, perfil')
+          .eq('perfil', perfil)
+          .order('email');
+        
+        if (usersError) {
+          console.error(`Erro ao buscar usuários do perfil ${perfil}:`, usersError);
+          continue;
+        }
+        
+        if (users && users.length > 0) {
+          approvers.push(...users);
+        }
       }
       
-      console.log('👥 Usuários que podem aprovar:', users);
+      console.log('👥 Usuários que podem aprovar (em ordem):', approvers);
       
-      return users || [];
+      return approvers;
     } catch (error) {
       console.error('Erro ao carregar aprovadores:', error);
       return [];
@@ -237,12 +256,11 @@ export default function Approvals() {
         };
       });
       
-      // Filtrar aprovações baseado no approval_level do usuário atual
+      // Filtrar aprovações para mostrar apenas as que estão no nível do usuário atual
       const approvers = await loadApprovers();
       const userIndex = approvers.findIndex(approver => approver.user_id === user?.id);
-      const userApprovalLevel = userIndex >= 0 ? userIndex + 1 : 1;
       
-      console.log('👤 Posição do usuário na fila de aprovadores:', userApprovalLevel);
+      console.log('👤 Posição do usuário na fila de aprovadores:', userIndex + 1);
       console.log('📋 Total de aprovadores:', approvers.length);
       
       // Enriquecer com informação de qual usuário está com a aprovação
@@ -258,14 +276,24 @@ export default function Approvals() {
           ...suggestion,
           current_approver_name: currentApprover?.email || null,
           current_approver_id: currentApprover?.user_id || null,
+          is_current_user_turn: currentApprover?.user_id === user?.id || false,
         };
       });
       
-      // Mostrar TODAS as aprovações, mas enriquecer com informação de qual usuário está com cada uma
+      // Filtrar para mostrar apenas aprovações pendentes que estão no turno do usuário atual
+      // OU se o usuário tem permissão de admin, mostrar todas
+      const canViewAll = permissions?.permissions?.admin || false;
+      const filteredForUser = canViewAll 
+        ? enrichedWithCurrentApprover 
+        : enrichedWithCurrentApprover.filter(s => 
+            s.status !== 'pending' || s.is_current_user_turn
+          );
+      
       console.log(`📊 Total de aprovações: ${enrichedData.length}`);
+      console.log(`👁️ Aprovações visíveis para o usuário: ${filteredForUser.length}`);
       
       setSuggestions(enrichedWithCurrentApprover);
-      setFilteredSuggestions(enrichedWithCurrentApprover); // Mostrar todas
+      setFilteredSuggestions(filteredForUser);
       
       // Calculate stats
       const total = enrichedData.length;
@@ -349,6 +377,13 @@ export default function Approvals() {
       const currentLevel = currentSuggestion.approval_level || 1;
       const approvalsCount = (currentSuggestion.approvals_count || 0) + 1;
       
+      // Verificar se o usuário atual é o próximo aprovador na sequência
+      const currentApprover = approvers[currentLevel - 1];
+      if (!currentApprover || currentApprover.user_id !== user?.id) {
+        toast.error("Você não é o próximo aprovador nesta sequência");
+        return;
+      }
+      
       // Registrar no histórico
       const { error: historyError } = await supabase
         .from('approval_history')
@@ -363,14 +398,19 @@ export default function Approvals() {
 
       if (historyError) throw historyError;
 
-      // Se QUALQUER um aprovar, a briga está feita! Aprovado!
-      const newStatus = 'approved'; // Uma aprovação = aprovado
-      const nextLevel = totalApprovers; // Finaliza
+      // Verificar se é o último aprovador
+      const nextLevel = currentLevel + 1;
+      const isLastApprover = nextLevel > totalApprovers;
+      
+      // Se for o último aprovador, aprovar completamente
+      // Caso contrário, passar para o próximo nível
+      const newStatus = isLastApprover ? 'approved' : 'pending';
+      const finalLevel = isLastApprover ? totalApprovers : nextLevel;
 
       // Atualizar a sugestão
       const updateData: any = {
         status: newStatus,
-        approval_level: nextLevel, // Sempre atualiza o nível
+        approval_level: finalLevel,
         approvals_count: approvalsCount,
       };
       
@@ -380,6 +420,23 @@ export default function Approvals() {
       if (newStatus === 'approved') {
         updateData.approved_at = new Date().toISOString();
         updateData.approved_by = user?.id;
+      } else {
+        // Se não for o último, marcar quem está com a aprovação agora
+        const nextApprover = approvers[nextLevel - 1];
+        if (nextApprover) {
+          // Criar notificação para o próximo aprovador
+          try {
+            await supabase.from('notifications').insert({
+              user_id: nextApprover.user_id,
+              suggestion_id: suggestionId,
+              type: 'pending',
+              title: 'Nova Aprovação Pendente',
+              message: `Uma solicitação de preço aguarda sua aprovação (nível ${nextLevel})`
+            });
+          } catch (notifErr) {
+            console.error('Erro ao criar notificação:', notifErr);
+          }
+        }
       }
       
       // Atualizar com retry
@@ -445,7 +502,11 @@ export default function Approvals() {
         // Não bloquear a aprovação se a notificação falhar
       }
 
-      toast.success(newStatus === 'approved' ? "Sugestão aprovada com sucesso!" : "Aprovação registrada, aguardando outros aprovadores");
+      toast.success(
+        isLastApprover 
+          ? "Sugestão aprovada com sucesso por todos os aprovadores!" 
+          : `Aprovação registrada! Aguardando próximo aprovador (nível ${finalLevel})`
+      );
       setShowDetails(false);
       setSelectedSuggestion(null);
       loadSuggestions();
@@ -487,6 +548,14 @@ export default function Approvals() {
       const totalApprovers = approvers.length > 0 ? approvers.length : 1;
       
       const currentLevel = currentSuggestion.approval_level || 1;
+      
+      // Verificar se o usuário atual é o próximo aprovador na sequência
+      const currentApprover = approvers[currentLevel - 1];
+      if (!currentApprover || currentApprover.user_id !== user?.id) {
+        toast.error("Você não é o próximo aprovador nesta sequência");
+        return;
+      }
+      
       const rejectionsCount = (currentSuggestion.rejections_count || 0) + 1;
       
       // Registrar no histórico
