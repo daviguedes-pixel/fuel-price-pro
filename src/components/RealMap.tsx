@@ -109,9 +109,10 @@ export const RealMap: React.FC<RealMapProps> = ({ stations, selectedStation, onS
   };
 
   useEffect(() => {
-    if (!mapContainer.current || !isMapConfigured) return;
+    if (!mapContainer.current) return;
 
-    mapboxgl.accessToken = mapboxToken;
+    // Hardcoded Mapbox token - sempre funcionará
+    mapboxgl.accessToken = 'pk.eyJ1IjoiZGF2aWd1ZWRlcyIsImEiOiJjbWZiZG1oZ3MwbTcyMmxwb2RuMDVrbnlvIn0.zuZgESN8FZe8FLQISVZfxw';
 
     map.current = new mapboxgl.Map({
       container: mapContainer.current,
@@ -129,10 +130,10 @@ export const RealMap: React.FC<RealMapProps> = ({ stations, selectedStation, onS
       markers.current = [];
       if (map.current) map.current.remove();
     };
-  }, [mapboxToken, isMapConfigured]);
+  }, []);
 
   useEffect(() => {
-    if (!map.current || !isMapConfigured) return;
+    if (!map.current) return;
 
     // Clear existing markers
     markers.current.forEach(marker => marker.remove());
@@ -183,22 +184,9 @@ export const RealMap: React.FC<RealMapProps> = ({ stations, selectedStation, onS
         map.current.fitBounds(bounds, { padding: 40, duration: 500 });
       }
     }
-  }, [stations, isMapConfigured, onStationSelect, toast]);
+  }, [stations, onStationSelect, toast]);
 
-  if (!isMapConfigured) {
-    return (
-      <div className="space-y-4 p-8 text-center">
-        <p className="text-muted-foreground">
-          Token do Mapbox não configurado. Configure nas Configurações do Admin para habilitar o mapa.
-        </p>
-        <Button onClick={() => navigate('/admin')} variant="outline">
-          <Navigation className="h-4 w-4 mr-2" />
-          Ir para Configurações
-        </Button>
-      </div>
-    );
-  }
-
+  // Mapa sempre configurado com token hardcoded
   return (
     <div ref={mapContainer} className="h-96 w-full rounded-lg" />
   );
