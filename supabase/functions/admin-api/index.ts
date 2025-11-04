@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { corsHeaders } from '../shared/cors.ts'
-import { createAuthMiddleware, createRateLimitMiddleware } from '../auth-middleware/index.ts'
+import { createAuthMiddleware, createRateLimitMiddleware } from '../shared/auth-middleware.ts'
 
 // Rate limiting: 50 requests per 15 minutes (admin endpoints)
 const rateLimit = createRateLimitMiddleware(50, 15 * 60 * 1000)

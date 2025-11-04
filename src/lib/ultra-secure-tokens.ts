@@ -330,13 +330,15 @@ export function useUltraSecureTokens() {
   return ultraSecureTokenClient
 }
 
+import { useState, useEffect } from 'react';
+
 // Hook para monitorar segurança do token
 export function useTokenSecurity() {
-  const [tokenInfo, setTokenInfo] = React.useState<UltraSecureToken | null>(null)
-  const [isSecure, setIsSecure] = React.useState(false)
-  const [securityScore, setSecurityScore] = React.useState(0)
+  const [tokenInfo, setTokenInfo] = useState<UltraSecureToken | null>(null)
+  const [isSecure, setIsSecure] = useState(false)
+  const [securityScore, setSecurityScore] = useState(0)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const checkTokenSecurity = () => {
       const info = ultraSecureTokenClient.getCurrentTokenInfo()
       const score = ultraSecureTokenClient.getDeviceSecurityScore()
