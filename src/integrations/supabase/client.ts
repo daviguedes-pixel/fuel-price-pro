@@ -3,13 +3,12 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-// ⚠️ SECURITY WARNING: DO NOT hardcode credentials here
-// These should be loaded from environment variables
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "";
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "";
+// Supabase configuration - using hardcoded values as fallback since env vars may not load in all environments
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || "https://ijygsxwfmribbjymxhaf.supabase.co";
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlqeWdzeHdmbXJpYmJqeW14aGFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczNDMzOTcsImV4cCI6MjA3MjkxOTM5N30.p_c6M_7eUJcOU2bmuOhx6Na7mQC6cRNEMsHMOlQJuMc";
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  console.warn('⚠️ Supabase credentials not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY environment variables.');
+  console.error('❌ Supabase credentials missing');
 }
 
 // This client is deprecated - use the backend API instead

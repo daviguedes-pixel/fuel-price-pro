@@ -1,8 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Configuração segura do Supabase
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://ijygsxwfmribbjymxhaf.supabase.co";
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlqeWdzeHdmbXJpYmJqeW14aGFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczNDMzOTcsImV4cCI6MjA3MjkxOTM5N30.p_c6M_7eUJcOU2bmuOhx6Na7mQC6cRNEMsHMOlQJuMc";
+// Configuração do Supabase - hardcoded para garantir funcionamento
+const supabaseUrl = "https://ijygsxwfmribbjymxhaf.supabase.co";
+const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlqeWdzeHdmbXJpYmJqeW14aGFmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczNDMzOTcsImV4cCI6MjA3MjkxOTM5N30.p_c6M_7eUJcOU2bmuOhx6Na7mQC6cRNEMsHMOlQJuMc";
 
 // Criar cliente Supabase sempre disponível
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
