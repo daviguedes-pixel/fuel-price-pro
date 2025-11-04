@@ -174,7 +174,10 @@ export function createValidationMiddleware(schema: any) {
       return handler(req, validatedData)
     } catch (error) {
       return new Response(
-        JSON.stringify({ error: 'Dados de entrada inválidos', details: error.message }),
+        JSON.stringify({ 
+          error: 'Dados de entrada inválidos', 
+          details: error instanceof Error ? error.message : 'Unknown error' 
+        }),
         { 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 400 

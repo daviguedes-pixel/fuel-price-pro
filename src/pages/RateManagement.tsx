@@ -248,7 +248,7 @@ export default function RateManagement() {
                     </SelectTrigger>
                     <SelectContent>
                       {paymentMethods.map((method, index) => (
-                        <SelectItem key={`payment-method-${index}`} value={method.ID_POSTO ? `${method.ID_POSTO}-${index}`}>
+                        <SelectItem key={`payment-method-${index}`} value={method.ID_POSTO ? `${method.ID_POSTO}-${index}` : index.toString()}>
                           {method.CARTAO}
                         </SelectItem>
                       ))}
@@ -256,6 +256,7 @@ export default function RateManagement() {
                   </Select>
                 </div>
               </div>
+            </div>
 
               {/* Seção: Valores e Negociação */}
               <div className="space-y-6">
