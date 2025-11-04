@@ -45,7 +45,6 @@ const getProfileDisplayName = (perfil: string) => {
 const allMenuItems = [
   { icon: Home, label: "Página Inicial", href: "/dashboard", permission: "dashboard" },
   { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
-  { icon: FileText, label: "Minhas Solicitações", href: "/my-requests", permission: "price_request" },
   { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
   { icon: Search, label: "Pesquisa de Preços Públicos", href: "/competitor-research", permission: "research" },
   { icon: Map, label: "Mapa de Preços", href: "/map", permission: "map" },

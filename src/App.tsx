@@ -25,7 +25,6 @@ import AuditLogs from "./pages/AuditLogs";
 import PublicPriceResearch from "./pages/CompetitorResearch";
 import Settings from "./pages/Settings";
 import Gestao from "./pages/Gestao";
-import MyRequests from "./pages/MyRequests";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 
@@ -102,7 +101,6 @@ const App = () => {
                   <Route path="/station-management" element={<ProtectedRoute><StationManagement /></ProtectedRoute>} />
                   <Route path="/client-management" element={<ProtectedRoute><ClientManagement /></ProtectedRoute>} />
                   <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
-                  <Route path="/my-requests" element={<ProtectedRoute><MyRequests /></ProtectedRoute>} />
                   <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                   <Route path="/gestao" element={<ProtectedRoute><Gestao /></ProtectedRoute>} />
                   <Route path="/change-password" element={<PasswordChange />} />

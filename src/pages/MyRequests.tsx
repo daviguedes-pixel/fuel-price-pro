@@ -22,6 +22,7 @@ export default function MyRequests() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [filteredRequests, setFilteredRequests] = useState<any[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
   
@@ -43,24 +44,45 @@ export default function MyRequests() {
   }, [user]);
 
   const loadMyRequests = async () => {
-    if (!user) return;
+    if (!user) {
+      console.log('⚠️ Usuário não encontrado');
+      return;
+    }
 
+    setLoading(true);
     try {
       console.log('=== CARREGANDO MINHAS SOLICITAÇÕES ===');
+      console.log('👤 User ID:', user.id);
+      console.log('👤 User Email:', user.email);
       
-      // Carregar solicitações do usuário atual
-      const { data, error } = await supabase
+      // Tentar buscar por ID primeiro
+      const userId = String(user.id);
+      const userEmail = user.email ? String(user.email) : null;
+      
+      // Buscar todas as solicitações e filtrar no cliente (mais confiável)
+      const { data: allData, error: allError } = await supabase
         .from('price_suggestions')
         .select('*')
-        .eq('requested_by', user.id)
-        .order('created_at', { ascending: false });
-
-      console.log('🔍 Total de solicitações carregadas:', data?.length);
-
-      if (error) {
-        console.error('Erro na consulta:', error);
-        throw error;
+        .order('created_at', { ascending: false })
+        .limit(1000); // Limite alto para garantir que pegamos todas
+      
+      if (allError) {
+        console.error('❌ Erro ao buscar solicitações:', allError);
+        throw allError;
       }
+      
+      console.log('🔍 Total de solicitações no banco:', allData?.length || 0);
+      
+      // Filtrar no cliente por ID ou email
+      const data = (allData || []).filter((suggestion: any) => {
+        const reqBy = String(suggestion.requested_by || '');
+        const creBy = String(suggestion.created_by || '');
+        return reqBy === userId || creBy === userId || 
+               (userEmail && (reqBy === userEmail || creBy === userEmail));
+      });
+
+      console.log('🔍 Total de solicitações do usuário:', data?.length);
+      console.log('🔍 Primeira solicitação:', data?.[0]);
 
       // Carregar postos e clientes
       const [stationsRes, clientsRes] = await Promise.all([
@@ -96,6 +118,7 @@ export default function MyRequests() {
       });
       
       setMyRequests(enrichedData);
+      setFilteredRequests(enrichedData);
       
       // Calcular stats
       const total = enrichedData.length;
@@ -104,9 +127,13 @@ export default function MyRequests() {
       const rejected = enrichedData.filter(s => s.status === 'rejected').length;
       
       setStats({ total, pending, approved, rejected });
-    } catch (error) {
-      console.error('Erro ao carregar minhas solicitações:', error);
-      toast.error("Erro ao carregar solicitações");
+    } catch (error: any) {
+      console.error('❌ Erro ao carregar minhas solicitações:', error);
+      toast.error("Erro ao carregar solicitações: " + (error?.message || 'Erro desconhecido'));
+      setMyRequests([]);
+      setFilteredRequests([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -117,7 +144,7 @@ export default function MyRequests() {
   };
 
   const applyFilters = (filterValues: typeof filters) => {
-    let filtered = myRequests;
+    let filtered = [...myRequests];
 
     if (filterValues.status !== "all") {
       filtered = filtered.filter(s => s.status === filterValues.status);
@@ -132,7 +159,7 @@ export default function MyRequests() {
       );
     }
 
-    setMyRequests(filtered);
+    setFilteredRequests(filtered);
   };
 
   const formatDate = (dateString: string) => {
@@ -164,6 +191,17 @@ export default function MyRequests() {
     };
     return names[product] || product;
   };
+
+  if (loading && myRequests.length === 0) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-slate-300 border-t-slate-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-slate-600 dark:text-slate-400">Carregando suas solicitações...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
@@ -287,11 +325,11 @@ export default function MyRequests() {
       {/* My Requests List */}
       <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
         <CardHeader>
-          <CardTitle>Minhas Solicitações ({myRequests.length})</CardTitle>
+          <CardTitle>Minhas Solicitações ({filteredRequests.length})</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {myRequests.map((request) => (
+            {filteredRequests.map((request) => (
               <div key={request.id} className="p-4 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:shadow-lg transition-all duration-300">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div className="flex-1">
@@ -342,9 +380,15 @@ export default function MyRequests() {
               </div>
             ))}
             
-            {myRequests.length === 0 && (
+            {filteredRequests.length === 0 && myRequests.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-slate-600 dark:text-slate-400">Nenhuma solicitação encontrada</p>
+              </div>
+            )}
+            
+            {filteredRequests.length === 0 && myRequests.length > 0 && (
+              <div className="text-center py-8">
+                <p className="text-slate-600 dark:text-slate-400">Nenhuma solicitação encontrada com os filtros aplicados</p>
               </div>
             )}
           </div>

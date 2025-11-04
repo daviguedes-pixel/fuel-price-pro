@@ -6,7 +6,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { SisEmpresaCombobox } from "@/components/SisEmpresaCombobox";
 import { ClientCombobox } from "@/components/ClientCombobox";
@@ -50,6 +49,10 @@ export default function PriceRequest() {
   const [saveAsDraft, setSaveAsDraft] = useState(false);
   const [stationPaymentMethods, setStationPaymentMethods] = useState<any[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState("my-requests");
+  const [myRequests, setMyRequests] = useState<any[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<any>(null);
+  const [showRequestDetails, setShowRequestDetails] = useState(false);
 
   const initialFormData = {
     station_id: "",
@@ -109,10 +112,6 @@ export default function PriceRequest() {
   const [calculatedPrice, setCalculatedPrice] = useState(0);
   const [margin, setMargin] = useState(0);
   const [priceIncreaseCents, setPriceIncreaseCents] = useState(0);
-  const [activeTab, setActiveTab] = useState("my-requests");
-  const [myRequests, setMyRequests] = useState<any[]>([]);
-  const [selectedRequest, setSelectedRequest] = useState<any>(null);
-  const [showRequestDetails, setShowRequestDetails] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string>("");
   const [costCalculations, setCostCalculations] = useState({
@@ -144,6 +143,79 @@ export default function PriceRequest() {
       loadMyRequests();
     }
   }, [activeTab, user]);
+
+  const loadMyRequests = async () => {
+    if (!user) {
+      console.log('⚠️ Usuário não encontrado no loadMyRequests');
+      return;
+    }
+
+    try {
+      console.log('📋 Carregando minhas solicitações no PriceRequest...');
+      const userId = String(user.id);
+      const userEmail = user.email ? String(user.email) : null;
+      
+      // Buscar todas e filtrar no cliente (mais confiável)
+      const { data: allData, error: allError } = await supabase
+        .from('price_suggestions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1000);
+      
+      if (allError) {
+        console.error('❌ Erro ao buscar solicitações:', allError);
+        throw allError;
+      }
+      
+      // Filtrar no cliente
+      const data = (allData || []).filter((suggestion: any) => {
+        const reqBy = String(suggestion.requested_by || '');
+        const creBy = String(suggestion.created_by || '');
+        return reqBy === userId || creBy === userId || 
+               (userEmail && (reqBy === userEmail || creBy === userEmail));
+      }).slice(0, 50); // Limitar a 50 após filtrar
+
+      // Carregar postos e clientes para enriquecer dados
+      const [stationsRes, clientsRes] = await Promise.all([
+        supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
+        supabase.from('clientes' as any).select('id_cliente, nome')
+      ]);
+
+      // Enriquecer dados
+      const enrichedData = (data || []).map((request: any) => {
+        let station = null;
+        if (request.station_id) {
+          station = (stationsRes.data as any)?.find((s: any) => {
+            const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
+            const suggId = String(request.station_id);
+            return stationId === suggId || s.cnpj_cpf === suggId || s.id_empresa === suggId;
+          });
+        }
+        
+        let client = null;
+        if (request.client_id) {
+          client = (clientsRes.data as any)?.find((c: any) => {
+            const clientId = String(c.id_cliente || c.id || '');
+            const suggId = String(request.client_id);
+            return clientId === suggId;
+          });
+        }
+
+        return {
+          ...request,
+          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
+          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
+        };
+      });
+
+      setMyRequests(enrichedData);
+      console.log('✅ Solicitações carregadas:', enrichedData.length);
+    } catch (error: any) {
+      console.error('❌ Erro ao carregar minhas solicitações:', error);
+      toast.error("Erro ao carregar solicitações: " + (error?.message || 'Erro desconhecido'));
+      setMyRequests([]);
+    }
+  };
 
   // Load references when component mounts (realtime desabilitado para reduzir requisições)
   useEffect(() => {
@@ -533,57 +605,6 @@ export default function PriceRequest() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.station_id, formData.product, lastSearchedStation, lastSearchedProduct]);
 
-  const loadMyRequests = async () => {
-    if (!user) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('price_suggestions')
-        .select('*')
-        .eq('requested_by', user.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-
-      // Carregar postos e clientes para enriquecer dados
-      const [stationsRes, clientsRes] = await Promise.all([
-        supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clientes' as any).select('id_cliente, nome')
-      ]);
-
-      // Enriquecer dados
-      const enrichedData = (data || []).map((request: any) => {
-        let station = null;
-        if (request.station_id) {
-          station = (stationsRes.data as any)?.find((s: any) => {
-            const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
-            const suggId = String(request.station_id);
-            return stationId === suggId || s.cnpj_cpf === suggId || s.id_empresa === suggId;
-          });
-        }
-        
-        let client = null;
-        if (request.client_id) {
-          client = (clientsRes.data as any)?.find((c: any) => {
-            const clientId = String(c.id_cliente || c.id || '');
-            const suggId = String(request.client_id);
-            return clientId === suggId;
-          });
-        }
-
-        return {
-          ...request,
-          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
-          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
-        };
-      });
-
-      setMyRequests(enrichedData);
-    } catch (error) {
-      console.error('Erro ao carregar minhas solicitações:', error);
-    }
-  };
 
   const loadReferences = async () => {
     try {
@@ -1014,7 +1035,8 @@ export default function PriceRequest() {
         payment_method_id: paymentMethodIdToSave,
         observations: formData.observations || null,
         attachments: attachments,
-        requested_by: user?.id,
+        requested_by: user?.id ? String(user.id) : (user?.email || ''),
+        created_by: user?.id ? String(user.id) : (user?.email || ''),
         margin_cents: Math.round(margin * 100), // Margem em centavos para cálculo
         cost_price: costPrice,
         status: isDraft ? 'draft' as any : 'pending' as any,
@@ -1051,7 +1073,19 @@ export default function PriceRequest() {
         console.error('❌ Código do erro:', error.code);
         console.error('❌ Detalhes do erro:', error.details);
         console.error('❌ Mensagem:', error.message);
-        toast.error("Erro ao salvar solicitação: " + error.message);
+        console.error('❌ Hint:', (error as any).hint);
+        console.error('❌ Dados tentados:', requestData);
+        
+        // Verificar se é erro de RLS
+        if (error.code === '42501' || error.message?.includes('permission') || error.message?.includes('policy')) {
+          toast.error("Erro de permissão. Verifique se você está autenticado corretamente.");
+        } else if (error.code === '23505') {
+          toast.error("Erro: Já existe uma solicitação com esses dados.");
+        } else if (error.code === '23503') {
+          toast.error("Erro: Referência inválida (posto, cliente ou método de pagamento).");
+        } else {
+          toast.error("Erro ao salvar solicitação: " + (error.message || 'Erro desconhecido'));
+        }
         return;
       }
 
@@ -1149,9 +1183,20 @@ export default function PriceRequest() {
       setSaveAsDraft(isDraft);
       setSavedSuggestion(enrichedData);
       
-    } catch (error) {
-      console.error('Erro ao salvar solicitação:', error);
-      toast.error("Erro ao salvar solicitação");
+      // Recarregar lista de solicitações após salvar
+      if (activeTab === 'my-requests') {
+        loadMyRequests();
+      }
+      
+      // Limpar formulário se não for rascunho
+      if (!isDraft) {
+        setFormData(initialFormData);
+        setAttachments([]);
+      }
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao salvar solicitação:', error);
+      toast.error("Erro ao salvar solicitação: " + (error?.message || 'Erro desconhecido'));
     } finally {
       setLoading(false);
     }
@@ -1330,29 +1375,34 @@ export default function PriceRequest() {
 
         {/* Header com botão de Nova Solicitação */}
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">Minhas Solicitações</h2>
-          <Button
-            onClick={() => setActiveTab('new')}
-            className="flex items-center gap-2"
-          >
-            <DollarSign className="h-4 w-4" />
-            Nova Solicitação
-          </Button>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">
+            {activeTab === 'new' ? 'Nova Solicitação de Preço' : 'Minhas Solicitações'}
+          </h2>
+          <div className="flex gap-3">
+            {activeTab === 'my-requests' && (
+              <Button
+                onClick={() => setActiveTab('new')}
+                className="flex items-center gap-2"
+              >
+                <DollarSign className="h-4 w-4" />
+                Nova Solicitação
+              </Button>
+            )}
+            {activeTab === 'new' && (
+              <Button
+                onClick={() => setActiveTab('my-requests')}
+                variant="outline"
+                className="flex items-center gap-2"
+              >
+                <FileText className="h-4 w-4" />
+                Minhas Solicitações
+              </Button>
+            )}
+          </div>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full hidden">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="new" className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4" />
-              Nova Solicitação
-            </TabsTrigger>
-            <TabsTrigger value="my-requests" className="flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Minhas Solicitações
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="new">
+        {/* Conteúdo baseado na aba ativa */}
+        {activeTab === 'new' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Form */}
         <div className="lg:col-span-2">
@@ -2047,9 +2097,9 @@ export default function PriceRequest() {
           )}
         </div>
       </div>
-        </TabsContent>
+        )}
 
-          <TabsContent value="my-requests">
+        {activeTab === 'my-requests' && (
             <div className="space-y-6">
               {/* Stats */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -2152,8 +2202,7 @@ export default function PriceRequest() {
                 )}
               </div>
             </div>
-          </TabsContent>
-        </Tabs>
+        )}
       </div>
 
       {/* Image Viewer Modal */}
