@@ -1893,25 +1893,27 @@ export default function PriceRequest() {
 
           {/* Análise de Custos */}
           {(costCalculations.finalCost > 0 || costCalculations.totalRevenue > 0) && (
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-              <CardHeader className="text-center pb-6">
-                <div className="flex justify-center mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-700 flex items-center justify-center shadow-lg">
-                    <Calculator className="h-6 w-6 text-white" />
+            <Card className="shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <CardHeader className="pb-6 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                    <Calculator className="h-5 w-5 text-slate-700 dark:text-slate-300" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                      Análise de Custos
+                    </CardTitle>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Cálculos detalhados de rentabilidade</p>
                   </div>
                 </div>
-                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">
-                  Análise de Custos
-                </CardTitle>
-                <p className="text-slate-600 dark:text-slate-400">Cálculos detalhados de rentabilidade</p>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="pt-6 space-y-4">
                 <div className="space-y-3">
                   {/* Custo Final por Litro */}
-                  <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700/50">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Custo Final/L:</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{formatPrice4Decimals(costCalculations.finalCost)}</span>
+                  <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Custo Final/L:</span>
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.finalCost)}</span>
                     </div>
                     {(() => {
                       let feePercentage = 0;
@@ -1926,15 +1928,14 @@ export default function PriceRequest() {
                       }
                       const purchaseCost = parseFloat(formData.purchase_cost) || 0;
                       const freightCost = parseFloat(formData.freight_cost) || 0;
-                      // Os custos JÁ estão em R$/L
                       const baseCostTotal = purchaseCost + freightCost;
                       return feePercentage > 0 ? (
-                        <div className="text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-600 pt-1 mt-1">
+                        <div className="text-xs text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700 pt-2 mt-2 space-y-1">
                           <div className="flex justify-between">
                             <span>Base (compra + frete)/L:</span>
                             <span>{formatPrice4Decimals(baseCostTotal)}</span>
                           </div>
-                          <div className="flex justify-between text-orange-600 dark:text-orange-400 font-medium">
+                          <div className="flex justify-between text-slate-700 dark:text-slate-300 font-medium">
                             <span>Taxa ({feePercentage.toFixed(2)}%):</span>
                             <span>+{formatPrice4Decimals(costCalculations.finalCost - baseCostTotal)}</span>
                           </div>
@@ -1942,7 +1943,7 @@ export default function PriceRequest() {
                       ) : null;
                     })()}
                     
-                    {/* Sempre mostrar informações de taxa se houver */}
+                    {/* Informações de taxa */}
                     {(() => {
                       let feePercentage = 0;
                       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
@@ -1963,22 +1964,21 @@ export default function PriceRequest() {
                         const purchaseCost = parseFloat(formData.purchase_cost) || 0;
                         const freightCost = parseFloat(formData.freight_cost) || 0;
                         const baseCost = purchaseCost + freightCost;
-                        
                         const taxValue = baseCost * (feePercentage / 100);
                         
                         return (
-                          <div className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 pt-2 border-t border-slate-300 dark:border-slate-600">
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-1">
                             <div className="flex justify-between items-center">
                               <span className="font-medium">Taxa aplicada:</span>
-                              <span className="font-bold">{feePercentage.toFixed(2)}%</span>
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">{feePercentage.toFixed(2)}%</span>
                             </div>
-                            <div className="flex justify-between items-center mt-1">
-                              <span className="text-slate-500 dark:text-slate-400">Custo base (sem taxa):</span>
-                              <span className="text-slate-600 dark:text-slate-300">{formatPrice4Decimals(baseCost)}</span>
+                            <div className="flex justify-between items-center">
+                              <span>Custo base (sem taxa):</span>
+                              <span>{formatPrice4Decimals(baseCost)}</span>
                             </div>
-                            <div className="flex justify-between items-center mt-1">
-                              <span className="text-emerald-600 dark:text-emerald-400 font-medium">Acréscimo da taxa:</span>
-                              <span className="text-emerald-700 dark:text-emerald-300 font-bold">+{formatPrice4Decimals(taxValue)}</span>
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">Acréscimo da taxa:</span>
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">+{formatPrice4Decimals(taxValue)}</span>
                             </div>
                           </div>
                         );
@@ -1988,56 +1988,52 @@ export default function PriceRequest() {
                   </div>
 
                   {/* Receita Total */}
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
-                    <span className="text-sm font-medium text-blue-600 dark:text-blue-400">Receita Total:</span>
-                    <span className="font-bold text-blue-700 dark:text-blue-300">{formatPrice(costCalculations.totalRevenue)}</span>
+                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Receita Total:</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalRevenue)}</span>
                   </div>
 
                   {/* Custo Total */}
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20">
-                    <span className="text-sm font-medium text-orange-600 dark:text-orange-400">Custo Total:</span>
-                    <span className="font-bold text-orange-700 dark:text-orange-300">{formatPrice(costCalculations.totalCost)}</span>
+                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Custo Total:</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalCost)}</span>
                   </div>
 
                   {/* Lucro Bruto */}
-                  <div className={`flex justify-between items-center p-3 rounded-lg ${costCalculations.grossProfit >= 0 ? 'bg-green-50 dark:bg-green-900/20' : 'bg-red-50 dark:bg-red-900/20'}`}>
-                    <span className={`text-sm font-medium ${costCalculations.grossProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                      Lucro Bruto:
-                    </span>
-                    <span className={`font-bold ${costCalculations.grossProfit >= 0 ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Lucro Bruto:</span>
+                    <span className={`font-bold ${costCalculations.grossProfit >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
                       {formatPrice(costCalculations.grossProfit)}
                     </span>
                   </div>
 
                   {/* Lucro por Litro */}
-                  <div className="flex justify-between items-center p-3 rounded-lg bg-purple-50 dark:bg-purple-900/20">
-                    <span className="text-sm font-medium text-purple-600 dark:text-purple-400">Lucro/Litro:</span>
-                    <span className="font-bold text-purple-700 dark:text-purple-300">{formatPrice4Decimals(costCalculations.profitPerLiter)}</span>
+                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Lucro/Litro:</span>
+                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.profitPerLiter)}</span>
                   </div>
 
                   {/* Compensação ARLA */}
                   {costCalculations.arlaCompensation !== 0 && (
-                    <div className="border-t border-slate-200 dark:border-slate-600 pt-3 mt-3">
-                      <div className="flex justify-between items-center p-3 rounded-lg bg-teal-50 dark:bg-teal-900/20">
-                        <span className="text-sm font-medium text-teal-600 dark:text-teal-400">Compensação ARLA:</span>
-                        <span className="font-bold text-teal-700 dark:text-teal-300">{formatPrice(costCalculations.arlaCompensation)}</span>
-                      </div>
+                    <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Compensação ARLA:</span>
+                      <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.arlaCompensation)}</span>
                     </div>
                   )}
 
                   {/* Resultado Líquido */}
-                  <div className={`flex justify-between items-center p-4 rounded-xl border-2 ${costCalculations.netResult >= 0 ? 'border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-900/30' : 'border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/30'}`}>
+                  <div className={`flex justify-between items-center p-4 rounded-lg border-2 ${costCalculations.netResult >= 0 ? 'border-green-600 dark:border-green-500 bg-green-50 dark:bg-green-950/30' : 'border-red-600 dark:border-red-500 bg-red-50 dark:bg-red-950/30'}`}>
                     <div className="flex items-center gap-2">
                       {costCalculations.netResult >= 0 ? (
-                        <CheckCircle className="h-5 w-5 text-green-600" />
+                        <CheckCircle className="h-5 w-5 text-green-700 dark:text-green-400" />
                       ) : (
-                        <AlertCircle className="h-5 w-5 text-red-600" />
+                        <AlertCircle className="h-5 w-5 text-red-700 dark:text-red-400" />
                       )}
-                      <span className={`text-sm font-bold ${costCalculations.netResult >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
                         Resultado Líquido:
                       </span>
                     </div>
-                    <span className={`text-lg font-bold ${costCalculations.netResult >= 0 ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>
+                    <span className={`text-lg font-bold ${costCalculations.netResult >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
                       {formatPrice(costCalculations.netResult)}
                     </span>
                   </div>
