@@ -66,7 +66,8 @@ serve(async (req) => {
             .eq('user_id', user.user_id)
         }
       } catch (err) {
-        results.errors.push(`${user.email}: ${err.message}`)
+        const message = err instanceof Error ? err.message : String(err);
+        results.errors.push(`${user.email}: ${message}`)
       }
     }
 
@@ -84,8 +85,9 @@ serve(async (req) => {
       },
     )
   } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: message }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,

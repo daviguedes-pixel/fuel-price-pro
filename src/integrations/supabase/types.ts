@@ -424,6 +424,48 @@ export type Database = {
         }
         Relationships: []
       }
+      Dever_Cayo: {
+        Row: {
+          BANDEIRA: string | null
+          BASE: string | null
+          POSTO: string | null
+          PRAZO: string | null
+        }
+        Insert: {
+          BANDEIRA?: string | null
+          BASE?: string | null
+          POSTO?: string | null
+          PRAZO?: string | null
+        }
+        Update: {
+          BANDEIRA?: string | null
+          BASE?: string | null
+          POSTO?: string | null
+          PRAZO?: string | null
+        }
+        Relationships: []
+      }
+      Dever_Cayo1: {
+        Row: {
+          BANDEIRA: string | null
+          BASE: string | null
+          POSTO: string | null
+          PRAZO: string | null
+        }
+        Insert: {
+          BANDEIRA?: string | null
+          BASE?: string | null
+          POSTO?: string | null
+          PRAZO?: string | null
+        }
+        Update: {
+          BANDEIRA?: string | null
+          BASE?: string | null
+          POSTO?: string | null
+          PRAZO?: string | null
+        }
+        Relationships: []
+      }
       dispositivos: {
         Row: {
           data_inclusao: string | null
@@ -532,6 +574,42 @@ export type Database = {
           latitude?: number | null
           longitude?: number | null
           nome?: string
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          created_at: string | null
+          id: string
+          message: string
+          read: boolean | null
+          suggestion_id: string
+          title: string
+          type: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message: string
+          read?: boolean | null
+          suggestion_id: string
+          title: string
+          type: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message?: string
+          read?: boolean | null
+          suggestion_id?: string
+          title?: string
+          type?: string
+          updated_at?: string | null
+          user_id?: string
         }
         Relationships: []
       }
@@ -846,15 +924,7 @@ export type Database = {
           volume_made?: number | null
           volume_projected?: number | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "price_suggestions_payment_method_id_fkey"
-            columns: ["payment_method_id"]
-            isOneToOne: false
-            referencedRelation: "payment_methods"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profile_permissions: {
         Row: {
@@ -999,9 +1069,41 @@ export type Database = {
           },
         ]
       }
+      role_audit_log: {
+        Row: {
+          action: string
+          id: string
+          performed_at: string | null
+          performed_by: string
+          reason: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          action: string
+          id?: string
+          performed_at?: string | null
+          performed_by: string
+          reason?: string | null
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          action?: string
+          id?: string
+          performed_at?: string | null
+          performed_by?: string
+          reason?: string | null
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       sis_empresa: {
         Row: {
           bandeira: string | null
+          brinde_enabled: boolean | null
+          brinde_value: number | null
           cluster: string | null
           cnpj_cpf: string | null
           ipp_code: string | null
@@ -1022,6 +1124,8 @@ export type Database = {
         }
         Insert: {
           bandeira?: string | null
+          brinde_enabled?: boolean | null
+          brinde_value?: number | null
           cluster?: string | null
           cnpj_cpf?: string | null
           ipp_code?: string | null
@@ -1042,6 +1146,8 @@ export type Database = {
         }
         Update: {
           bandeira?: string | null
+          brinde_enabled?: boolean | null
+          brinde_value?: number | null
           cluster?: string | null
           cnpj_cpf?: string | null
           ipp_code?: string | null
@@ -1101,6 +1207,7 @@ export type Database = {
       tipos_pagamento: {
         Row: {
           CARTAO: string | null
+          id: number
           ID_POSTO: string | null
           POSTO: string | null
           PRAZO: string | null
@@ -1108,6 +1215,7 @@ export type Database = {
         }
         Insert: {
           CARTAO?: string | null
+          id?: number
           ID_POSTO?: string | null
           POSTO?: string | null
           PRAZO?: string | null
@@ -1115,6 +1223,7 @@ export type Database = {
         }
         Update: {
           CARTAO?: string | null
+          id?: number
           ID_POSTO?: string | null
           POSTO?: string | null
           PRAZO?: string | null
@@ -1182,6 +1291,30 @@ export type Database = {
           role?: string
           updated_at?: string | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
         }
         Relationships: []
       }
@@ -1320,6 +1453,7 @@ export type Database = {
         Returns: {
           bandeira: string
           cnpj_cpf: string
+          id_empresa: string
           latitude: number
           longitude: number
           nome_empresa: string
@@ -1327,6 +1461,14 @@ export type Database = {
           registro_ativo: string
         }[]
       }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      is_admin: { Args: { _user_id: string }; Returns: boolean }
       postgres_fdw_disconnect: { Args: { "": string }; Returns: boolean }
       postgres_fdw_disconnect_all: { Args: never; Returns: boolean }
       postgres_fdw_get_connections: {
@@ -1337,6 +1479,7 @@ export type Database = {
       unaccent: { Args: { "": string }; Returns: string }
     }
     Enums: {
+      app_role: "super_admin" | "admin" | "supervisor" | "analista"
       approval_status: "pending" | "approved" | "rejected" | "draft"
       payment_type: "vista" | "cartao_28" | "cartao_35"
       product_type:
@@ -1477,6 +1620,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      app_role: ["super_admin", "admin", "supervisor", "analista"],
       approval_status: ["pending", "approved", "rejected", "draft"],
       payment_type: ["vista", "cartao_28", "cartao_35"],
       product_type: [
