@@ -8,60 +8,60 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* São Roque Brand Colors - Light Theme */
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Professional Light Theme - Clean & Corporate */
+    --background: 0 0% 98%;
+    --foreground: 222 47% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 222 47% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 222 47% 11%;
 
-    /* Primary: São Roque Deep Blue */
-    --primary: 215 85% 25%;
+    /* Primary: Professional Navy Blue */
+    --primary: 221 83% 20%;
     --primary-foreground: 0 0% 98%;
-    --primary-hover: 215 85% 20%;
+    --primary-hover: 221 83% 15%;
 
-    /* Secondary: Light sections */
-    --secondary: 210 40% 98%;
-    --secondary-foreground: 222.2 84% 4.9%;
+    /* Secondary: Subtle backgrounds */
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
 
-    --muted: 210 40% 96%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
 
-    /* Accent: São Roque Orange */
-    --accent: 25 95% 53%;
+    /* Accent: Professional Blue (less vibrant) */
+    --accent: 217 91% 60%;
     --accent-foreground: 0 0% 98%;
-    --accent-hover: 25 95% 48%;
+    --accent-hover: 217 91% 55%;
 
-    /* Success for approvals */
-    --success: 142 76% 36%;
+    /* Success - more muted */
+    --success: 142 71% 45%;
     --success-foreground: 0 0% 98%;
 
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 215 85% 25%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 221 83% 20%;
 
-    --radius: 0.75rem;
+    --radius: 0.5rem;
 
-    /* Gradients and animations */
-    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-hover)));
-    --gradient-accent: linear-gradient(135deg, hsl(var(--accent)), hsl(var(--accent-hover)));
-    --shadow-soft: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    --shadow-glow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+    /* Professional gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(221 83% 20%), hsl(221 83% 15%));
+    --shadow-soft: 0 1px 3px rgba(0, 0, 0, 0.05);
+    --shadow-medium: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
 
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
+    /* Sidebar: Navy blue like the reference */
+    --sidebar-background: 221 83% 20%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 221 83% 15%;
     --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 221 83% 25%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 221 39% 11%;
+    --sidebar-ring: 217 91% 60%;
   }
 
   /* Animation keyframes */
@@ -113,48 +113,51 @@ All colors MUST be HSL.
   }
 
   .dark {
-    --background: 215 25% 8%;
-    --foreground: 0 0% 98%;
+    /* Professional Dark Theme */
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
 
-    --card: 215 25% 10%;
-    --card-foreground: 0 0% 98%;
+    --card: 221 39% 11%;
+    --card-foreground: 210 40% 98%;
 
-    --popover: 215 25% 10%;
-    --popover-foreground: 0 0% 98%;
+    --popover: 221 39% 11%;
+    --popover-foreground: 210 40% 98%;
 
-    /* Primary: São Roque Deep Blue (lighter for dark mode) */
-    --primary: 215 85% 45%;
-    --primary-foreground: 215 25% 8%;
-    --primary-hover: 215 85% 50%;
+    /* Primary: Lighter navy for dark mode */
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 11%;
+    --primary-hover: 217 91% 65%;
 
-    --secondary: 215 25% 15%;
-    --secondary-foreground: 0 0% 98%;
+    --secondary: 217 19% 27%;
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 215 25% 15%;
-    --muted-foreground: 215 15% 65%;
+    --muted: 217 19% 27%;
+    --muted-foreground: 215 20% 65%;
 
-    /* Accent: São Roque Orange */
-    --accent: 25 95% 58%;
-    --accent-foreground: 215 25% 8%;
-    --accent-hover: 25 95% 53%;
+    /* Accent: Vibrant blue for dark mode */
+    --accent: 217 91% 60%;
+    --accent-foreground: 222 47% 11%;
+    --accent-hover: 217 91% 65%;
 
-    --success: 142 76% 36%;
+    --success: 142 71% 45%;
     --success-foreground: 0 0% 98%;
 
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 215 25% 20%;
-    --input: 215 25% 20%;
-    --ring: 215 85% 45%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 217 19% 27%;
+    --input: 217 19% 27%;
+    --ring: 217 91% 60%;
+
+    /* Sidebar: Even darker in dark mode */
+    --sidebar-background: 221 39% 11%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 217 91% 60%;
+    --sidebar-primary-foreground: 222 47% 11%;
+    --sidebar-accent: 217 19% 27%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 215 27% 17%;
+    --sidebar-ring: 217 91% 60%;
   }
 }
 

@@ -1,163 +1,133 @@
-import { Card, CardContent } from "@/components/ui/card";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
-import DashboardStats from "@/components/DashboardStats";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { 
   DollarSign, 
-  BarChart3,
-  Search,
+  BarChart3, 
+  Search, 
   Map,
-  FileText,
   TrendingUp,
-  Sparkles,
-  Settings,
+  Activity,
+  ArrowRight,
+  History,
+  FileText,
   Users,
-  Shield
+  Settings
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import DashboardStats from "@/components/DashboardStats";
 
-export default function Dashboard() {
-  const navigate = useNavigate();
+const Dashboard = () => {
   const { profile } = useAuth();
-  const { permissions, canAccess } = usePermissions();
+  const { canAccess } = usePermissions();
+  const navigate = useNavigate();
 
-  // Definir todas as ações possíveis com suas permissões
-  const allActions = [
+  const quickActions = [
     {
-      title: "Solicitação de Preços",
-      description: "Solicite novos preços ou atualizações",
       icon: DollarSign,
-      color: "from-blue-500 to-indigo-500",
+      title: "Nova Solicitação",
+      description: "Criar solicitação de preço",
       href: "/solicitacao-preco",
-      permission: "price_request"
+      permission: "price_request",
     },
     {
-      title: "Aprovações",
-      description: "Gerencie aprovações de preços",
       icon: BarChart3,
-      color: "from-green-500 to-emerald-500",
+      title: "Aprovações",
+      description: "Revisar pendências",
       href: "/approvals",
-      permission: "approvals"
+      permission: "approvals",
     },
     {
-      title: "Pesquisa de Preços Públicos",
-      description: "Analise preços da concorrência",
       icon: Search,
-      color: "from-purple-500 to-pink-500",
+      title: "Pesquisa",
+      description: "Preços de mercado",
       href: "/competitor-research",
-      permission: "research"
+      permission: "research",
     },
     {
-      title: "Mapa de Preços",
-      description: "Visualize preços geograficamente",
       icon: Map,
-      color: "from-orange-500 to-red-500",
+      title: "Mapa",
+      description: "Visão geográfica",
       href: "/map",
-      permission: "map"
+      permission: "map",
     },
     {
-      title: "Referências",
-      description: "Gerencie referências de produtos",
-      icon: FileText,
-      color: "from-cyan-500 to-blue-500",
-      href: "/reference-registration",
-      permission: "reference_registration"
-    },
-    {
+      icon: History,
       title: "Histórico",
-      description: "Consulte histórico de preços",
-      icon: TrendingUp,
-      color: "from-amber-500 to-yellow-500",
+      description: "Consultar preços",
       href: "/price-history",
-      permission: "price_history"
+      permission: "price_history",
     },
     {
-      title: "Administração",
-      description: "Gerencie configurações do sistema",
-      icon: Settings,
-      color: "from-slate-500 to-gray-500",
-      href: "/admin",
-      permission: "admin"
+      icon: FileText,
+      title: "Referências",
+      description: "Gerenciar produtos",
+      href: "/reference-registration",
+      permission: "reference_registration",
     },
     {
-      title: "Gestão de Clientes",
-      description: "Gerencie dados de clientes",
       icon: Users,
-      color: "from-indigo-500 to-purple-500",
-      href: "/client-management",
-      permission: "client_management"
+      title: "Gestão",
+      description: "Administração",
+      href: "/gestao",
+      permission: "admin",
     },
     {
-      title: "Gestão de Taxas",
-      description: "Configure métodos de pagamento",
-      icon: Shield,
-      color: "from-emerald-500 to-teal-500",
-      href: "/rate-management",
-      permission: "rate_management"
-    }
-  ];
+      icon: Settings,
+      title: "Configurações",
+      description: "Sistema",
+      href: "/settings",
+      permission: "admin",
+    },
+  ].filter(action => canAccess(action.permission));
 
-  // Filtrar ações baseadas nas permissões do usuário
-  const availableActions = allActions.filter(action => canAccess(action.permission));
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Bom dia";
+    if (hour < 18) return "Boa tarde";
+    return "Boa noite";
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      <div className="container mx-auto px-4 py-12 space-y-12">
-        
-        {/* Hero Section - Boas Vindas */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-12 text-white shadow-2xl">
-          {/* Decorative elements */}
-          <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
-          <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
-          
-          <div className="relative z-10">
-            <div className="flex items-center gap-3 mb-4">
-              <Sparkles className="h-8 w-8 text-yellow-400 animate-pulse" />
-              <h1 className="text-5xl font-bold">
-                Bem-vindo de volta, {profile?.nome || 'Usuário'}!
-              </h1>
-            </div>
-            <p className="text-blue-100 text-xl max-w-2xl mb-4">
-              Acesse rapidamente as funcionalidades disponíveis para seu perfil
-            </p>
-            {permissions && (
-              <div className="flex items-center gap-2 text-blue-200">
-                <Shield className="h-5 w-5" />
-                <span className="text-sm">
-                  Perfil: {permissions.role === 'admin' ? 'Administrador' : 'Usuário'} • 
-                  {availableActions.length} funcionalidade{availableActions.length !== 1 ? 's' : ''} disponível{availableActions.length !== 1 ? 'eis' : ''}
-                </span>
-              </div>
-            )}
-          </div>
+    <div className="min-h-full bg-background p-6">
+      <div className="container mx-auto max-w-7xl space-y-8">
+        {/* Header Section */}
+        <div>
+          <h1 className="text-3xl font-bold text-foreground mb-2">
+            {getGreeting()}, {profile?.nome?.split(' ')[0]}
+          </h1>
+          <p className="text-lg text-muted-foreground">
+            Sistema de Gestão de Preços
+          </p>
         </div>
 
-        {/* Estatísticas do Usuário */}
+        {/* Stats */}
         <DashboardStats />
 
-        {/* Quick Actions Grid - Dinâmico baseado em permissões */}
-        {availableActions.length > 0 && (
+        {/* Quick Actions Grid */}
+        {quickActions.length > 0 && (
           <div>
-            <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-6">
-              Funcionalidades Disponíveis
+            <h2 className="text-xl font-semibold text-foreground mb-4">
+              Acesso Rápido
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {availableActions.map((action) => (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {quickActions.map((action) => (
                 <Card 
-                  key={action.title}
-                  className="group cursor-pointer border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm shadow-lg hover:shadow-2xl transition-all duration-300 hover:scale-105 overflow-hidden"
+                  key={action.href}
+                  className="group hover:shadow-md transition-all duration-200 cursor-pointer border-border hover:border-primary/50"
                   onClick={() => navigate(action.href)}
                 >
-                  <CardContent className="p-6">
-                    <div className="flex items-start gap-4">
-                      <div className={`p-4 rounded-2xl bg-gradient-to-br ${action.color} shadow-lg group-hover:scale-110 transition-transform duration-300`}>
-                        <action.icon className="h-6 w-6 text-white" />
+                  <CardContent className="p-5">
+                    <div className="flex flex-col gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center group-hover:bg-primary/10 transition-colors">
+                        <action.icon className="h-5 w-5 text-muted-foreground group-hover:text-primary transition-colors" />
                       </div>
-                      <div className="flex-1">
-                        <h3 className="text-lg font-bold text-slate-800 dark:text-slate-200 mb-2 group-hover:text-primary transition-colors">
+                      <div className="space-y-1">
+                        <h3 className="font-semibold text-foreground text-sm group-hover:text-primary transition-colors">
                           {action.title}
                         </h3>
-                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                        <p className="text-xs text-muted-foreground">
                           {action.description}
                         </p>
                       </div>
@@ -169,48 +139,62 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Mensagem quando não há funcionalidades disponíveis */}
-        {availableActions.length === 0 && (
-          <Card className="border-0 bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-slate-800 dark:to-slate-700 shadow-lg">
-            <CardContent className="p-8 text-center">
-              <div className="flex flex-col items-center gap-4">
-                <div className="p-4 rounded-xl bg-yellow-500/10">
-                  <Shield className="h-8 w-8 text-yellow-600 dark:text-yellow-400" />
+        {/* Info Cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Welcome Card */}
+          <Card className="border-border">
+            <CardContent className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <TrendingUp className="h-6 w-6 text-primary" />
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">
-                    Aguardando Permissões
-                  </h3>
-                  <p className="text-slate-600 dark:text-slate-400">
-                    Seu perfil está sendo configurado. Entre em contato com o administrador para obter acesso às funcionalidades.
+                <div className="space-y-3 flex-1">
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Sistema Operacional
+                  </h2>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Todas as funcionalidades estão disponíveis para uso. 
+                    Utilize o menu lateral para navegar entre as diferentes áreas do sistema.
                   </p>
+                  <Button 
+                    onClick={() => navigate("/solicitacao-preco")}
+                    size="sm"
+                    className="mt-2"
+                  >
+                    Nova Solicitação
+                  </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
-        )}
 
-        {/* Info Section */}
-        <Card className="border-0 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-slate-800 dark:to-slate-700 shadow-lg">
-          <CardContent className="p-8">
-            <div className="flex items-start gap-4">
-              <div className="p-3 rounded-xl bg-blue-500/10">
-                <TrendingUp className="h-6 w-6 text-blue-600 dark:text-blue-400" />
+          {/* Status Card */}
+          <Card className="border-border">
+            <CardContent className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-lg bg-success/10 flex items-center justify-center flex-shrink-0">
+                  <Activity className="h-6 w-6 text-success" />
+                </div>
+                <div className="space-y-3 flex-1">
+                  <h2 className="text-lg font-semibold text-foreground">
+                    Status do Sistema
+                  </h2>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    Gerencie preços, acompanhe aprovações e tome decisões estratégicas 
+                    com base em dados atualizados do mercado.
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <div className="w-2 h-2 rounded-full bg-success animate-pulse"></div>
+                    <span className="text-xs text-success font-medium">Online</span>
+                  </div>
+                </div>
               </div>
-              <div>
-                <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">
-                  Portal Comercial - Rede São Roque
-                </h3>
-                <p className="text-slate-600 dark:text-slate-400">
-                  Sistema integrado para gestão de preços, análise de mercado e tomada de decisões estratégicas. 
-                  Utilize o menu lateral para navegar entre as funcionalidades disponíveis.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );
-}
+};
+
+export default Dashboard;

@@ -1,4 +1,4 @@
-import { useState, useCallback, memo, useEffect } from "react";
+import { useState, useCallback, memo } from "react";
 import { Button } from "./ui/button";
 import { 
   BarChart3, 
@@ -13,9 +13,8 @@ import {
   Map,
   History,
   FileText,
-  CreditCard,
   Users,
-  Building2
+  X
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -43,11 +42,11 @@ const getProfileDisplayName = (perfil: string) => {
 };
 
 const allMenuItems = [
-  { icon: Home, label: "Página Inicial", href: "/dashboard", permission: "dashboard" },
+  { icon: Home, label: "Início", href: "/dashboard", permission: "dashboard" },
   { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
   { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
-  { icon: Search, label: "Pesquisa de Preços Públicos", href: "/competitor-research", permission: "research" },
-  { icon: Map, label: "Mapa de Preços", href: "/map", permission: "map" },
+  { icon: Search, label: "Pesquisa de Preços", href: "/competitor-research", permission: "research" },
+  { icon: Map, label: "Mapa", href: "/map", permission: "map" },
   { icon: History, label: "Histórico", href: "/price-history", permission: "price_history" },
   { icon: FileText, label: "Referências", href: "/reference-registration", permission: "reference_registration" },
   { icon: Users, label: "Gestão", href: "/gestao", permission: "admin" },
@@ -58,12 +57,11 @@ function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const { profile, signOut } = useAuth();
-  const { canAccess, permissions } = usePermissions();
+  const { canAccess } = usePermissions();
   const { unreadCount } = useNotifications();
   const navigate = useNavigate();
   const location = useLocation();
   
-  // Filtrar menu items baseado nas permissões
   const menuItems = allMenuItems.filter(item => canAccess(item.permission));
 
   const handleLogout = useCallback(async () => {
@@ -80,23 +78,88 @@ function Layout({ children }: LayoutProps) {
     setSidebarOpen(prev => !prev);
   }, []);
 
+  const handleLogoClick = useCallback(() => {
+    navigate("/dashboard");
+  }, [navigate]);
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-600/50 shadow-lg">
-        <div className="flex items-center justify-between px-4 h-16">
-          <div className="flex items-center gap-4">
+    <div className="min-h-screen bg-background flex">
+      {/* Sidebar - Navy Blue */}
+      <aside className={`
+        bg-sidebar border-r border-sidebar-border transition-all duration-300 flex flex-col
+        ${sidebarOpen ? 'w-64' : 'w-0 lg:w-64'}
+        ${sidebarOpen ? 'fixed' : 'hidden lg:flex'}
+        lg:relative z-50 h-screen
+      `}>
+        {/* Logo Area */}
+        <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
+          <button 
+            onClick={handleLogoClick}
+            className="flex items-center hover:opacity-80 transition-opacity cursor-pointer"
+          >
+            <SaoRoqueLogo className="h-8" />
+          </button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSidebarOpen(false)}
+            className="lg:hidden text-sidebar-foreground hover:bg-sidebar-accent"
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {menuItems.map((item) => (
+            <Button
+              key={item.href}
+              variant="ghost"
+              className={`w-full justify-start gap-3 h-11 transition-all ${
+                location.pathname === item.href 
+                  ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
+                  : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
+              }`}
+              onClick={() => handleMenuClick(item.href)}
+            >
+              <item.icon className="h-5 w-5 flex-shrink-0" />
+              <span className="text-sm">{item.label}</span>
+            </Button>
+          ))}
+        </nav>
+
+        {/* User Info at bottom */}
+        <div className="p-3 border-t border-sidebar-border">
+          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-sidebar-accent/30">
+            <div className="w-8 h-8 rounded-full bg-sidebar-primary flex items-center justify-center">
+              <User className="h-4 w-4 text-sidebar-primary-foreground" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-sidebar-foreground truncate">{profile?.nome}</p>
+              <p className="text-xs text-sidebar-foreground/60 truncate">
+                {profile ? getProfileDisplayName(profile.perfil) : 'Carregando...'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-h-screen">
+        {/* Top Header */}
+        <header className="h-16 bg-card border-b border-border flex items-center justify-between px-4 lg:px-6">
+          <div className="flex items-center gap-3">
             <Button
               variant="ghost"
               size="sm"
               onClick={toggleSidebar}
-              className="text-white hover:bg-white/20 lg:hidden"
+              className="lg:hidden"
             >
               <Menu className="h-5 w-5" />
             </Button>
-            
-            <SaoRoqueLogo className="h-10" />
+            <h1 className="text-lg font-semibold text-foreground hidden sm:block">
+              Sistema de Gestão de Preços
+            </h1>
           </div>
 
           <div className="flex items-center gap-2">
@@ -105,74 +168,43 @@ function Layout({ children }: LayoutProps) {
             <Button
               variant="ghost"
               size="sm"
-              className="text-white hover:bg-white/20 relative"
+              className="relative"
               onClick={() => setNotificationsOpen(!notificationsOpen)}
-              data-notification-bell
             >
               <Bell className="h-5 w-5" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
                   {unreadCount}
                 </span>
               )}
             </Button>
             
-            <div className="flex items-center gap-2 text-white">
-              <User className="h-4 w-4" />
-              <span className="text-sm font-medium hidden sm:block">{profile?.nome}</span>
-              <span className="text-xs bg-accent text-accent-foreground px-2 py-1 rounded-full hidden md:block">
-                {profile ? getProfileDisplayName(profile.perfil) : 'Carregando...'}
-              </span>
-            </div>
-
             <Button 
               variant="ghost" 
-              size="sm" 
-              className="text-white hover:bg-white/20"
+              size="sm"
               onClick={handleLogout}
             >
               <LogOut className="h-5 w-5" />
             </Button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <NotificationCenter isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
-      <RealtimeNotifications />
-
-      <div className="flex">
-        {/* Sidebar */}
-        <aside className={`
-          bg-card border-r border-border/40 shadow-sm transition-all duration-300 h-[calc(100vh-4rem)]
-          ${sidebarOpen ? 'w-64' : 'w-0 lg:w-64'}
-          ${sidebarOpen ? 'block' : 'hidden lg:block'}
-          overflow-hidden fixed lg:relative z-50 lg:z-auto
-        `}>
-          <nav className="p-4 space-y-2">
-            {menuItems.map((item) => (
-              <Button
-                key={item.href}
-                variant="ghost"
-                className={`w-full justify-start gap-3 h-11 transition-colors ${
-                  location.pathname === item.href 
-                    ? 'bg-secondary text-primary' 
-                    : 'text-muted-foreground hover:text-primary hover:bg-secondary'
-                }`}
-                onClick={() => handleMenuClick(item.href)}
-              >
-                <item.icon className="h-5 w-5" />
-                <span>{item.label}</span>
-              </Button>
-            ))}
-          </nav>
-        </aside>
+        <NotificationCenter isOpen={notificationsOpen} onClose={() => setNotificationsOpen(false)} />
+        <RealtimeNotifications />
 
         {/* Main Content */}
-        <main className="flex-1 p-6 overflow-auto">
+        <main className="flex-1 overflow-auto bg-background">
           {children}
         </main>
       </div>
 
+      {/* Mobile Sidebar Overlay */}
+      {sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 }
