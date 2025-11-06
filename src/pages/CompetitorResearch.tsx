@@ -321,53 +321,48 @@ export default function PublicPriceResearch() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-4 py-8 space-y-8">
-        {/* Header com gradiente moderno */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-8 text-white shadow-2xl">
-          <div className="absolute inset-0 bg-black/10"></div>
-          <div className="relative flex items-center justify-between">
-            <div className="flex items-center gap-6">
-              <Button 
-                variant="secondary" 
-                onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Voltar ao Dashboard
-              </Button>
-              <div>
-                <h1 className="text-3xl font-bold mb-2">Pesquisa de Preços Públicos</h1>
-                <p className="text-slate-200">Registre preços de combustíveis dos postos</p>
-              </div>
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="pb-4 border-b border-border">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground">
+                Pesquisa de Preços
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Registre os preços da concorrência
+              </p>
             </div>
+            <Button 
+              variant="outline"
+              size="sm"
+              onClick={() => navigate("/dashboard")}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Voltar
+            </Button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="space-y-6">
           {/* Main Form */}
-          <div className="lg:col-span-2">
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-              <CardHeader className="text-center pb-6">
-                <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-2">
-                  Nova Pesquisa de Preços Públicos
-                </CardTitle>
-                <p className="text-slate-600 dark:text-slate-400">Preencha os dados para registrar uma nova pesquisa</p>
-              </CardHeader>
-              <CardContent className="space-y-8">
-                <form onSubmit={handleSubmit} className="space-y-8">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">
+                Nova Pesquisa de Preços
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">Preencha os dados para registrar uma nova pesquisa</p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <form onSubmit={handleSubmit} className="space-y-6">
                   {/* Seção: Dados Básicos */}
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-3 pb-4 border-b border-slate-200 dark:border-slate-700">
-                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
-                        <span className="text-white font-bold text-sm">1</span>
-                      </div>
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-200">
-                          Dados Básicos da Pesquisa
-                        </h3>
-                        <p className="text-sm text-slate-600 dark:text-slate-400">Informe o posto e produtos a serem pesquisados</p>
-                      </div>
+                  <div className="space-y-4">
+                    <div className="pb-3 border-b border-border">
+                      <h3 className="text-base font-semibold text-foreground">
+                        Dados Básicos da Pesquisa
+                      </h3>
+                      <p className="text-sm text-muted-foreground">Informe o posto e produtos a serem pesquisados</p>
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -608,7 +603,7 @@ export default function PublicPriceResearch() {
                   <div className="pt-4">
                     <Button
                       type="submit"
-                      className="w-full h-12 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold disabled:opacity-50"
                       disabled={!selectedStation || selectedProducts.length === 0 || submitting}
                     >
                       {submitting ? (
@@ -627,21 +622,19 @@ export default function PublicPriceResearch() {
                 </form>
               </CardContent>
             </Card>
-          </div>
 
-          {/* Sidebar de Resumo */}
-          <div className="lg:col-span-1">
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-              <CardHeader className="pb-4">
+            {/* Sidebar de Resumo */}
+            <Card className="mt-6">
+              <CardHeader>
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shadow-lg">
-                    <DollarSign className="h-6 w-6 text-white" />
+                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <DollarSign className="h-5 w-5 text-primary" />
                   </div>
                   <div>
-                    <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-200">
+                    <CardTitle className="text-base font-semibold">
                       Resumo da Pesquisa
                     </CardTitle>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                    <p className="text-sm text-muted-foreground mt-1">
                       Verifique os dados antes de salvar
                     </p>
                   </div>
@@ -649,10 +642,10 @@ export default function PublicPriceResearch() {
               </CardHeader>
               <CardContent className="space-y-4">
                 {selectedStation && (
-                  <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/20 dark:to-indigo-950/20 rounded-xl border border-blue-200 dark:border-blue-800">
-                    <div className="flex items-start gap-3 mb-3">
-                      <Building2 className="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
-                      <h4 className="font-bold text-blue-900 dark:text-blue-200">Posto Selecionado</h4>
+                  <div className="p-3 bg-muted/50 rounded-lg border border-border">
+                    <div className="flex items-start gap-3 mb-2">
+                      <Building2 className="h-4 w-4 text-primary flex-shrink-0 mt-0.5" />
+                      <h4 className="font-semibold text-sm text-foreground">Posto Selecionado</h4>
                     </div>
                     <p className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-2">{selectedStation.name}</p>
                     <p className="text-xs text-blue-700 dark:text-blue-300 mb-3">{selectedStation.address}</p>
@@ -717,7 +710,6 @@ export default function PublicPriceResearch() {
                 )}
               </CardContent>
             </Card>
-          </div>
         </div>
       </div>
 

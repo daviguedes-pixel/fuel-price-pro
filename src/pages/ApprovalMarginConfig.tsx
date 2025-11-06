@@ -38,14 +38,15 @@ export default function ApprovalMarginConfig() {
   const loadRules = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('approval_margin_rules')
-        .select('*')
-        .order('priority_order', { ascending: false })
-        .order('min_margin_cents', { ascending: true });
+      // Tabela ainda não criada no banco
+      // const { data, error } = await supabase
+      //   .from('approval_margin_rules')
+      //   .select('*')
+      //   .order('priority_order', { ascending: false })
+      //   .order('min_margin_cents', { ascending: true });
 
-      if (error) throw error;
-      setRules(data || []);
+      // if (error) throw error;
+      setRules([]);
     } catch (error: any) {
       console.error('Erro ao carregar regras:', error);
       toast({
@@ -94,49 +95,13 @@ export default function ApprovalMarginConfig() {
       };
 
       console.log('💾 Salvando regra:', ruleData);
-      console.log('📝 É edição?', !!editingRule?.id && editingRule.id !== '');
-
-      if (editingRule?.id && editingRule.id !== '') {
-        // Atualizar
-        console.log('🔄 Atualizando regra ID:', editingRule.id);
-        const { data, error } = await supabase
-          .from('approval_margin_rules')
-          .update({
-            ...ruleData,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', editingRule.id)
-          .select();
-
-        if (error) {
-          console.error('❌ Erro ao atualizar:', error);
-          throw error;
-        }
-        console.log('✅ Regra atualizada:', data);
-        toast({
-          title: "Sucesso",
-          description: 'Regra atualizada com sucesso!'
-        });
-      } else {
-        // Criar
-        console.log('➕ Criando nova regra');
-        ruleData.created_by = user?.id ? String(user.id) : (user?.email || '');
-        
-        const { data, error } = await supabase
-          .from('approval_margin_rules')
-          .insert([ruleData])
-          .select();
-
-        if (error) {
-          console.error('❌ Erro ao criar:', error);
-          throw error;
-        }
-        console.log('✅ Regra criada:', data);
-        toast({
-          title: "Sucesso",
-          description: 'Regra criada com sucesso!'
-        });
-      }
+      
+      // Funcionalidade temporariamente desabilitada - tabela não existe
+      toast({
+        title: "Aviso",
+        description: 'Funcionalidade em desenvolvimento - tabela approval_margin_rules não criada',
+        variant: "destructive"
+      });
       
       setEditingRule(null);
       setIsCreating(false);
@@ -156,51 +121,19 @@ export default function ApprovalMarginConfig() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir esta regra?')) return;
-
-    try {
-      const { error } = await supabase
-        .from('approval_margin_rules')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-      toast({
-        title: "Sucesso",
-        description: 'Regra excluída com sucesso!'
-      });
-      loadRules();
-    } catch (error: any) {
-      console.error('Erro ao excluir regra:', error);
-      toast({
-        title: "Erro",
-        description: 'Erro ao excluir regra: ' + (error.message || 'Erro desconhecido'),
-        variant: "destructive"
-      });
-    }
+    toast({
+      title: "Aviso",
+      description: 'Funcionalidade em desenvolvimento',
+      variant: "destructive"
+    });
   };
 
   const toggleActive = async (rule: ApprovalMarginRule) => {
-    try {
-      const { error } = await supabase
-        .from('approval_margin_rules')
-        .update({ is_active: !rule.is_active })
-        .eq('id', rule.id);
-
-      if (error) throw error;
-      toast({
-        title: "Sucesso",
-        description: `Regra ${!rule.is_active ? 'ativada' : 'desativada'} com sucesso!`
-      });
-      loadRules();
-    } catch (error: any) {
-      console.error('Erro ao atualizar regra:', error);
-      toast({
-        title: "Erro",
-        description: 'Erro ao atualizar regra',
-        variant: "destructive"
-      });
-    }
+    toast({
+      title: "Aviso",
+      description: 'Funcionalidade em desenvolvimento',
+      variant: "destructive"
+    });
   };
 
   const formatMargin = (cents: number) => {
@@ -218,11 +151,11 @@ export default function ApprovalMarginConfig() {
   }
 
   return (
-    <div className="container mx-auto p-4 space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="container mx-auto p-6 space-y-6">
+      <div className="flex items-center justify-between pb-4 border-b border-border">
         <div>
-          <h1 className="text-xl font-bold">Configurações de Aprovação por Margem</h1>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+          <h1 className="text-2xl font-semibold text-foreground">Configurações de Aprovação por Margem</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Configure quais perfis devem aprovar baseado na margem de lucro
           </p>
         </div>

@@ -952,25 +952,27 @@ export default function Approvals() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      <div className="container mx-auto px-4 py-4 space-y-4">
-        {/* Header moderno */}
-        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-4 text-white shadow-xl">
-          <div className="absolute inset-0 bg-black/10"></div>
-          <div className="relative flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto p-6 space-y-6">
+        {/* Header */}
+        <div className="pb-4 border-b border-border">
+          <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold mb-1">Aprovações de Preço</h1>
-              <p className="text-blue-100 text-sm">Gerencie as solicitações de aprovação de preços</p>
+              <h1 className="text-2xl font-semibold text-foreground">
+                Aprovações de Preços
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Gerencie e aprove as solicitações de alteração de preços
+              </p>
             </div>
-            <div className="flex gap-3">
-              <Button 
-                className="bg-white/20 hover:bg-white/30 text-slate-300 border-white/30 backdrop-blur-sm h-8 px-4 rounded-lg font-semibold text-sm"
-                onClick={() => window.location.reload()}
-              >
-                <Filter className="h-4 w-4 mr-2 text-slate-300" />
-                Atualizar
-              </Button>
-            </div>
+            <Button 
+              variant="outline"
+              size="sm"
+              onClick={() => window.location.reload()}
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              Atualizar
+            </Button>
           </div>
         </div>
 

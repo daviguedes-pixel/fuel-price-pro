@@ -2171,16 +2171,16 @@ export default function PriceRequest() {
               <CardContent className="pt-0">
                 <div className="space-y-2.5">
                   <div className="flex justify-between items-center py-1.5">
-                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Bandeira:</Label>
-                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.base_bandeira}</p>
+                    <Label className="text-xs font-medium text-muted-foreground">Bandeira:</Label>
+                    <p className="text-xs font-semibold text-foreground">🚩 {priceOrigin.base_bandeira}</p>
                   </div>
-                  <div className="flex justify-between items-center py-1.5 border-t border-slate-200 dark:border-slate-700 pt-2">
-                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Base:</Label>
-                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.base_nome}</p>
+                  <div className="flex justify-between items-center py-1.5 border-t border-border pt-2">
+                    <Label className="text-xs font-medium text-muted-foreground">Base:</Label>
+                    <p className="text-xs font-semibold text-foreground">{priceOrigin.base_nome}</p>
                   </div>
-                  <div className="flex justify-between items-center py-1.5 border-t border-slate-200 dark:border-slate-700 pt-2">
-                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de Entrega:</Label>
-                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.forma_entrega}</p>
+                  <div className="flex justify-between items-center py-1.5 border-t border-border pt-2">
+                    <Label className="text-xs font-medium text-muted-foreground">Tipo de Entrega:</Label>
+                    <p className="text-xs font-semibold text-foreground">{priceOrigin.forma_entrega}</p>
                   </div>
                 </div>
               </CardContent>
