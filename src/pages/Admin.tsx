@@ -237,9 +237,16 @@ export default function Admin() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 rounded-xl p-6 text-white shadow-lg">
-        <h1 className="text-2xl font-bold">Administração</h1>
-        <p className="text-blue-100">Gerencie usuários e permissões do sistema</p>
+      <div className="relative overflow-hidden rounded-lg bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-3 text-white shadow-lg">
+        <div className="absolute inset-0 bg-black/10"></div>
+        <div className="relative flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div>
+              <h1 className="text-lg font-bold mb-0.5">Administração</h1>
+              <p className="text-slate-200 text-xs">Gerencie usuários e permissões do sistema</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <Tabs defaultValue="users" className="space-y-6">

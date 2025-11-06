@@ -54,6 +54,13 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
         }
         throw error;
       }
+      
+      console.log('📬 Notificações carregadas:', {
+        total: data?.length || 0,
+        unread: data?.filter((n: Notification) => !n.read).length || 0,
+        data: data?.map((n: Notification) => ({ id: n.id, read: n.read, type: typeof n.read, title: n.title }))
+      });
+      
       setNotifications(data || []);
     } catch (error) {
       console.error('Erro ao carregar notificações:', error);
@@ -120,6 +127,15 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
   };
 
   const unreadCount = notifications.filter(n => !n.read).length;
+
+  // Debug: log do contador de não lidas
+  useEffect(() => {
+    console.log('🔔 Notificações:', {
+      total: notifications.length,
+      unread: unreadCount,
+      notifications: notifications.map(n => ({ id: n.id, read: n.read, title: n.title }))
+    });
+  }, [notifications, unreadCount]);
 
   return (
     <NotificationsContext.Provider value={{

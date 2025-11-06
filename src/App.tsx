@@ -24,6 +24,7 @@ import AuditLogs from "./pages/AuditLogs";
 import PublicPriceResearch from "./pages/CompetitorResearch";
 import Settings from "./pages/Settings";
 import Gestao from "./pages/Gestao";
+import ApprovalMarginConfig from "./pages/ApprovalMarginConfig";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 
@@ -101,6 +102,7 @@ const App = () => {
                   <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
                   <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                   <Route path="/gestao" element={<ProtectedRoute><Gestao /></ProtectedRoute>} />
+                  <Route path="/approval-margin-config" element={<ProtectedRoute><ApprovalMarginConfig /></ProtectedRoute>} />
                   <Route path="/change-password" element={<PasswordChange />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

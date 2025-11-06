@@ -90,14 +90,14 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-full bg-background p-6">
-      <div className="container mx-auto max-w-7xl space-y-8">
+    <div className="min-h-full bg-background p-4">
+      <div className="container mx-auto max-w-7xl space-y-4">
         {/* Header Section */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground mb-2">
+          <h1 className="text-xl font-bold text-foreground mb-1">
             {getGreeting()}, {profile?.nome?.split(' ')[0]}
           </h1>
-          <p className="text-lg text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Sistema de Gestão de Preços
           </p>
         </div>

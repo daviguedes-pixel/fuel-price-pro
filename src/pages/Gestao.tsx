@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { Search, Edit, Save, Package, Plus } from 'lucide-react';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   Dialog,
   DialogContent,
@@ -51,7 +52,40 @@ interface PaymentMethod {
 }
 
 export default function Gestao() {
-  const [activeTab, setActiveTab] = useState('stations');
+  const { canAccess } = usePermissions();
+  const [activeTab, setActiveTab] = useState<string>('');
+  
+  // Verificar quais subabas o usuário tem acesso
+  const hasStationsAccess = canAccess('gestao_stations');
+  const hasClientsAccess = canAccess('gestao_clients');
+  const hasPaymentMethodsAccess = canAccess('gestao_payment_methods');
+  
+  // Verificar se tem acesso a pelo menos uma subaba
+  const hasAnyAccess = hasStationsAccess || hasClientsAccess || hasPaymentMethodsAccess;
+  
+  // Debug: log das permissões
+  useEffect(() => {
+    console.log('🔍 Gestão - Verificando permissões:', {
+      hasStationsAccess,
+      hasClientsAccess,
+      hasPaymentMethodsAccess,
+      hasAnyAccess,
+      activeTab
+    });
+  }, [hasStationsAccess, hasClientsAccess, hasPaymentMethodsAccess, hasAnyAccess, activeTab]);
+  
+  // Definir aba inicial quando as permissões estiverem disponíveis
+  useEffect(() => {
+    if (!activeTab && hasAnyAccess) {
+      if (hasStationsAccess) {
+        setActiveTab('stations');
+      } else if (hasClientsAccess) {
+        setActiveTab('clients');
+      } else if (hasPaymentMethodsAccess) {
+        setActiveTab('payment-methods');
+      }
+    }
+  }, [hasStationsAccess, hasClientsAccess, hasPaymentMethodsAccess, hasAnyAccess, activeTab]);
   
   // Estado para Stations
   const [stations, setStations] = useState<Station[]>([]);
@@ -337,23 +371,47 @@ export default function Gestao() {
   };
   
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Gestão de Dados</h1>
-        <p className="text-muted-foreground mt-2">Gerencie postos, clientes e tipos de pagamento</p>
-      </div>
-      
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+      <div className="container mx-auto px-4 py-3 space-y-3">
+        {/* Header */}
+        <div className="relative overflow-hidden rounded-lg bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-3 text-white shadow-lg">
+          <div className="absolute inset-0 bg-black/10"></div>
+          <div className="relative flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div>
+                <h1 className="text-lg font-bold mb-0.5">Gestão de Dados</h1>
+                <p className="text-slate-200 text-xs">Gerencie postos, clientes e tipos de pagamento</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {!hasAnyAccess ? (
+          <Card>
+            <CardContent className="py-12 text-center">
+              <p className="text-muted-foreground text-lg">
+                Você não tem permissão para acessar nenhuma funcionalidade de gestão.
+              </p>
+              <p className="text-muted-foreground text-sm mt-2">
+                Entre em contato com o administrador para solicitar as permissões necessárias.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className={`grid w-full ${hasStationsAccess && hasClientsAccess && hasPaymentMethodsAccess ? 'grid-cols-3' : (hasStationsAccess && hasClientsAccess) || (hasStationsAccess && hasPaymentMethodsAccess) || (hasClientsAccess && hasPaymentMethodsAccess) ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          {hasStationsAccess && (
           <TabsTrigger value="stations">Postos</TabsTrigger>
+          )}
+          {hasClientsAccess && (
           <TabsTrigger value="clients">Clientes</TabsTrigger>
+          )}
+          {hasPaymentMethodsAccess && (
           <TabsTrigger value="payment-methods">Tipos de Pagamento</TabsTrigger>
-          <TabsTrigger value="permissions" className="flex items-center gap-2">
-            <Shield className="h-4 w-4" />
-            Permissões
-          </TabsTrigger>
+          )}
         </TabsList>
         
+        {hasStationsAccess && (
         <TabsContent value="stations" className="space-y-4">
           <Card>
             <CardHeader>
@@ -433,7 +491,9 @@ export default function Gestao() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
         
+        {hasClientsAccess && (
         <TabsContent value="clients" className="space-y-4">
           <Card>
             <CardHeader>
@@ -495,7 +555,9 @@ export default function Gestao() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
         
+        {hasPaymentMethodsAccess && (
         <TabsContent value="payment-methods" className="space-y-4">
           <Card>
             <CardHeader>
@@ -561,19 +623,9 @@ export default function Gestao() {
             </CardContent>
           </Card>
         </TabsContent>
-        
-        <TabsContent value="permissions" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Gerenciar Permissões</CardTitle>
-              <CardDescription>Configure as permissões para cada perfil de usuário</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <PermissionsManager />
-            </CardContent>
-          </Card>
-        </TabsContent>
+        )}
       </Tabs>
+      )}
       
       {/* Dialog de edição de brinde */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
@@ -772,6 +824,7 @@ export default function Gestao() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
     </div>
   );
 }

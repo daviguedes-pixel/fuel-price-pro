@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Save } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
 
 interface ProfilePermission {
   perfil: string;
@@ -15,6 +16,11 @@ interface ProfilePermission {
   price_history: boolean;
   reference_registration: boolean;
   admin: boolean;
+  settings: boolean;
+  gestao: boolean;
+  gestao_stations: boolean;
+  gestao_clients: boolean;
+  gestao_payment_methods: boolean;
   can_approve: boolean;
   can_register: boolean;
   can_edit: boolean;
@@ -29,6 +35,7 @@ const perfis = [
   { nome: 'Assessor Comercial', key: 'assessor_comercial' },
   { nome: 'Diretor de Pricing', key: 'diretor_pricing' },
   { nome: 'Analista de Pricing', key: 'analista_pricing' },
+  { nome: 'Gerente Comercial', key: 'gerente_comercial' },
   { nome: 'Gerente', key: 'gerente' }
 ];
 
@@ -40,7 +47,15 @@ const abas = [
   { label: 'Mapa de Preços', key: 'map' },
   { label: 'Histórico', key: 'price_history' },
   { label: 'Referências', key: 'reference_registration' },
-  { label: 'Administração', key: 'admin' }
+  { label: 'Administração', key: 'admin' },
+  { label: 'Configurações', key: 'settings' },
+  { label: 'Gestão', key: 'gestao' }
+];
+
+const subabasGestao = [
+  { label: 'Gestão - Postos', key: 'gestao_stations' },
+  { label: 'Gestão - Clientes', key: 'gestao_clients' },
+  { label: 'Gestão - Tipos de Pagamento', key: 'gestao_payment_methods' }
 ];
 
 const acoes = [
@@ -56,6 +71,7 @@ export function PermissionsManager() {
   const [permissions, setPermissions] = useState<Record<string, ProfilePermission>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { reloadPermissions } = usePermissions();
 
   useEffect(() => {
     loadPermissions();
@@ -70,8 +86,41 @@ export function PermissionsManager() {
       if (error) throw error;
 
       const permissionsMap: Record<string, ProfilePermission> = {};
+      
+      // Inicializar todos os perfis com valores padrão
+      perfis.forEach(perfil => {
+        permissionsMap[perfil.key] = {
+          perfil: perfil.key,
+          dashboard: false,
+          price_request: false,
+          approvals: false,
+          research: false,
+          map: false,
+          price_history: false,
+          reference_registration: false,
+          admin: false,
+          settings: false,
+          gestao: false,
+          gestao_stations: false,
+          gestao_clients: false,
+          gestao_payment_methods: false,
+          can_approve: false,
+          can_register: false,
+          can_edit: false,
+          can_delete: false,
+          can_view_history: false,
+          can_manage_notifications: false,
+        };
+      });
+      
+      // Sobrescrever com dados do banco
       (data || []).forEach((perm: any) => {
-        permissionsMap[perm.perfil] = perm;
+        if (permissionsMap[perm.perfil]) {
+          permissionsMap[perm.perfil] = {
+            ...permissionsMap[perm.perfil],
+            ...perm
+          };
+        }
       });
 
       setPermissions(permissionsMap);
@@ -84,13 +133,38 @@ export function PermissionsManager() {
   };
 
   const handleToggle = (perfil: string, key: keyof ProfilePermission) => {
-    setPermissions(prev => ({
-      ...prev,
-      [perfil]: {
-        ...prev[perfil],
-        [key]: !prev[perfil]?.[key]
-      }
-    }));
+    setPermissions(prev => {
+      const currentPerfil = prev[perfil] || {
+        perfil,
+        dashboard: false,
+        price_request: false,
+        approvals: false,
+        research: false,
+        map: false,
+        price_history: false,
+        reference_registration: false,
+        admin: false,
+        settings: false,
+        gestao: false,
+        gestao_stations: false,
+        gestao_clients: false,
+        gestao_payment_methods: false,
+        can_approve: false,
+        can_register: false,
+        can_edit: false,
+        can_delete: false,
+        can_view_history: false,
+        can_manage_notifications: false,
+      };
+      
+      return {
+        ...prev,
+        [perfil]: {
+          ...currentPerfil,
+          [key]: !currentPerfil[key]
+        }
+      };
+    });
   };
 
   const handleSave = async () => {
@@ -111,7 +185,10 @@ export function PermissionsManager() {
 
       toast.success('Permissões salvas com sucesso!');
       
-      // Recarregar para garantir sincronização
+      // Recarregar permissões do hook para atualizar o contexto
+      await reloadPermissions();
+      
+      // Recarregar permissões locais para garantir sincronização
       await loadPermissions();
     } catch (error) {
       console.error('Erro ao salvar permissões:', error);
@@ -134,10 +211,10 @@ export function PermissionsManager() {
           {/* Abas do Sistema */}
           <div>
             <h4 className="text-sm font-medium text-muted-foreground mb-3">Abas Visíveis</h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {abas.map((aba) => (
-                <div key={aba.key} className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg">
-                  <span className="text-sm">{aba.label}</span>
+                <div key={aba.key} className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg hover:bg-secondary/70 transition-colors">
+                  <span className="text-sm font-medium">{aba.label}</span>
                   <Switch
                     checked={permissions[perfil.key]?.[aba.key as keyof ProfilePermission] as boolean || false}
                     onCheckedChange={() => handleToggle(perfil.key, aba.key as keyof ProfilePermission)}
@@ -157,6 +234,22 @@ export function PermissionsManager() {
                   <Switch
                     checked={permissions[perfil.key]?.[acao.key as keyof ProfilePermission] as boolean || false}
                     onCheckedChange={() => handleToggle(perfil.key, acao.key as keyof ProfilePermission)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Subabas da Gestão */}
+          <div>
+            <h4 className="text-sm font-medium text-muted-foreground mb-3">Subabas da Gestão</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {subabasGestao.map((subaba) => (
+                <div key={subaba.key} className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg hover:bg-secondary/70 transition-colors">
+                  <span className="text-sm font-medium">{subaba.label}</span>
+                  <Switch
+                    checked={permissions[perfil.key]?.[subaba.key as keyof ProfilePermission] as boolean || false}
+                    onCheckedChange={() => handleToggle(perfil.key, subaba.key as keyof ProfilePermission)}
                   />
                 </div>
               ))}

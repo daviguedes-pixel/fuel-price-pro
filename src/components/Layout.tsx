@@ -49,8 +49,8 @@ const allMenuItems = [
   { icon: Map, label: "Mapa", href: "/map", permission: "map" },
   { icon: History, label: "Histórico", href: "/price-history", permission: "price_history" },
   { icon: FileText, label: "Referências", href: "/reference-registration", permission: "reference_registration" },
-  { icon: Users, label: "Gestão", href: "/gestao", permission: "admin" },
-  { icon: Settings, label: "Configurações", href: "/settings", permission: "admin" },
+  { icon: Users, label: "Gestão", href: "/gestao", permission: "gestao" },
+  { icon: Settings, label: "Configurações", href: "/settings", permission: "settings" },
 ];
 
 function Layout({ children }: LayoutProps) {
@@ -89,15 +89,15 @@ function Layout({ children }: LayoutProps) {
         bg-sidebar border-r border-sidebar-border transition-all duration-300 flex flex-col
         ${sidebarOpen ? 'w-64' : 'w-0 lg:w-64'}
         ${sidebarOpen ? 'fixed' : 'hidden lg:flex'}
-        lg:relative z-50 h-screen
+        lg:sticky lg:top-0 z-50 h-screen max-h-screen overflow-hidden flex-shrink-0
       `}>
         {/* Logo Area */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
+        <div className="h-12 flex items-center justify-between px-3 border-b border-sidebar-border">
           <button 
             onClick={handleLogoClick}
             className="flex items-center hover:opacity-80 transition-opacity cursor-pointer"
           >
-            <SaoRoqueLogo className="h-8" />
+            <SaoRoqueLogo className="h-6" />
           </button>
           <Button
             variant="ghost"
@@ -110,33 +110,33 @@ function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
           {menuItems.map((item) => (
             <Button
               key={item.href}
               variant="ghost"
-              className={`w-full justify-start gap-3 h-11 transition-all ${
+              className={`w-full justify-start gap-2 h-9 transition-all ${
                 location.pathname === item.href 
                   ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
                   : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
               }`}
               onClick={() => handleMenuClick(item.href)}
             >
-              <item.icon className="h-5 w-5 flex-shrink-0" />
-              <span className="text-sm">{item.label}</span>
+              <item.icon className="h-4 w-4 flex-shrink-0" />
+              <span className="text-xs">{item.label}</span>
             </Button>
           ))}
         </nav>
 
         {/* User Info at bottom */}
-        <div className="p-3 border-t border-sidebar-border">
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-sidebar-accent/30">
-            <div className="w-8 h-8 rounded-full bg-sidebar-primary flex items-center justify-center">
-              <User className="h-4 w-4 text-sidebar-primary-foreground" />
+        <div className="p-2 border-t border-sidebar-border">
+          <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-sidebar-accent/30">
+            <div className="w-7 h-7 rounded-full bg-sidebar-primary flex items-center justify-center">
+              <User className="h-3.5 w-3.5 text-sidebar-primary-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">{profile?.nome}</p>
-              <p className="text-xs text-sidebar-foreground/60 truncate">
+              <p className="text-xs font-medium text-sidebar-foreground truncate">{profile?.nome}</p>
+              <p className="text-[10px] text-sidebar-foreground/60 truncate">
                 {profile ? getProfileDisplayName(profile.perfil) : 'Carregando...'}
               </p>
             </div>
@@ -145,36 +145,33 @@ function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
         {/* Top Header */}
-        <header className="h-16 bg-card border-b border-border flex items-center justify-between px-4 lg:px-6">
-          <div className="flex items-center gap-3">
+        <header className="h-12 bg-card border-b border-border flex items-center justify-between px-3 lg:px-4 flex-shrink-0">
+          <div className="flex items-center gap-2">
             <Button
               variant="ghost"
               size="sm"
               onClick={toggleSidebar}
-              className="lg:hidden"
+              className="lg:hidden h-8 w-8 p-0"
             >
-              <Menu className="h-5 w-5" />
+              <Menu className="h-4 w-4" />
             </Button>
-            <h1 className="text-lg font-semibold text-foreground hidden sm:block">
-              Sistema de Gestão de Preços
-            </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <ThemeToggle />
             
             <Button
               variant="ghost"
               size="sm"
-              className="relative"
+              className="relative h-8 w-8 p-0"
               onClick={() => setNotificationsOpen(!notificationsOpen)}
             >
-              <Bell className="h-5 w-5" />
+              <Bell className="h-4 w-4" />
               {unreadCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                  {unreadCount}
+                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-[11px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 leading-none border-2 border-background">
+                  {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
             </Button>
@@ -182,9 +179,10 @@ function Layout({ children }: LayoutProps) {
             <Button 
               variant="ghost" 
               size="sm"
+              className="h-8 w-8 p-0"
               onClick={handleLogout}
             >
-              <LogOut className="h-5 w-5" />
+              <LogOut className="h-4 w-4" />
             </Button>
           </div>
         </header>
@@ -193,7 +191,7 @@ function Layout({ children }: LayoutProps) {
         <RealtimeNotifications />
 
         {/* Main Content */}
-        <main className="flex-1 overflow-auto bg-background">
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-background">
           {children}
         </main>
       </div>

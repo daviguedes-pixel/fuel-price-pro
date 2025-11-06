@@ -18,7 +18,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, Send, Save, Calculator, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText } from "lucide-react";
+import { ArrowLeft, Send, Save, TrendingUp, BarChart, MapPin, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 interface Reference {
@@ -126,8 +126,7 @@ export default function PriceRequest() {
 
   const [priceOrigin, setPriceOrigin] = useState<{
     base_nome: string;
-    base_codigo: string;
-    base_uf: string;
+    base_bandeira: string;
     forma_entrega: string;
   } | null>(null);
 
@@ -384,16 +383,32 @@ export default function PriceRequest() {
                   }
 
                   // 6) Info de base
-                  let baseInfo = new Map<number, { nome: string; codigo: string; uf: string }>();
+                  let baseInfo = new Map<number, { nome: string; codigo: string; uf: string; bandeira?: string }>();
                   if (baseIds.length > 0) {
                     const { data: bases } = await cot
                       .from('base_fornecedor')
-                      .select('id_base_fornecedor,nome,codigo_base,uf')
+                      .select('id_base_fornecedor,nome,codigo_base,uf,bandeira')
                       .in('id_base_fornecedor', baseIds);
                     (bases as any[])?.forEach((b: any) => {
-                      baseInfo.set(b.id_base_fornecedor, { nome: b.nome, codigo: b.codigo_base, uf: String(b.uf || '') });
+                      baseInfo.set(b.id_base_fornecedor, { 
+                        nome: b.nome, 
+                        codigo: b.codigo_base, 
+                        uf: String(b.uf || ''),
+                        bandeira: b.bandeira || null
+                      });
                     });
                   }
+                  
+                  // Função para extrair bandeira do nome se não vier da tabela
+                  const extractBandeira = (nome: string, bandeira?: string | null): string => {
+                    if (bandeira) return bandeira;
+                    const nomeUpper = nome.toUpperCase();
+                    const bandeiras = ['VIBRA', 'IPIRANGA', 'RAIZEN', 'PETROBRAS', 'SHELL', 'BR', 'COOP', 'UNO', 'ATEM', 'ALE'];
+                    for (const band of bandeiras) {
+                      if (nomeUpper.includes(band)) return band;
+                    }
+                    return 'N/A';
+                  };
 
                   // 7) Calcular menor custo total (aplica frete quando FOB)
                   let best: any = null;
@@ -408,6 +423,7 @@ export default function PriceRequest() {
                         base_id: String(row.id_base_fornecedor),
                         base_nome: info.nome,
                         base_uf: info.uf,
+                        base_bandeira: extractBandeira(info.nome, info.bandeira),
                         custo,
                         frete,
                         custo_total: total,
@@ -445,6 +461,7 @@ export default function PriceRequest() {
               base_id: refArr[0].posto_id,
               base_nome: 'Referência',
               base_uf: '',
+              base_bandeira: 'N/A',
               custo: Number(refArr[0].preco_referencia),
               frete: 0,
               custo_total: Number(refArr[0].preco_referencia),
@@ -486,8 +503,7 @@ export default function PriceRequest() {
             // Armazenar informações sobre a origem do preço
             setPriceOrigin({
               base_nome: result.base_nome || '',
-              base_codigo: result.base_codigo || '',
-              base_uf: result.base_uf || '',
+              base_bandeira: result.base_bandeira || 'N/A',
               forma_entrega: result.forma_entrega || ''
             });
 
@@ -1037,7 +1053,7 @@ export default function PriceRequest() {
         attachments: attachments,
         requested_by: user?.id ? String(user.id) : (user?.email || ''),
         created_by: user?.id ? String(user.id) : (user?.email || ''),
-        margin_cents: Math.round(margin * 100), // Margem em centavos para cálculo
+        margin_cents: margin, // Margem já está em centavos
         cost_price: costPrice,
         status: isDraft ? 'draft' as any : 'pending' as any,
         // Dados de cálculo para análise
@@ -1049,15 +1065,60 @@ export default function PriceRequest() {
         arla_cost_price: parseBrazilianDecimal(formData.arla_cost_price) || null,
         // Origem do preço
         price_origin_base: priceOrigin?.base_nome || null,
-        price_origin_code: priceOrigin?.base_codigo || null,
-        price_origin_uf: priceOrigin?.base_uf || null,
+        price_origin_bandeira: priceOrigin?.base_bandeira || null,
         price_origin_delivery: priceOrigin?.forma_entrega || null,
-        // Aprovação multinível - iniciar no nível 1
-        approval_level: 1,
-        total_approvers: 3,
+        // Aprovação multinível - usar configurações dinâmicas baseadas em margem
+        approval_level: 1, // Será ajustado pela regra se necessário
+        total_approvers: 3, // Será ajustado pela regra se necessário
         approvals_count: 0,
         rejections_count: 0
       };
+
+      // Buscar regra de aprovação baseada na margem
+      let finalApprovalLevel = 1;
+      let finalTotalApprovers = 3;
+      
+      try {
+        const { data: approvalRule, error: ruleError } = await supabase
+          .rpc('get_approval_margin_rule' as any, {
+            margin_cents: margin
+          });
+        
+        if (!ruleError && approvalRule && Array.isArray(approvalRule) && approvalRule.length > 0) {
+          const rule = approvalRule[0] as any;
+          if (rule.required_profiles && Array.isArray(rule.required_profiles) && rule.required_profiles.length > 0) {
+            // Buscar aprovadores para determinar o nível inicial
+            const { data: allApprovers } = await supabase
+              .from('user_profiles')
+              .select('user_id, email, perfil')
+              .in('perfil', rule.required_profiles);
+            
+            if (allApprovers && allApprovers.length > 0) {
+              // Encontrar o índice do primeiro perfil requerido na ordem hierárquica
+              const approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+              const firstRequiredProfile = rule.required_profiles
+                .map((profile: string) => approvalOrder.indexOf(profile))
+                .filter((idx: number) => idx >= 0)
+                .sort((a: number, b: number) => a - b)[0];
+              
+              if (firstRequiredProfile !== undefined) {
+                finalApprovalLevel = firstRequiredProfile + 1; // approval_level é 1-indexed
+                finalTotalApprovers = allApprovers.length;
+                console.log('📋 Regra de aprovação aplicada:', rule);
+                console.log('📋 Approval level ajustado para:', finalApprovalLevel);
+                console.log('📋 Total de aprovadores:', finalTotalApprovers);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Erro ao buscar regra de aprovação:', error);
+        // Continuar com valores padrão se houver erro
+      }
+      
+      // Atualizar requestData com os valores finais
+      requestData.approval_level = finalApprovalLevel;
+      requestData.total_approvers = finalTotalApprovers;
 
       console.log('🔍 Dados a serem inseridos:', requestData);
       console.log('📝 isDraft:', isDraft, 'status:', isDraft ? 'draft' : 'pending');
@@ -1351,31 +1412,31 @@ export default function PriceRequest() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-4 py-8 space-y-8">
+      <div className="container mx-auto px-4 py-4 space-y-4">
         {/* Header com gradiente moderno */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-8 text-white shadow-2xl">
+        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-4 text-white shadow-xl">
           <div className="absolute inset-0 bg-black/10"></div>
           <div className="relative flex items-center justify-between">
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3">
           <Button 
                 variant="secondary" 
             onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm h-8"
           >
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft className="h-3.5 w-3.5" />
             Voltar ao Dashboard
           </Button>
               <div>
-                <h1 className="text-3xl font-bold mb-2">Solicitação de Preço</h1>
-                <p className="text-slate-200">Solicite novos preços para análise e aprovação</p>
+                <h1 className="text-xl font-bold mb-1">Solicitação de Preço</h1>
+                <p className="text-slate-200 text-sm">Solicite novos preços para análise e aprovação</p>
               </div>
             </div>
           </div>
         </div>
 
         {/* Header com botão de Nova Solicitação */}
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-200">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold text-slate-800 dark:text-slate-200">
             {activeTab === 'new' ? 'Nova Solicitação de Preço' : 'Minhas Solicitações'}
           </h2>
           <div className="flex gap-3">
@@ -1470,6 +1531,36 @@ export default function PriceRequest() {
                   </Select>
                 </div>
 
+                  {/* Tipo de Pagamento */}
+                  <div className="space-y-2">
+                    <Label htmlFor="payment_method" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                      </svg>
+                      Tipo de Pagamento
+                    </Label>
+                    <Select value={formData.payment_method_id} onValueChange={(value) => handleInputChange("payment_method_id", value)}>
+                      <SelectTrigger className="h-11">
+                        <SelectValue placeholder="Selecione o tipo de pagamento" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Nenhum</SelectItem>
+                        {(stationPaymentMethods.filter(m => m.TAXA != null).length > 0 ? 
+                          stationPaymentMethods.filter(m => m.TAXA != null) : 
+                          paymentMethods?.filter(m => m.TAXA != null) || []
+                        ).map((method, index) => {
+                          // Use ID_POSTO as the value, or id if available
+                          const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
+                          return (
+                            <SelectItem key={`payment-${index}`} value={String(methodId)}>
+                              {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   {/* Preço Atual */}
                   <div className="space-y-2">
                     <Label htmlFor="current_price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
@@ -1508,36 +1599,6 @@ export default function PriceRequest() {
                       onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
                     />
-                  </div>
-
-                  {/* Tipo de Pagamento */}
-                  <div className="space-y-2">
-                    <Label htmlFor="payment_method" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                      </svg>
-                      Tipo de Pagamento
-                    </Label>
-                    <Select value={formData.payment_method_id} onValueChange={(value) => handleInputChange("payment_method_id", value)}>
-                      <SelectTrigger className="h-11">
-                        <SelectValue placeholder="Selecione o tipo de pagamento" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Nenhum</SelectItem>
-                        {(stationPaymentMethods.filter(m => m.TAXA != null).length > 0 ? 
-                          stationPaymentMethods.filter(m => m.TAXA != null) : 
-                          paymentMethods?.filter(m => m.TAXA != null) || []
-                        ).map((method, index) => {
-                          // Use ID_POSTO as the value, or id if available
-                          const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
-                          return (
-                            <SelectItem key={`payment-${index}`} value={String(methodId)}>
-                              {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
-                            </SelectItem>
-                          );
-                        })}
-                      </SelectContent>
-                    </Select>
                   </div>
 
                   {/* ARLA - Preço de VENDA (aparece ao selecionar ARLA 32 Granel) */}
@@ -1715,7 +1776,7 @@ export default function PriceRequest() {
                     />
                     {priceOrigin && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        📍 Base: {priceOrigin.base_nome} ({priceOrigin.base_codigo}) - {priceOrigin.base_uf} | {priceOrigin.forma_entrega}
+                        📍 {priceOrigin.base_bandeira} - {priceOrigin.base_nome} | {priceOrigin.forma_entrega}
                       </p>
                     )}
                     <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -1819,72 +1880,103 @@ export default function PriceRequest() {
         </div>
 
         {/* Summary Panel */}
-        <div className="space-y-6">
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-              <CardHeader className="text-center pb-6">
-                <div className="flex justify-center mb-4">
-                  <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 flex items-center justify-center shadow-lg">
-                    <Calculator className="h-6 w-6 text-white" />
+        <div className="space-y-3">
+            <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                    <TrendingUp className="h-5 w-5 text-slate-600 dark:text-slate-300" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                      Ajuste
+                    </CardTitle>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Visualize os valores calculados</p>
                   </div>
                 </div>
-                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-200 mb-2">
-                Aumento
-              </CardTitle>
-                <p className="text-slate-600 dark:text-slate-400">Visualize os valores calculados</p>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="pt-0 space-y-2.5">
               {calculatedPrice > 0 ? (
                 <>
                   <div className="space-y-2">
-                    <div className="flex justify-between">
-                        <span className="text-sm text-slate-600 dark:text-slate-400">Preço Sugerido:</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">{formatPrice(calculatedPrice)}</span>
+                    <div className="flex justify-between items-center py-1.5">
+                        <span className="text-xs text-slate-600 dark:text-slate-400">Preço Sugerido:</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(calculatedPrice)}</span>
                     </div>
                     
                     {formData.current_price && formData.suggested_price && (
-                      <div className="flex justify-between">
-                        <span className="text-sm text-slate-600 dark:text-slate-400">Preço Atual:</span>
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">{formatPrice(parseFloat(formData.current_price))}</span>
+                      <div className="flex justify-between items-center py-1.5">
+                        <span className="text-xs text-slate-600 dark:text-slate-400">Preço Atual:</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(parseFloat(formData.current_price))}</span>
                       </div>
                     )}
                     
                     {formData.current_price && formData.suggested_price && (
                       <>
-                        <div className="flex justify-between">
-                          <span className="text-sm text-slate-600 dark:text-slate-400">Margem Custo:</span>
-                          <span className={`font-semibold ${margin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <div className="flex justify-between items-center py-1.5 border-t border-slate-200 dark:border-slate-700 pt-2">
+                          <span className="text-xs text-slate-600 dark:text-slate-400">Margem Custo:</span>
+                          <span className={`text-sm font-semibold ${margin >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                             {margin} centavos
                           </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-sm text-slate-600 dark:text-slate-400">
-                            {margin > 0 ? 'Ajuste:' : margin < 0 ? 'Ajuste:' : 'Ajuste:'}
-                          </span>
-                          <span className={`font-semibold ${margin > 0 ? 'text-green-600' : margin < 0 ? 'text-red-600' : 'text-slate-600'}`}>
-                            {Math.abs(margin)} centavos
+                        <div className="flex justify-between items-center py-1.5">
+                          <span className="text-xs text-slate-600 dark:text-slate-400">Ajuste:</span>
+                          <span className={`text-sm font-semibold ${(() => {
+                            const current = parseFloat(formData.current_price) || 0;
+                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const adjustment = suggested - current;
+                            return adjustment >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+                          })()}`}>
+                            {(() => {
+                              const current = parseFloat(formData.current_price) || 0;
+                              const suggested = parseFloat(formData.suggested_price) || 0;
+                              const adjustment = suggested - current;
+                              const adjustmentCents = Math.round(adjustment * 100);
+                              return `${adjustmentCents >= 0 ? '+' : ''}${adjustmentCents} centavos`;
+                            })()}
                           </span>
                         </div>
                       </>
                     )}
                     </div>
                     
-                    {margin !== 0 && (
-                      <div className="pt-4 border-t border-slate-200 dark:border-slate-600">
+                    {formData.current_price && formData.suggested_price && (() => {
+                      const current = parseFloat(formData.current_price) || 0;
+                      const suggested = parseFloat(formData.suggested_price) || 0;
+                      const adjustment = suggested - current;
+                      return adjustment !== 0;
+                    })() && (
+                      <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
                         <div className="flex items-center gap-2">
-                          {margin >= 0 ? (
-                            <CheckCircle className="h-4 w-4 text-green-600" />
-                          ) : (
-                            <AlertCircle className="h-4 w-4 text-red-600" />
-                          )}
-                          <span className={`text-sm font-medium ${margin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {margin >= 0 ? 'Ajuste positivo' : 'Ajuste negativo'}
-                      </span>
-                    </div>
-                    </div>
-                  )}
+                          {(() => {
+                            const current = parseFloat(formData.current_price) || 0;
+                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const adjustment = suggested - current;
+                            return adjustment >= 0 ? (
+                              <CheckCircle className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+                            ) : (
+                              <AlertCircle className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+                            );
+                          })()}
+                          <span className={`text-xs font-medium ${(() => {
+                            const current = parseFloat(formData.current_price) || 0;
+                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const adjustment = suggested - current;
+                            return adjustment >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
+                          })()}`}>
+                            {(() => {
+                              const current = parseFloat(formData.current_price) || 0;
+                              const suggested = parseFloat(formData.suggested_price) || 0;
+                              const adjustment = suggested - current;
+                              return adjustment >= 0 ? 'Ajuste positivo' : 'Ajuste negativo';
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                 </>
               ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">
+                <p className="text-xs text-slate-500 dark:text-slate-400 text-center py-3">
                   Preencha os valores para ver o cálculo da margem
                 </p>
               )}
@@ -1893,27 +1985,27 @@ export default function PriceRequest() {
 
           {/* Análise de Custos */}
           {(costCalculations.finalCost > 0 || costCalculations.totalRevenue > 0) && (
-            <Card className="shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-              <CardHeader className="pb-6 border-b border-slate-200 dark:border-slate-700">
+            <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <CardHeader className="pb-3 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
-                    <Calculator className="h-5 w-5 text-slate-700 dark:text-slate-300" />
+                    <BarChart className="h-5 w-5 text-slate-600 dark:text-slate-300" />
                   </div>
                   <div>
-                    <CardTitle className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
                       Análise de Custos
                     </CardTitle>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Cálculos detalhados de rentabilidade</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Cálculos detalhados de rentabilidade</p>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="pt-6 space-y-4">
-                <div className="space-y-3">
+              <CardContent className="pt-3 space-y-2.5">
+                <div className="space-y-2">
                   {/* Custo Final por Litro */}
-                  <div className="p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Custo Final/L:</span>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.finalCost)}</span>
+                  <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Final/L:</span>
+                      <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.finalCost)}</span>
                     </div>
                     {(() => {
                       let feePercentage = 0;
@@ -1988,52 +2080,52 @@ export default function PriceRequest() {
                   </div>
 
                   {/* Receita Total */}
-                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Receita Total:</span>
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalRevenue)}</span>
+                  <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Receita Total:</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalRevenue)}</span>
                   </div>
 
                   {/* Custo Total */}
-                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Custo Total:</span>
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalCost)}</span>
+                  <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Total:</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.totalCost)}</span>
                   </div>
 
                   {/* Lucro Bruto */}
-                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Lucro Bruto:</span>
-                    <span className={`font-bold ${costCalculations.grossProfit >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                  <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro Bruto:</span>
+                    <span className={`text-sm font-semibold ${costCalculations.grossProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                       {formatPrice(costCalculations.grossProfit)}
                     </span>
                   </div>
 
                   {/* Lucro por Litro */}
-                  <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-                    <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Lucro/Litro:</span>
-                    <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.profitPerLiter)}</span>
+                  <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro/Litro:</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(costCalculations.profitPerLiter)}</span>
                   </div>
 
                   {/* Compensação ARLA */}
                   {costCalculations.arlaCompensation !== 0 && (
-                    <div className="flex justify-between items-center p-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
-                      <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Compensação ARLA:</span>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.arlaCompensation)}</span>
+                    <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                      <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Compensação ARLA:</span>
+                      <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(costCalculations.arlaCompensation)}</span>
                     </div>
                   )}
 
                   {/* Resultado Líquido */}
-                  <div className={`flex justify-between items-center p-4 rounded-lg border-2 ${costCalculations.netResult >= 0 ? 'border-green-600 dark:border-green-500 bg-green-50 dark:bg-green-950/30' : 'border-red-600 dark:border-red-500 bg-red-50 dark:bg-red-950/30'}`}>
+                  <div className={`flex justify-between items-center p-3 rounded border ${costCalculations.netResult >= 0 ? 'border-green-500/50 dark:border-green-500/30 bg-green-50/50 dark:bg-green-950/20' : 'border-red-500/50 dark:border-red-500/30 bg-red-50/50 dark:bg-red-950/20'}`}>
                     <div className="flex items-center gap-2">
                       {costCalculations.netResult >= 0 ? (
-                        <CheckCircle className="h-5 w-5 text-green-700 dark:text-green-400" />
+                        <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
                       ) : (
-                        <AlertCircle className="h-5 w-5 text-red-700 dark:text-red-400" />
+                        <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
                       )}
-                      <span className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
                         Resultado Líquido:
                       </span>
                     </div>
-                    <span className={`text-lg font-bold ${costCalculations.netResult >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                    <span className={`text-sm font-bold ${costCalculations.netResult >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                       {formatPrice(costCalculations.netResult)}
                     </span>
                   </div>
@@ -2061,31 +2153,34 @@ export default function PriceRequest() {
             </Card>
           )}
 
-          {/* Card: Origem do Preço de Custo */}
+          {/* Card: Origem do Custo */}
           {priceOrigin && (
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-              <CardHeader className="text-center pb-4">
-                <CardTitle className="text-xl font-bold text-slate-800 dark:text-slate-200">
-                  Origem do Preço de Custo
-                </CardTitle>
+            <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                    <MapPin className="h-5 w-5 text-slate-600 dark:text-slate-300" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                      Origem do Custo
+                    </CardTitle>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Base:</Label>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_nome}</p>
+              <CardContent className="pt-0">
+                <div className="space-y-2.5">
+                  <div className="flex justify-between items-center py-1.5">
+                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Bandeira:</Label>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.base_bandeira}</p>
                   </div>
-                  <div>
-                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Código:</Label>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_codigo}</p>
+                  <div className="flex justify-between items-center py-1.5 border-t border-slate-200 dark:border-slate-700 pt-2">
+                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Base:</Label>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.base_nome}</p>
                   </div>
-                  <div>
-                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">UF:</Label>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.base_uf}</p>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-semibold text-slate-600 dark:text-slate-400">Tipo de Entrega:</Label>
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">{priceOrigin.forma_entrega}</p>
+                  <div className="flex justify-between items-center py-1.5 border-t border-slate-200 dark:border-slate-700 pt-2">
+                    <Label className="text-xs font-medium text-slate-500 dark:text-slate-400">Tipo de Entrega:</Label>
+                    <p className="text-xs font-semibold text-slate-900 dark:text-slate-100">{priceOrigin.forma_entrega}</p>
                   </div>
                 </div>
               </CardContent>

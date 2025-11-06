@@ -15,8 +15,16 @@ interface UserPermissions {
     price_history: boolean;
     admin: boolean;
     reference_registration: boolean;
-    rate_management: boolean;
+    tax_management: boolean;
+    station_management: boolean;
     client_management: boolean;
+    audit_logs: boolean;
+    settings: boolean;
+    gestao: boolean;
+    approval_margin_config: boolean;
+    gestao_stations: boolean;
+    gestao_clients: boolean;
+    gestao_payment_methods: boolean;
     
     // Funções habilitadas
     can_approve: boolean;
@@ -49,8 +57,16 @@ const defaultPermissions: UserPermissions = {
     price_history: false,
     admin: false,
     reference_registration: false,
-    rate_management: false,
+    tax_management: false,
+    station_management: false,
     client_management: false,
+    audit_logs: false,
+    settings: false,
+    gestao: false,
+    approval_margin_config: false,
+    gestao_stations: false,
+    gestao_clients: false,
+    gestao_payment_methods: false,
     can_approve: false,
     can_register: false,
     can_edit: false,
@@ -104,8 +120,16 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
             price_history: true,
             admin: true,
             reference_registration: true,
-            rate_management: true,
+            tax_management: true,
+            station_management: true,
             client_management: true,
+            audit_logs: true,
+            settings: true,
+            gestao: true,
+            approval_margin_config: true,
+            gestao_stations: true,
+            gestao_clients: true,
+            gestao_payment_methods: true,
             can_approve: true,
             can_register: true,
             can_edit: true,
@@ -140,8 +164,16 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
             price_history: false,
             admin: false,
             reference_registration: false,
-            rate_management: false,
+            tax_management: false,
+            station_management: false,
             client_management: false,
+            audit_logs: false,
+            settings: false,
+            gestao: false,
+            approval_margin_config: false,
+            gestao_stations: false,
+            gestao_clients: false,
+            gestao_payment_methods: false,
             can_approve: false,
             can_register: true,
             can_edit: false,
@@ -195,8 +227,16 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
             price_history: isAdmin,
             admin: isAdmin,
             reference_registration: isAdmin,
-            rate_management: isAdmin,
+            tax_management: isAdmin,
+            station_management: isAdmin,
             client_management: isAdmin,
+            audit_logs: isAdmin,
+            settings: isAdmin,
+            gestao: isAdmin,
+            approval_margin_config: isAdmin,
+            gestao_stations: isAdmin,
+            gestao_clients: isAdmin,
+            gestao_payment_methods: isAdmin,
             can_approve: isAdmin,
             can_register: true,
             can_edit: isAdmin,
@@ -213,6 +253,12 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
       
       const permsData = perms as any;
       console.log('Permissões carregadas do banco:', { perfil, userRole, perms: permsData });
+      console.log('🔍 Verificando permissões de gestão:', {
+        gestao: permsData.gestao,
+        gestao_stations: permsData.gestao_stations,
+        gestao_clients: permsData.gestao_clients,
+        gestao_payment_methods: permsData.gestao_payment_methods
+      });
       
       setPermissions({
         role: userRole as 'admin' | 'user',
@@ -226,8 +272,16 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
           price_history: permsData.price_history || false,
           admin: permsData.admin || false,
           reference_registration: permsData.reference_registration || false,
-          rate_management: false,
-          client_management: true,
+          tax_management: permsData.tax_management || false,
+          station_management: permsData.station_management || false,
+          client_management: permsData.client_management || false,
+          audit_logs: permsData.audit_logs || false,
+          settings: permsData.settings || false,
+          gestao: permsData.gestao || false,
+          approval_margin_config: permsData.approval_margin_config || false,
+          gestao_stations: permsData.gestao_stations || false,
+          gestao_clients: permsData.gestao_clients || false,
+          gestao_payment_methods: permsData.gestao_payment_methods || false,
           can_approve: permsData.can_approve || false,
           can_register: permsData.can_register || false,
           can_edit: permsData.can_edit || false,
@@ -251,9 +305,21 @@ export function PermissionsProvider({ children }: { children: React.ReactNode })
   }, [user?.id, profile]); // Adicionar profile como dependência para recarregar quando mudar
 
   const canAccess = (tab: string): boolean => {
-    if (!permissions) return false;
-    if (permissions.role === 'admin') return true;
-    return permissions.permissions[tab as keyof UserPermissions['permissions']] || false;
+    if (!permissions) {
+      console.log('🚫 canAccess: Sem permissões carregadas');
+      return false;
+    }
+    if (permissions.role === 'admin') {
+      console.log('✅ canAccess: Admin - acesso total para', tab);
+      return true;
+    }
+    const hasAccess = permissions.permissions[tab as keyof UserPermissions['permissions']] || false;
+    console.log(`🔍 canAccess: ${tab} = ${hasAccess}`, { 
+      tab, 
+      hasAccess, 
+      permissions: permissions.permissions[tab as keyof UserPermissions['permissions']] 
+    });
+    return hasAccess;
   };
 
   const canPerform = (action: string): boolean => {

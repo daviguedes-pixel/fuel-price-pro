@@ -53,16 +53,40 @@ export default function Approvals() {
     loadSuggestions();
   }, []);
 
+  // Buscar regra de aprovação baseada na margem
+  const getApprovalRuleForMargin = async (marginCents: number) => {
+    try {
+      const { data, error } = await supabase.rpc('get_approval_margin_rule', {
+        margin_cents: marginCents
+      });
+
+      if (error) {
+        console.error('Erro ao buscar regra de aprovação:', error);
+        return null;
+      }
+
+      return data && data.length > 0 ? data[0] : null;
+    } catch (error) {
+      console.error('Erro ao buscar regra de aprovação:', error);
+      return null;
+    }
+  };
+
   // Buscar todos os usuários que podem aprovar em ordem hierárquica
   // Ordem: supervisor_comercial -> diretor_comercial -> diretor_pricing
-  const loadApprovers = async () => {
+  const loadApprovers = async (requiredProfiles?: string[]) => {
     try {
-      // Ordem hierárquica de aprovação
+      // Ordem hierárquica de aprovação padrão
       const approvalOrder = [
         'supervisor_comercial',
         'diretor_comercial', 
         'diretor_pricing'
       ];
+      
+      // Se requiredProfiles foi especificado, usar apenas esses perfis
+      const profilesToLoad = requiredProfiles && requiredProfiles.length > 0
+        ? requiredProfiles.filter(p => approvalOrder.includes(p))
+        : approvalOrder;
       
       // Buscar perfis que podem aprovar
       const { data: profilesWithPermission, error: profilesError } = await supabase
@@ -83,9 +107,10 @@ export default function Approvals() {
       }
       
       console.log('📋 Perfis que podem aprovar:', perfisComPermissao);
+      console.log('🔍 Perfis requeridos:', requiredProfiles || 'todos');
       
-      // Ordenar perfis pela ordem hierárquica
-      const orderedProfiles = approvalOrder.filter(p => perfisComPermissao.includes(p));
+      // Ordenar perfis pela ordem hierárquica (filtrando apenas os que estão em profilesToLoad)
+      const orderedProfiles = profilesToLoad.filter(p => perfisComPermissao.includes(p));
       
       // Buscar usuários com esses perfis, mantendo a ordem
       const approvers: any[] = [];
@@ -257,28 +282,64 @@ export default function Approvals() {
       });
       
       // Filtrar aprovações para mostrar apenas as que estão no nível do usuário atual
-      const approvers = await loadApprovers();
-      const userIndex = approvers.findIndex(approver => approver.user_id === user?.id);
-      
-      console.log('👤 Posição do usuário na fila de aprovadores:', userIndex + 1);
-      console.log('📋 Total de aprovadores:', approvers.length);
+      // Usar configurações dinâmicas de margem
+      const allApprovers = await loadApprovers();
       
       // Enriquecer com informação de qual usuário está com a aprovação
-      const enrichedWithCurrentApprover = enrichedData.map(suggestion => {
+      // Usando regras de aprovação dinâmicas baseadas em margem
+      const enrichedWithCurrentApprover = await Promise.all(enrichedData.map(async (suggestion) => {
         if (suggestion.status !== 'pending') {
           return suggestion;
         }
         
+        // Buscar regra de aprovação baseada na margem
+        const marginCents = suggestion.margin_cents || 0;
+        const approvalRule = await getApprovalRuleForMargin(marginCents);
+        
+        // Se houver regra configurada, usar os perfis da regra
+        // Caso contrário, usar todos os aprovadores (comportamento padrão)
+        let approversForThisSuggestion = allApprovers;
+        let requiredProfiles: string[] | undefined = undefined;
+        
+        if (approvalRule && approvalRule.required_profiles) {
+          requiredProfiles = approvalRule.required_profiles;
+          approversForThisSuggestion = await loadApprovers(requiredProfiles);
+        }
+        
         const currentLevel = suggestion.approval_level || 1;
-        const currentApprover = approvers[currentLevel - 1]; // -1 porque array é 0-indexed
+        
+        // Mapear approval_level para índice do array de aprovadores
+        // Se há regra específica, precisamos calcular o índice baseado nos perfis requeridos
+        let approverIndex: number;
+        
+        if (approvalRule && requiredProfiles) {
+          // Se há regra específica, encontrar qual aprovador corresponde ao nível atual
+          const allApproversOrdered = await loadApprovers(); // Array completo ordenado
+          const currentApproverInFullList = allApproversOrdered[currentLevel - 1];
+          
+          if (currentApproverInFullList && requiredProfiles.includes(currentApproverInFullList.perfil)) {
+            // Encontrar o índice no array filtrado
+            approverIndex = approversForThisSuggestion.findIndex(a => a.user_id === currentApproverInFullList.user_id);
+          } else {
+            // Se não encontrou, usar o primeiro aprovador da lista filtrada
+            approverIndex = 0;
+          }
+        } else {
+          // Comportamento padrão: índice direto
+          approverIndex = currentLevel - 1;
+        }
+        
+        const currentApprover = approversForThisSuggestion[approverIndex];
         
         return {
           ...suggestion,
           current_approver_name: currentApprover?.email || null,
           current_approver_id: currentApprover?.user_id || null,
           is_current_user_turn: currentApprover?.user_id === user?.id || false,
+          requires_directors_only: approvalRule ? true : false,
+          approval_rule: approvalRule, // Guardar a regra para uso posterior
         };
-      });
+      }));
       
       // Filtrar para mostrar apenas aprovações pendentes que estão no turno do usuário atual
       // OU se o usuário tem permissão de admin, mostrar todas
@@ -365,22 +426,90 @@ export default function Approvals() {
       console.log('✅ Sugestão encontrada:', currentSuggestion);
       console.log('👤 requested_by:', currentSuggestion.requested_by);
 
-      // Buscar TODOS os aprovadores dinamicamente
-      const approvers = await loadApprovers();
-      const totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      // Buscar regra de aprovação baseada na margem
+      const marginCents = currentSuggestion.margin_cents || 0;
+      const approvalRule = await getApprovalRuleForMargin(marginCents);
+      
+      console.log('💰 Margem em centavos:', marginCents);
+      console.log('📋 Regra de aprovação encontrada:', approvalRule);
+      
+      // Determinar perfis requeridos baseado na regra
+      const requiredProfiles = approvalRule?.required_profiles || undefined;
+      
+      // Buscar aprovadores apropriados baseado na regra
+      const allApprovers = await loadApprovers();
+      let approvers: any[] = [];
+      let totalApprovers = 1;
+      
+      if (requiredProfiles && requiredProfiles.length > 0) {
+        // Filtrar apenas os perfis requeridos pela regra
+        approvers = await loadApprovers(requiredProfiles);
+        
+        // Verificar se o usuário atual tem um dos perfis requeridos
+        const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
+        if (!currentUserProfile || !requiredProfiles.includes(currentUserProfile.perfil)) {
+          const profilesList = requiredProfiles.map(p => p.replace('_', ' ')).join(', ');
+          toast.error(`Esta solicitação requer aprovação de perfis específicos: ${profilesList}. Você não possui permissão para aprovar.`);
+          setLoading(false);
+          return;
+        }
+        
+        totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      } else {
+        // Usar todos os aprovadores normalmente (sem regra específica)
+        approvers = allApprovers;
+        totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      }
       
       console.log('📋 Aprovadores encontrados:', approvers.length);
-      console.log('📝 IDs dos aprovadores:', approvers.map(a => ({ id: a.user_id, email: a.email })));
-      console.log('🔍 Approval level atual:', currentSuggestion.approval_level);
+      console.log('📝 IDs dos aprovadores:', approvers.map(a => ({ id: a.user_id, email: a.email, perfil: a.perfil })));
+      
+      // Ajustar approval_level inicial se necessário
+      let currentLevel = currentSuggestion.approval_level || 1;
+      
+      // Se há regra específica e approval_level está em 1, ajustar para o primeiro nível dos perfis requeridos
+      if (approvalRule && requiredProfiles && currentLevel === 1) {
+        // Encontrar o índice do primeiro perfil requerido na lista completa
+        const firstRequiredProfileIndex = allApprovers.findIndex(a => requiredProfiles.includes(a.perfil));
+        if (firstRequiredProfileIndex >= 0) {
+          currentLevel = firstRequiredProfileIndex + 1; // approval_level é 1-indexed
+          console.log('⚠️ Ajustando approval_level para', currentLevel, 'baseado na regra');
+          
+          // Atualizar o approval_level no banco
+          await supabase
+            .from('price_suggestions')
+            .update({ approval_level: currentLevel })
+            .eq('id', suggestionId);
+        }
+      }
+      
+      console.log('🔍 Approval level atual:', currentLevel);
       console.log('👤 Usuário atual:', user?.email);
       
-      const currentLevel = currentSuggestion.approval_level || 1;
       const approvalsCount = (currentSuggestion.approvals_count || 0) + 1;
       
+      // Ajustar índice do aprovador baseado na regra
+      let approverIndex: number;
+      if (approvalRule && requiredProfiles) {
+        // Encontrar qual aprovador corresponde ao nível atual no array completo
+        const currentApproverInFullList = allApprovers[currentLevel - 1];
+        
+        if (currentApproverInFullList && requiredProfiles.includes(currentApproverInFullList.perfil)) {
+          // Encontrar o índice no array filtrado
+          approverIndex = approvers.findIndex(a => a.user_id === currentApproverInFullList.user_id);
+        } else {
+          // Se não encontrou, usar o primeiro aprovador da lista filtrada
+          approverIndex = 0;
+        }
+      } else {
+        approverIndex = currentLevel - 1;
+      }
+      
       // Verificar se o usuário atual é o próximo aprovador na sequência
-      const currentApprover = approvers[currentLevel - 1];
+      const currentApprover = approvers[approverIndex];
       if (!currentApprover || currentApprover.user_id !== user?.id) {
         toast.error("Você não é o próximo aprovador nesta sequência");
+        setLoading(false);
         return;
       }
       
@@ -399,13 +528,35 @@ export default function Approvals() {
       if (historyError) throw historyError;
 
       // Verificar se é o último aprovador
-      const nextLevel = currentLevel + 1;
-      const isLastApprover = nextLevel > totalApprovers;
+      let nextLevel: number;
+      if (approvalRule && requiredProfiles) {
+        // Se há regra específica, incrementar dentro do array filtrado
+        const currentApproverIndex = approverIndex;
+        const isLastApprover = (currentApproverIndex + 1) >= approvers.length;
+        
+        if (isLastApprover) {
+          // Último aprovador - aprovar completamente
+          nextLevel = currentLevel; // Manter no nível atual
+        } else {
+          // Encontrar o próximo aprovador no array completo
+          const nextApproverInFiltered = approvers[currentApproverIndex + 1];
+          const nextApproverInFullList = allApprovers.findIndex(a => a.user_id === nextApproverInFiltered?.user_id);
+          nextLevel = nextApproverInFullList >= 0 ? nextApproverInFullList + 1 : currentLevel + 1;
+        }
+      } else {
+        nextLevel = currentLevel + 1;
+      }
+      
+      // Verificar se é o último aprovador baseado no array filtrado
+      const currentApproverIndex = approverIndex;
+      const isLastApprover = (currentApproverIndex + 1) >= approvers.length;
       
       // Se for o último aprovador, aprovar completamente
       // Caso contrário, passar para o próximo nível
       const newStatus = isLastApprover ? 'approved' : 'pending';
-      const finalLevel = isLastApprover ? totalApprovers : nextLevel;
+      const finalLevel = isLastApprover 
+        ? (approvalRule && requiredProfiles ? currentLevel : totalApprovers)
+        : nextLevel;
 
       // Atualizar a sugestão
       const updateData: any = {
@@ -422,7 +573,19 @@ export default function Approvals() {
         updateData.approved_by = user?.id;
       } else {
         // Se não for o último, marcar quem está com a aprovação agora
-        const nextApprover = approvers[nextLevel - 1];
+        let nextApproverIndex: number;
+        if (approvalRule && requiredProfiles) {
+          // No array filtrado, próximo aprovador está no próximo índice
+          nextApproverIndex = approverIndex + 1;
+        } else {
+          nextApproverIndex = approvers.findIndex(a => {
+            const allApproversIndex = allApprovers.findIndex(aa => aa.user_id === a.user_id);
+            return allApproversIndex === (nextLevel - 1);
+          });
+          if (nextApproverIndex < 0) nextApproverIndex = nextLevel - 1;
+        }
+        
+        const nextApprover = approvers[nextApproverIndex];
         if (nextApprover) {
           // Criar notificação para o próximo aprovador
           try {
@@ -543,16 +706,68 @@ export default function Approvals() {
 
       if (fetchError) throw fetchError;
 
-      // Buscar TODOS os aprovadores dinamicamente
-      const approvers = await loadApprovers();
-      const totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      // Buscar regra de aprovação baseada na margem
+      const marginCents = currentSuggestion.margin_cents || 0;
+      const approvalRule = await getApprovalRuleForMargin(marginCents);
       
-      const currentLevel = currentSuggestion.approval_level || 1;
+      // Determinar perfis requeridos baseado na regra
+      const requiredProfiles = approvalRule?.required_profiles || undefined;
+      
+      // Buscar aprovadores apropriados baseado na regra
+      const allApprovers = await loadApprovers();
+      let approvers: any[] = [];
+      let totalApprovers = 1;
+      
+      if (requiredProfiles && requiredProfiles.length > 0) {
+        approvers = await loadApprovers(requiredProfiles);
+        
+        // Verificar se o usuário atual tem um dos perfis requeridos
+        const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
+        if (!currentUserProfile || !requiredProfiles.includes(currentUserProfile.perfil)) {
+          const profilesList = requiredProfiles.map(p => p.replace('_', ' ')).join(', ');
+          toast.error(`Esta solicitação requer aprovação de perfis específicos: ${profilesList}. Você não possui permissão para rejeitar.`);
+          setLoading(false);
+          return;
+        }
+        
+        totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      } else {
+        approvers = allApprovers;
+        totalApprovers = approvers.length > 0 ? approvers.length : 1;
+      }
+      
+      // Ajustar approval_level inicial se necessário
+      let currentLevel = currentSuggestion.approval_level || 1;
+      
+      if (approvalRule && requiredProfiles && currentLevel === 1) {
+        const firstRequiredProfileIndex = allApprovers.findIndex(a => requiredProfiles.includes(a.perfil));
+        if (firstRequiredProfileIndex >= 0) {
+          currentLevel = firstRequiredProfileIndex + 1;
+          await supabase
+            .from('price_suggestions')
+            .update({ approval_level: currentLevel })
+            .eq('id', suggestionId);
+        }
+      }
+      
+      // Ajustar índice do aprovador baseado na regra
+      let approverIndex: number;
+      if (approvalRule && requiredProfiles) {
+        const currentApproverInFullList = allApprovers[currentLevel - 1];
+        if (currentApproverInFullList && requiredProfiles.includes(currentApproverInFullList.perfil)) {
+          approverIndex = approvers.findIndex(a => a.user_id === currentApproverInFullList.user_id);
+        } else {
+          approverIndex = 0;
+        }
+      } else {
+        approverIndex = currentLevel - 1;
+      }
       
       // Verificar se o usuário atual é o próximo aprovador na sequência
-      const currentApprover = approvers[currentLevel - 1];
+      const currentApprover = approvers[approverIndex];
       if (!currentApprover || currentApprover.user_id !== user?.id) {
         toast.error("Você não é o próximo aprovador nesta sequência");
+        setLoading(false);
         return;
       }
       
@@ -573,7 +788,19 @@ export default function Approvals() {
       if (historyError) throw historyError;
 
       // Se rejeitar, continua para o próximo aprovador (se houver)
-      const nextLevel = currentLevel < totalApprovers ? currentLevel + 1 : totalApprovers;
+      let nextLevel: number;
+      if (approvalRule && requiredProfiles) {
+        const currentApproverIndex = approverIndex;
+        const nextApproverInFiltered = approvers[currentApproverIndex + 1];
+        if (nextApproverInFiltered) {
+          const nextApproverInFullList = allApprovers.findIndex(a => a.user_id === nextApproverInFiltered.user_id);
+          nextLevel = nextApproverInFullList >= 0 ? nextApproverInFullList + 1 : currentLevel + 1;
+        } else {
+          nextLevel = currentLevel;
+        }
+      } else {
+        nextLevel = currentLevel < totalApprovers ? currentLevel + 1 : totalApprovers;
+      }
       
       // Permanece pendente quando rejeitar (não rejeita definitivamente)
       const newStatus = 'pending';
@@ -726,21 +953,21 @@ export default function Approvals() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 dark:from-slate-900 dark:via-slate-800 dark:to-slate-900">
-      <div className="container mx-auto px-4 py-8 space-y-8">
+      <div className="container mx-auto px-4 py-4 space-y-4">
         {/* Header moderno */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-8 text-white shadow-2xl">
+        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-4 text-white shadow-xl">
           <div className="absolute inset-0 bg-black/10"></div>
-          <div className="relative flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
+          <div className="relative flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3">
             <div>
-              <h1 className="text-4xl font-bold mb-3">Aprovações de Preço</h1>
-              <p className="text-blue-100 text-lg">Gerencie as solicitações de aprovação de preços</p>
+              <h1 className="text-xl font-bold mb-1">Aprovações de Preço</h1>
+              <p className="text-blue-100 text-sm">Gerencie as solicitações de aprovação de preços</p>
             </div>
             <div className="flex gap-3">
               <Button 
-                className="bg-white/20 hover:bg-white/30 text-slate-300 border-white/30 backdrop-blur-sm h-12 px-6 rounded-xl font-semibold"
+                className="bg-white/20 hover:bg-white/30 text-slate-300 border-white/30 backdrop-blur-sm h-8 px-4 rounded-lg font-semibold text-sm"
                 onClick={() => window.location.reload()}
               >
-                <Filter className="h-5 w-5 mr-2 text-slate-300" />
+                <Filter className="h-4 w-4 mr-2 text-slate-300" />
                 Atualizar
               </Button>
             </div>
@@ -748,58 +975,58 @@ export default function Approvals() {
         </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <CardContent className="p-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Total</p>
-                <p className="text-2xl font-bold text-slate-800 dark:text-slate-200">{stats.total}</p>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Total</p>
+                <p className="text-lg font-bold text-slate-800 dark:text-slate-200">{stats.total}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 flex items-center justify-center">
-                <MessageSquare className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-slate-600 to-slate-700 flex items-center justify-center">
+                <MessageSquare className="h-5 w-5" style={{ color: '#94a3b8' }} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <CardContent className="p-6">
+        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Pendentes</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.pending}</p>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Pendentes</p>
+                <p className="text-lg font-bold text-yellow-600">{stats.pending}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-600 flex items-center justify-center">
-                <Clock className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-yellow-500 to-yellow-600 flex items-center justify-center">
+                <Clock className="h-5 w-5" style={{ color: '#94a3b8' }} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <CardContent className="p-6">
+        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Aprovadas</p>
-                <p className="text-2xl font-bold text-green-600">{stats.approved}</p>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Aprovadas</p>
+                <p className="text-lg font-bold text-green-600">{stats.approved}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
-                <Check className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
+                <Check className="h-5 w-5" style={{ color: '#94a3b8' }} />
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-xl hover:shadow-2xl transition-all duration-300">
-          <CardContent className="p-6">
+        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+          <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Rejeitadas</p>
-                <p className="text-2xl font-bold text-red-600">{stats.rejected}</p>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Rejeitadas</p>
+                <p className="text-lg font-bold text-red-600">{stats.rejected}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-red-500 to-red-600 flex items-center justify-center">
-                <X className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-10 h-10 rounded-lg bg-gradient-to-r from-red-500 to-red-600 flex items-center justify-center">
+                <X className="h-5 w-5" style={{ color: '#94a3b8' }} />
               </div>
             </div>
           </CardContent>
@@ -807,15 +1034,15 @@ export default function Approvals() {
       </div>
 
       {/* Filters */}
-      <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
-        <CardHeader>
+      <Card className="shadow-lg border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+        <CardHeader className="p-3">
           <CardTitle className="flex items-center gap-2">
             <Filter className="h-5 w-5 text-slate-600 dark:text-slate-400" />
             Filtros
           </CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <CardContent className="p-3">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
