@@ -562,7 +562,11 @@ export const ApprovalDetailsModal = ({
             <Card>
               <CardContent className="pt-6">
                 <h3 className="text-lg font-semibold mb-4">Origem do Preço de Custo</h3>
-                <div className="grid grid-cols-4 gap-4">
+                <div className="grid grid-cols-5 gap-4">
+                  <div>
+                    <h4 className="font-medium text-sm text-muted-foreground">Bandeira</h4>
+                    <p className="font-medium">🚩 {dataToShow.price_origin_bandeira || 'N/A'}</p>
+                  </div>
                   <div>
                     <h4 className="font-medium text-sm text-muted-foreground">Base</h4>
                     <p className="font-medium">{dataToShow.price_origin_base}</p>

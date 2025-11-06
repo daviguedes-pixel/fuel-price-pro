@@ -828,6 +828,7 @@ export type Database = {
           margin_cents: number
           observations: string | null
           payment_method_id: string | null
+          price_origin_bandeira: string | null
           price_origin_base: string | null
           price_origin_code: string | null
           price_origin_delivery: string | null
@@ -867,6 +868,7 @@ export type Database = {
           margin_cents: number
           observations?: string | null
           payment_method_id?: string | null
+          price_origin_bandeira?: string | null
           price_origin_base?: string | null
           price_origin_code?: string | null
           price_origin_delivery?: string | null
@@ -906,6 +908,7 @@ export type Database = {
           margin_cents?: number
           observations?: string | null
           payment_method_id?: string | null
+          price_origin_bandeira?: string | null
           price_origin_base?: string | null
           price_origin_code?: string | null
           price_origin_delivery?: string | null
@@ -929,15 +932,22 @@ export type Database = {
       profile_permissions: {
         Row: {
           admin: boolean
+          approval_margin_config: boolean
           approvals: boolean
+          audit_logs: boolean
           can_approve: boolean
           can_delete: boolean
           can_edit: boolean
           can_manage_notifications: boolean
           can_register: boolean
           can_view_history: boolean
+          client_management: boolean
           created_at: string | null
           dashboard: boolean
+          gestao: boolean
+          gestao_clients: boolean
+          gestao_payment_methods: boolean
+          gestao_stations: boolean
           id: string
           map: boolean
           perfil: string
@@ -945,19 +955,29 @@ export type Database = {
           price_request: boolean
           reference_registration: boolean
           research: boolean
+          settings: boolean
+          station_management: boolean
+          tax_management: boolean
           updated_at: string | null
         }
         Insert: {
           admin?: boolean
+          approval_margin_config?: boolean
           approvals?: boolean
+          audit_logs?: boolean
           can_approve?: boolean
           can_delete?: boolean
           can_edit?: boolean
           can_manage_notifications?: boolean
           can_register?: boolean
           can_view_history?: boolean
+          client_management?: boolean
           created_at?: string | null
           dashboard?: boolean
+          gestao?: boolean
+          gestao_clients?: boolean
+          gestao_payment_methods?: boolean
+          gestao_stations?: boolean
           id?: string
           map?: boolean
           perfil: string
@@ -965,19 +985,29 @@ export type Database = {
           price_request?: boolean
           reference_registration?: boolean
           research?: boolean
+          settings?: boolean
+          station_management?: boolean
+          tax_management?: boolean
           updated_at?: string | null
         }
         Update: {
           admin?: boolean
+          approval_margin_config?: boolean
           approvals?: boolean
+          audit_logs?: boolean
           can_approve?: boolean
           can_delete?: boolean
           can_edit?: boolean
           can_manage_notifications?: boolean
           can_register?: boolean
           can_view_history?: boolean
+          client_management?: boolean
           created_at?: string | null
           dashboard?: boolean
+          gestao?: boolean
+          gestao_clients?: boolean
+          gestao_payment_methods?: boolean
+          gestao_stations?: boolean
           id?: string
           map?: boolean
           perfil?: string
@@ -985,6 +1015,9 @@ export type Database = {
           price_request?: boolean
           reference_registration?: boolean
           research?: boolean
+          settings?: boolean
+          station_management?: boolean
+          tax_management?: boolean
           updated_at?: string | null
         }
         Relationships: []

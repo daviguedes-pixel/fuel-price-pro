@@ -382,13 +382,16 @@ export default function PriceRequest() {
                     });
                   }
 
-                  // 6) Info de base
+                  // 6) Info de base com bandeira
                   let baseInfo = new Map<number, { nome: string; codigo: string; uf: string; bandeira?: string }>();
                   if (baseIds.length > 0) {
                     const { data: bases } = await cot
                       .from('base_fornecedor')
                       .select('id_base_fornecedor,nome,codigo_base,uf,bandeira')
                       .in('id_base_fornecedor', baseIds);
+                    
+                    console.log('🏢 Bases encontradas:', bases);
+                    
                     (bases as any[])?.forEach((b: any) => {
                       baseInfo.set(b.id_base_fornecedor, { 
                         nome: b.nome, 
@@ -401,12 +404,33 @@ export default function PriceRequest() {
                   
                   // Função para extrair bandeira do nome se não vier da tabela
                   const extractBandeira = (nome: string, bandeira?: string | null): string => {
-                    if (bandeira) return bandeira;
-                    const nomeUpper = nome.toUpperCase();
-                    const bandeiras = ['VIBRA', 'IPIRANGA', 'RAIZEN', 'PETROBRAS', 'SHELL', 'BR', 'COOP', 'UNO', 'ATEM', 'ALE'];
-                    for (const band of bandeiras) {
-                      if (nomeUpper.includes(band)) return band;
+                    // Se vier bandeira da tabela, usar direto
+                    if (bandeira && bandeira.trim() !== '') {
+                      return bandeira.trim().toUpperCase();
                     }
+                    
+                    // Tentar extrair do nome da base
+                    const nomeUpper = nome.toUpperCase();
+                    const bandeiras = [
+                      { nome: 'VIBRA', patterns: ['VIBRA'] },
+                      { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                      { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                      { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-'] },
+                      { nome: 'SHELL', patterns: ['SHELL'] },
+                      { nome: 'COOP', patterns: ['COOP'] },
+                      { nome: 'UNO', patterns: ['UNO'] },
+                      { nome: 'ATEM', patterns: ['ATEM'] },
+                      { nome: 'ALE', patterns: ['ALE'] }
+                    ];
+                    
+                    for (const bandeira of bandeiras) {
+                      for (const pattern of bandeira.patterns) {
+                        if (nomeUpper.includes(pattern)) {
+                          return bandeira.nome;
+                        }
+                      }
+                    }
+                    
                     return 'N/A';
                   };
 
