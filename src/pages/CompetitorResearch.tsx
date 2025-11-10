@@ -10,7 +10,7 @@ import { Search, Plus, MapPin, DollarSign, CheckCircle, Building2, FileText, Upl
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { FileUploader } from "@/components/FileUploader";
-import { parseBrazilianDecimal } from "@/lib/utils";
+import { parseBrazilianDecimal, formatIntegerToPrice } from "@/lib/utils";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
 import { useAuth } from "@/hooks/useAuth";
 import { useNavigate } from "react-router-dom";
@@ -241,11 +241,15 @@ export default function PublicPriceResearch() {
     });
   };
 
-  // Lidar com mudança de preço
+  // Lidar com mudança de preço - aceitar apenas números inteiros
   const handlePriceChange = (product: string, price: string) => {
+    // Remove tudo que não é número
+    const numbersOnly = price.replace(/\D/g, '');
+    // Formata com vírgula fixa (ex: 350 -> "3,50")
+    const formatted = formatIntegerToPrice(numbersOnly);
     setProductPrices(prev => ({
       ...prev,
-      [product]: price
+      [product]: formatted
     }));
   };
 
@@ -540,10 +544,12 @@ export default function PublicPriceResearch() {
                               <Input
                                 id={`price-${productValue}`}
                                 type="text"
+                                inputMode="numeric"
                                 placeholder="0,00"
                                 value={productPrices[productValue] || ''}
                                 onChange={(e) => handlePriceChange(productValue, e.target.value)}
                                 className="h-11"
+                                translate="no"
                               />
                             </div>
                           );

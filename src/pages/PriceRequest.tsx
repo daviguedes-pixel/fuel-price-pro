@@ -12,7 +12,7 @@ import { ClientCombobox } from "@/components/ClientCombobox";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
 import { FileUploader } from "@/components/FileUploader";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
-import { parseBrazilianDecimal, formatBrazilianCurrency } from "@/lib/utils";
+import { parseBrazilianDecimal, formatBrazilianCurrency, formatIntegerToPrice, parsePriceToInteger } from "@/lib/utils";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -705,19 +705,25 @@ export default function PriceRequest() {
   };
 
   const handleInputChange = async (field: string, value: any) => {
-    console.log('📝 handleInputChange:', { field, value });
-    setFormData(prev => ({ ...prev, [field]: value }));
+    // Campos de preço: aceitar apenas números inteiros e formatar com vírgula fixa
+    const priceFields = ['current_price', 'suggested_price', 'arla_purchase_price'];
+    
+    if (priceFields.includes(field)) {
+      // Remove tudo que não é número
+      const numbersOnly = value.replace(/\D/g, '');
+      // Formata com vírgula fixa (ex: 350 -> "3,50")
+      const formatted = formatIntegerToPrice(numbersOnly);
+      setFormData(prev => ({ ...prev, [field]: formatted }));
+    } else {
+      setFormData(prev => ({ ...prev, [field]: value }));
+    }
 
     // Se mudou o posto, carregar métodos de pagamento dele
     if (field === 'station_id') {
-      console.log('🚀 station_id mudou, carregando métodos de pagamento...');
       if (value && value !== 'none' && value !== '') {
-        console.log('🔍 Chamando getPaymentMethodsForStation com:', value);
         const methods = await getPaymentMethodsForStation(value);
-        console.log('📋 Métodos retornados:', methods);
         setStationPaymentMethods(methods);
       } else {
-        console.log('⚠️ station_id vazio ou none, limpando métodos');
         setStationPaymentMethods([]);
       }
     }
@@ -725,8 +731,9 @@ export default function PriceRequest() {
 
   const calculateMargin = useCallback(() => {
     try {
-      const suggestedPrice = parseFloat(formData.suggested_price);
-      const currentPrice = parseFloat(formData.current_price);
+      // Converter de formato com vírgula fixa para número (reais)
+      const suggestedPrice = parsePriceToInteger(formData.suggested_price) / 100;
+      const currentPrice = parsePriceToInteger(formData.current_price) / 100;
       
       console.log('=== CALCULANDO MARGENS ===');
       console.log('suggestedPrice:', suggestedPrice);
@@ -789,8 +796,8 @@ export default function PriceRequest() {
       const freightCost = parseFloat(formData.freight_cost) || 0;
       const volumeMade = parseFloat(formData.volume_made) || 0;
       const volumeProjected = parseFloat(formData.volume_projected) || 0;
-      const suggestedPrice = parseFloat(formData.suggested_price) || 0;
-      const arlaPurchase = parseFloat(formData.arla_purchase_price) || 0;
+      const suggestedPrice = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
+      const arlaPurchase = (parsePriceToInteger(formData.arla_purchase_price) / 100) || 0;
       // Usar o preço sugerido como preço de venda do ARLA quando o produto for ARLA
       const arlaSale = formData.product === 'arla32_granel' ? suggestedPrice : 0;
       
@@ -870,7 +877,7 @@ export default function PriceRequest() {
       
       if (formData.product === 's10') {
         // Para S10: margem = preço de venda do ARLA - preço de compra do ARLA
-        const arlaMargin = parseFloat(formData.arla_purchase_price) - parseFloat(formData.arla_cost_price);
+        const arlaMargin = (parsePriceToInteger(formData.arla_purchase_price) / 100) - parseFloat(formData.arla_cost_price);
         // Volume de ARLA é 5% do volume de diesel (já em litros)
         // arlaVolume já está em litros (volumeProjectedLiters * 0.05)
         arlaCompensation = arlaVolume * arlaMargin;
@@ -1015,9 +1022,9 @@ export default function PriceRequest() {
 
     setLoading(true);
     try {
-      // Converter preços para formato de reais (NÃO centavos)
-      const suggestedPriceNum = parseBrazilianDecimal(formData.suggested_price);
-      const currentPriceNum = parseBrazilianDecimal(formData.current_price);
+      // Converter preços de formato com vírgula fixa para reais
+      const suggestedPriceNum = parsePriceToInteger(formData.suggested_price) / 100;
+      const currentPriceNum = parsePriceToInteger(formData.current_price) / 100;
       const purchaseCostNum = parseBrazilianDecimal(formData.purchase_cost);
       const freightCostNum = parseBrazilianDecimal(formData.freight_cost);
       
@@ -1085,7 +1092,7 @@ export default function PriceRequest() {
         freight_cost: parseBrazilianDecimal(formData.freight_cost) || null,
         volume_made: parseBrazilianDecimal(formData.volume_made) || null,
         volume_projected: parseBrazilianDecimal(formData.volume_projected) || null,
-        arla_purchase_price: parseBrazilianDecimal(formData.arla_purchase_price) || null,
+        arla_purchase_price: (parsePriceToInteger(formData.arla_purchase_price) / 100) || null,
         arla_cost_price: parseBrazilianDecimal(formData.arla_cost_price) || null,
         // Origem do preço
         price_origin_base: priceOrigin?.base_nome || null,
@@ -1595,13 +1602,14 @@ export default function PriceRequest() {
                     </Label>
                     <Input
                       id="current_price"
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0,00"
                       value={formData.current_price}
                       onChange={(e) => handleInputChange("current_price", e.target.value)}
                       onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
+                      translate="no"
                     />
                   </div>
 
@@ -1615,13 +1623,14 @@ export default function PriceRequest() {
                     </Label>
                     <Input
                       id="suggested_price"
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0,00"
                       value={formData.suggested_price}
                       onChange={(e) => handleInputChange("suggested_price", e.target.value)}
                       onWheel={(e) => e.currentTarget.blur()}
                       className="h-11"
+                      translate="no"
                     />
                   </div>
 
@@ -1634,13 +1643,14 @@ export default function PriceRequest() {
                         </Label>
                         <Input
                           id="suggested_price_arla"
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0,00"
                           value={formData.suggested_price}
                           onChange={(e) => handleInputChange("suggested_price", e.target.value)}
                           onWheel={(e) => e.currentTarget.blur()}
                           className="h-11 bg-white dark:bg-slate-800 text-lg font-semibold"
+                          translate="no"
                         />
                         <p className="text-xs text-green-600 dark:text-green-400 mt-2">
                           💡 Este é o preço pelo qual você venderá o ARLA ao cliente
@@ -1658,13 +1668,14 @@ export default function PriceRequest() {
                         </Label>
                         <Input
                           id="arla_purchase_price"
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0,00"
                           value={formData.arla_purchase_price}
                           onChange={(e) => handleInputChange("arla_purchase_price", e.target.value)}
                           onWheel={(e) => e.currentTarget.blur()}
                           className="h-11 bg-white dark:bg-slate-800"
+                          translate="no"
                         />
                         <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
                           ℹ️ Campo obrigatório para diesel S-10 - este é o preço que você paga pelo ARLA
@@ -1931,7 +1942,7 @@ export default function PriceRequest() {
                     {formData.current_price && formData.suggested_price && (
                       <div className="flex justify-between items-center py-1.5">
                         <span className="text-xs text-slate-600 dark:text-slate-400">Preço Atual:</span>
-                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(parseFloat(formData.current_price))}</span>
+                        <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(parsePriceToInteger(formData.current_price) / 100)}</span>
                       </div>
                     )}
                     
@@ -1946,14 +1957,14 @@ export default function PriceRequest() {
                         <div className="flex justify-between items-center py-1.5">
                           <span className="text-xs text-slate-600 dark:text-slate-400">Ajuste:</span>
                           <span className={`text-sm font-semibold ${(() => {
-                            const current = parseFloat(formData.current_price) || 0;
-                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                            const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                             const adjustment = suggested - current;
                             return adjustment >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
                           })()}`}>
                             {(() => {
-                              const current = parseFloat(formData.current_price) || 0;
-                              const suggested = parseFloat(formData.suggested_price) || 0;
+                              const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                              const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                               const adjustment = suggested - current;
                               const adjustmentCents = Math.round(adjustment * 100);
                               return `${adjustmentCents >= 0 ? '+' : ''}${adjustmentCents} centavos`;
@@ -1965,16 +1976,16 @@ export default function PriceRequest() {
                     </div>
                     
                     {formData.current_price && formData.suggested_price && (() => {
-                      const current = parseFloat(formData.current_price) || 0;
-                      const suggested = parseFloat(formData.suggested_price) || 0;
+                      const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                      const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                       const adjustment = suggested - current;
                       return adjustment !== 0;
                     })() && (
                       <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700">
                         <div className="flex items-center gap-2">
                           {(() => {
-                            const current = parseFloat(formData.current_price) || 0;
-                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                            const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                             const adjustment = suggested - current;
                             return adjustment >= 0 ? (
                               <CheckCircle className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
@@ -1983,14 +1994,14 @@ export default function PriceRequest() {
                             );
                           })()}
                           <span className={`text-xs font-medium ${(() => {
-                            const current = parseFloat(formData.current_price) || 0;
-                            const suggested = parseFloat(formData.suggested_price) || 0;
+                            const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                            const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                             const adjustment = suggested - current;
                             return adjustment >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400';
                           })()}`}>
                             {(() => {
-                              const current = parseFloat(formData.current_price) || 0;
-                              const suggested = parseFloat(formData.suggested_price) || 0;
+                              const current = (parsePriceToInteger(formData.current_price) / 100) || 0;
+                              const suggested = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
                               const adjustment = suggested - current;
                               return adjustment >= 0 ? 'Ajuste positivo' : 'Ajuste negativo';
                             })()}

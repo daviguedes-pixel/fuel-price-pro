@@ -28,3 +28,23 @@ export function formatBrazilianCurrency(value: number): string {
     maximumFractionDigits: 2
   });
 }
+
+// Função para converter número inteiro (centavos) para formato de exibição com vírgula fixa
+// Ex: 350 -> "3,50", 100 -> "1,00"
+export function formatIntegerToPrice(integerValue: string | number): string {
+  if (!integerValue && integerValue !== 0) return '';
+  const num = typeof integerValue === 'string' ? parseInt(integerValue.replace(/\D/g, ''), 10) : integerValue;
+  if (isNaN(num)) return '';
+  const reais = Math.floor(num / 100);
+  const centavos = num % 100;
+  return `${reais},${centavos.toString().padStart(2, '0')}`;
+}
+
+// Função para converter formato de exibição (com vírgula) para número inteiro (centavos)
+// Ex: "3,50" -> 350, "1,00" -> 100
+export function parsePriceToInteger(priceString: string): number {
+  if (!priceString) return 0;
+  // Remove tudo exceto números
+  const cleanValue = priceString.replace(/\D/g, '');
+  return parseInt(cleanValue, 10) || 0;
+}
