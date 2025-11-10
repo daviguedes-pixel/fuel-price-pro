@@ -61,6 +61,11 @@ export default function Approvals() {
       });
 
       if (error) {
+        // Se a função não existir, pode ser que a tabela não tenha sido criada
+        if (error.code === '42883' || error.message?.includes('function') || error.message?.includes('does not exist')) {
+          console.warn('Função get_approval_margin_rule não encontrada. Execute a migração 20250131000005_ensure_approval_margin_rules.sql no Supabase.');
+          return null;
+        }
         console.error('Erro ao buscar regra de aprovação:', error);
         return null;
       }
@@ -73,15 +78,29 @@ export default function Approvals() {
   };
 
   // Buscar todos os usuários que podem aprovar em ordem hierárquica
-  // Ordem: supervisor_comercial -> diretor_comercial -> diretor_pricing
   const loadApprovers = async (requiredProfiles?: string[]) => {
     try {
-      // Ordem hierárquica de aprovação padrão
-      const approvalOrder = [
-        'supervisor_comercial',
-        'diretor_comercial', 
-        'diretor_pricing'
-      ];
+      // Buscar ordem hierárquica do banco de dados
+      let approvalOrder: string[] = [];
+      try {
+        const { data: orderData, error: orderError } = await supabase
+          .rpc('get_approval_profile_order');
+        
+        if (!orderError && orderData && Array.isArray(orderData)) {
+          approvalOrder = orderData.map((item: any) => item.perfil).filter(Boolean);
+        }
+      } catch (error) {
+        console.warn('Erro ao buscar ordem de aprovação do banco, usando ordem padrão:', error);
+      }
+      
+      // Se não encontrou ordem no banco, usar ordem padrão
+      if (approvalOrder.length === 0) {
+        approvalOrder = [
+          'supervisor_comercial',
+          'diretor_comercial', 
+          'diretor_pricing'
+        ];
+      }
       
       // Se requiredProfiles foi especificado, usar apenas esses perfis
       const profilesToLoad = requiredProfiles && requiredProfiles.length > 0
@@ -115,24 +134,35 @@ export default function Approvals() {
       // Buscar usuários com esses perfis, mantendo a ordem
       const approvers: any[] = [];
       
+      console.log('🔍 Perfis ordenados para buscar:', orderedProfiles);
+      
       for (const perfil of orderedProfiles) {
+        console.log(`🔍 Buscando usuários com perfil: ${perfil}`);
+        
         const { data: users, error: usersError } = await supabase
           .from('user_profiles')
-          .select('user_id, email, perfil')
+          .select('user_id, email, perfil, nome')
           .eq('perfil', perfil)
           .order('email');
         
         if (usersError) {
-          console.error(`Erro ao buscar usuários do perfil ${perfil}:`, usersError);
+          console.error(`❌ Erro ao buscar usuários do perfil ${perfil}:`, usersError);
+          console.error(`❌ Código do erro:`, usersError.code);
+          console.error(`❌ Mensagem:`, usersError.message);
           continue;
         }
         
+        console.log(`✅ Usuários encontrados para perfil ${perfil}:`, users?.length || 0);
         if (users && users.length > 0) {
+          console.log(`   👤 Usuários:`, users.map(u => ({ email: u.email, perfil: u.perfil })));
           approvers.push(...users);
+        } else {
+          console.log(`   ⚠️ Nenhum usuário encontrado com perfil ${perfil}`);
         }
       }
       
       console.log('👥 Usuários que podem aprovar (em ordem):', approvers);
+      console.log('👥 Total de aprovadores encontrados:', approvers.length);
       
       return approvers;
     } catch (error) {
@@ -170,12 +200,33 @@ export default function Approvals() {
         throw error;
       }
 
-      // Carregar postos, clientes e métodos de pagamento separadamente
-      const [stationsRes, clientsRes, paymentMethodsRes] = await Promise.all([
+      // Carregar postos, clientes (filtrados por assessor) e métodos de pagamento separadamente
+      const [stationsRes, clientsFiltered, paymentMethodsRes] = await Promise.all([
         supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clientes' as any).select('id_cliente, nome'),
+        // Tentar usar RPC que filtra por assessor; se falhar, faz fallback para a tabela inteira
+        supabase.rpc('get_clientes_por_assessor')
+          .then(res => ({
+            data: res.data,
+            error: res.error,
+            source: 'rpc'
+          }))
+          .catch(err => ({
+            data: null,
+            error: err,
+            source: 'rpc-error'
+          })),
         supabase.from('tipos_pagamento' as any).select('CARTAO, TAXA, PRAZO, ID_POSTO')
       ]);
+
+      // Fallback: se o RPC não existir, buscar diretamente
+      let clientsRes: any = clientsFiltered;
+      if (!clientsFiltered?.data || (clientsFiltered as any)?.error) {
+        console.warn('⚠️ RPC get_clientes_por_assessor indisponível. Fazendo fallback para public.clientes');
+        const { data: clientsAll, error: clientsErr } = await supabase
+          .from('clientes' as any)
+          .select('id_cliente, nome');
+        clientsRes = { data: clientsAll, error: clientsErr, source: 'table' };
+      }
 
       console.log('✅ stationsRes (completo):', JSON.stringify(stationsRes, null, 2));
       console.log('✅ clientsRes (completo):', JSON.stringify(clientsRes, null, 2));
@@ -311,25 +362,83 @@ export default function Approvals() {
         // Mapear approval_level para índice do array de aprovadores
         // Se há regra específica, precisamos calcular o índice baseado nos perfis requeridos
         let approverIndex: number;
+        let currentApprover: any = null;
         
-        if (approvalRule && requiredProfiles) {
-          // Se há regra específica, encontrar qual aprovador corresponde ao nível atual
-          const allApproversOrdered = await loadApprovers(); // Array completo ordenado
-          const currentApproverInFullList = allApproversOrdered[currentLevel - 1];
+        if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+          // Se há regra específica (margem baixa), calcular qual aprovador está com a aprovação
+          // baseado no approval_level atual e na lista de perfis requeridos
           
-          if (currentApproverInFullList && requiredProfiles.includes(currentApproverInFullList.perfil)) {
-            // Encontrar o índice no array filtrado
-            approverIndex = approversForThisSuggestion.findIndex(a => a.user_id === currentApproverInFullList.user_id);
+          // Buscar a lista completa de aprovadores para mapear o approval_level
+          const allApproversOrdered = await loadApprovers();
+          
+          // Se não encontrou aprovadores nos perfis requeridos, buscar usuários diretamente
+          if (approversForThisSuggestion.length === 0) {
+            console.warn('⚠️ Nenhum aprovador encontrado nos perfis requeridos, buscando diretamente...');
+            
+            // Buscar usuários diretamente pelos perfis requeridos
+            const { data: directUsers, error: directError } = await supabase
+              .from('user_profiles')
+              .select('user_id, email, perfil, nome')
+              .in('perfil', requiredProfiles)
+              .order('email');
+            
+            if (!directError && directUsers && directUsers.length > 0) {
+              console.log('✅ Usuários encontrados diretamente:', directUsers.length);
+              approversForThisSuggestion = directUsers;
+            }
+          }
+          
+          if (approversForThisSuggestion.length > 0) {
+            // Encontrar qual aprovador corresponde ao approval_level atual na lista completa
+            const approverAtCurrentLevel = allApproversOrdered[currentLevel - 1];
+            
+            if (approverAtCurrentLevel && requiredProfiles.includes(approverAtCurrentLevel.perfil)) {
+              // O aprovador no nível atual está na lista de perfis requeridos
+              // Encontrar seu índice na lista filtrada
+              approverIndex = approversForThisSuggestion.findIndex(a => a.user_id === approverAtCurrentLevel.user_id);
+              if (approverIndex >= 0) {
+                currentApprover = approversForThisSuggestion[approverIndex];
+              } else {
+                // Se não encontrou, usar o primeiro da lista filtrada
+                currentApprover = approversForThisSuggestion[0];
+                approverIndex = 0;
+              }
+            } else {
+              // O aprovador no nível atual não está na lista de perfis requeridos
+              // Usar o primeiro da lista de perfis requeridos
+              currentApprover = approversForThisSuggestion[0];
+              approverIndex = 0;
+            }
           } else {
-            // Se não encontrou, usar o primeiro aprovador da lista filtrada
-            approverIndex = 0;
+            // Se ainda não encontrou, buscar todos e filtrar
+            console.warn('⚠️ Ainda sem aprovadores, buscando todos e filtrando...');
+            const allApproversFallback = await loadApprovers();
+            const filtered = allApproversFallback.filter(a => requiredProfiles.includes(a.perfil));
+            if (filtered.length > 0) {
+              currentApprover = filtered[0];
+              approverIndex = 0;
+            } else if (allApproversFallback.length > 0) {
+              // Fallback: usar o primeiro de todos se não encontrou nos perfis requeridos
+              currentApprover = allApproversFallback[0];
+              approverIndex = 0;
+            }
           }
         } else {
-          // Comportamento padrão: índice direto
+          // Comportamento padrão: índice direto baseado no approval_level
           approverIndex = currentLevel - 1;
+          currentApprover = approversForThisSuggestion[approverIndex];
+          
+          // Se não encontrou no índice calculado, usar o primeiro disponível
+          if (!currentApprover && approversForThisSuggestion.length > 0) {
+            currentApprover = approversForThisSuggestion[0];
+          }
         }
         
-        const currentApprover = approversForThisSuggestion[approverIndex];
+        // Garantir que sempre mostre um aprovador se houver aprovadores disponíveis
+        // Mesmo com margem baixa, deve mostrar quem está com a aprovação
+        if (!currentApprover && approversForThisSuggestion.length > 0) {
+          currentApprover = approversForThisSuggestion[0];
+        }
         
         return {
           ...suggestion,
@@ -445,16 +554,51 @@ export default function Approvals() {
         // Filtrar apenas os perfis requeridos pela regra
         approvers = await loadApprovers(requiredProfiles);
         
-        // Verificar se o usuário atual tem um dos perfis requeridos
-        const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
-        if (!currentUserProfile || !requiredProfiles.includes(currentUserProfile.perfil)) {
-          const profilesList = requiredProfiles.map(p => p.replace('_', ' ')).join(', ');
-          toast.error(`Esta solicitação requer aprovação de perfis específicos: ${profilesList}. Você não possui permissão para aprovar.`);
-          setLoading(false);
-          return;
+        console.log('📋 Aprovadores encontrados para perfis requeridos:', approvers.length);
+        console.log('📋 Aprovadores:', approvers.map(a => ({ email: a.email, perfil: a.perfil })));
+        
+        // Se não encontrou aprovadores, buscar diretamente do banco
+        if (approvers.length === 0) {
+          console.warn('⚠️ Nenhum aprovador encontrado via loadApprovers, buscando diretamente...');
+          const { data: directUsers, error: directError } = await supabase
+            .from('user_profiles')
+            .select('user_id, email, perfil, nome')
+            .in('perfil', requiredProfiles)
+            .order('email');
+          
+          if (!directError && directUsers && directUsers.length > 0) {
+            console.log('✅ Usuários encontrados diretamente:', directUsers.length);
+            approvers = directUsers;
+          }
         }
         
-        totalApprovers = approvers.length > 0 ? approvers.length : 1;
+        // Buscar o perfil do usuário atual
+        const { data: currentUserProfileData, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('user_id, email, perfil')
+          .eq('user_id', user?.id)
+          .single();
+        
+        if (profileError) {
+          console.error('❌ Erro ao buscar perfil do usuário atual:', profileError);
+        }
+        
+        console.log('👤 Perfil do usuário atual:', currentUserProfileData?.perfil);
+        console.log('📋 Perfis requeridos:', requiredProfiles);
+        
+        // IMPORTANTE: Com margem baixa, qualquer um pode adicionar observações
+        // mas só os diretores podem aprovar. Não bloquear aqui, apenas verificar se pode aprovar
+        const canApprove = currentUserProfileData && requiredProfiles.includes(currentUserProfileData.perfil);
+        
+        if (!canApprove) {
+          // Usuário não tem perfil para aprovar, mas pode adicionar observações
+          // Não bloquear, apenas avisar que a aprovação requer diretores
+          console.log('ℹ️ Usuário não tem perfil para aprovar, mas pode adicionar observações');
+        }
+        
+        // Se não encontrou aprovadores, mas há perfis requeridos, criar lista vazia
+        // A aprovação só acontece quando diretores aprovarem
+        totalApprovers = approvers.length > 0 ? approvers.length : requiredProfiles.length;
       } else {
         // Usar todos os aprovadores normalmente (sem regra específica)
         approvers = allApprovers;
@@ -467,19 +611,24 @@ export default function Approvals() {
       // Ajustar approval_level inicial se necessário
       let currentLevel = currentSuggestion.approval_level || 1;
       
-      // Se há regra específica e approval_level está em 1, ajustar para o primeiro nível dos perfis requeridos
-      if (approvalRule && requiredProfiles && currentLevel === 1) {
+      // Se há regra específica (margem baixa), ajustar approval_level para o primeiro perfil requerido
+      if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
         // Encontrar o índice do primeiro perfil requerido na lista completa
         const firstRequiredProfileIndex = allApprovers.findIndex(a => requiredProfiles.includes(a.perfil));
         if (firstRequiredProfileIndex >= 0) {
-          currentLevel = firstRequiredProfileIndex + 1; // approval_level é 1-indexed
-          console.log('⚠️ Ajustando approval_level para', currentLevel, 'baseado na regra');
+          const firstRequiredLevel = firstRequiredProfileIndex + 1; // approval_level é 1-indexed
           
-          // Atualizar o approval_level no banco
-          await supabase
-            .from('price_suggestions')
-            .update({ approval_level: currentLevel })
-            .eq('id', suggestionId);
+          // Se o approval_level atual é menor que o primeiro nível requerido, ajustar
+          if (currentLevel < firstRequiredLevel) {
+            currentLevel = firstRequiredLevel;
+            console.log('⚠️ Ajustando approval_level para', currentLevel, 'baseado na regra de margem baixa');
+            
+            // Atualizar o approval_level no banco
+            await supabase
+              .from('price_suggestions')
+              .update({ approval_level: currentLevel })
+              .eq('id', suggestionId);
+          }
         }
       }
       
@@ -489,74 +638,357 @@ export default function Approvals() {
       const approvalsCount = (currentSuggestion.approvals_count || 0) + 1;
       
       // Ajustar índice do aprovador baseado na regra
+      // IMPORTANTE: Com margem baixa, verificar se o usuário atual tem o perfil correto para o nível atual
       let approverIndex: number;
-      if (approvalRule && requiredProfiles) {
-        // Encontrar qual aprovador corresponde ao nível atual no array completo
-        const currentApproverInFullList = allApprovers[currentLevel - 1];
+      if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+        // Buscar ordem dos perfis
+        const approvalOrderForCheck = await (async () => {
+          try {
+            const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+            if (orderData && Array.isArray(orderData)) {
+              return orderData.map((item: any) => item.perfil).filter(Boolean);
+            }
+          } catch (error) {
+            console.warn('Erro ao buscar ordem de aprovação:', error);
+          }
+          return ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+        })();
         
-        if (currentApproverInFullList && requiredProfiles.includes(currentApproverInFullList.perfil)) {
-          // Encontrar o índice no array filtrado
-          approverIndex = approvers.findIndex(a => a.user_id === currentApproverInFullList.user_id);
+        // Verificar qual perfil corresponde ao approval_level atual
+        const profileAtCurrentLevel = approvalOrderForCheck[currentLevel - 1];
+        console.log('🔍 Perfil no nível atual (', currentLevel, '):', profileAtCurrentLevel);
+        console.log('🔍 Perfil do usuário atual:', currentUserProfileData?.perfil);
+        
+        // Verificar se o usuário atual tem o perfil correto para o nível atual
+        if (profileAtCurrentLevel && currentUserProfileData?.perfil === profileAtCurrentLevel) {
+          // Usuário tem o perfil correto - encontrar no array de aprovadores
+          approverIndex = approvers.findIndex(a => a.user_id === user?.id);
+          
+          if (approverIndex < 0) {
+            // Se não encontrou, buscar no array completo
+            const indexInFullList = allApprovers.findIndex(a => a.user_id === user?.id);
+            if (indexInFullList >= 0) {
+              // Encontrar no array filtrado baseado no perfil
+              approverIndex = approvers.findIndex(a => a.perfil === currentUserProfileData.perfil);
+            }
+            
+            if (approverIndex < 0) {
+              approverIndex = 0;
+            }
+          }
         } else {
-          // Se não encontrou, usar o primeiro aprovador da lista filtrada
-          approverIndex = 0;
+          // Usuário não tem o perfil correto para o nível atual
+          // Verificar se tem algum perfil requerido
+          if (currentUserProfileData && requiredProfiles.includes(currentUserProfileData.perfil)) {
+            // Tem perfil requerido, mas não é o do nível atual
+            // Encontrar índice baseado no perfil do usuário
+            approverIndex = approvers.findIndex(a => a.perfil === currentUserProfileData.perfil);
+            if (approverIndex < 0) {
+              approverIndex = 0;
+            }
+          } else {
+            // Não tem perfil requerido - usar primeiro da lista
+            approverIndex = 0;
+          }
         }
+        
+        console.log('🔍 Índice do aprovador calculado:', approverIndex);
       } else {
         approverIndex = currentLevel - 1;
       }
       
-      // Verificar se o usuário atual é o próximo aprovador na sequência
+      // PRIMEIRO: Verificar se o usuário tem perfil para aprovar (independente do array estar vazio)
+      const { data: currentUserProfileData } = await supabase
+        .from('user_profiles')
+        .select('user_id, email, perfil')
+        .eq('user_id', user?.id)
+        .single();
+      
+      const hasRequiredProfile = currentUserProfileData && requiredProfiles && requiredProfiles.length > 0 
+        ? requiredProfiles.includes(currentUserProfileData.perfil)
+        : false;
+      
+      console.log('👤 Perfil do usuário:', currentUserProfileData?.perfil);
+      console.log('📋 Perfis requeridos:', requiredProfiles);
+      console.log('✅ Usuário tem perfil requerido?', hasRequiredProfile);
+      
+      // IMPORTANTE: Verificar se o usuário tem o perfil CORRETO para o nível atual
+      // Com margem baixa, o usuário só pode aprovar se tiver o perfil que corresponde ao approval_level atual
+      let canUserApproveAtCurrentLevel = false;
+      
+      if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+        // Buscar ordem dos perfis novamente (já foi buscada acima, mas vamos garantir)
+        const approvalOrderForValidation = await (async () => {
+          try {
+            const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+            if (orderData && Array.isArray(orderData)) {
+              return orderData.map((item: any) => item.perfil).filter(Boolean);
+            }
+          } catch (error) {
+            console.warn('Erro ao buscar ordem de aprovação:', error);
+          }
+          return ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+        })();
+        
+        // Verificar qual perfil corresponde ao approval_level atual
+        const profileAtCurrentLevel = approvalOrderForValidation[currentLevel - 1];
+        console.log('🔍 Validação: Perfil no nível', currentLevel, ':', profileAtCurrentLevel);
+        console.log('🔍 Validação: Perfil do usuário:', currentUserProfileData?.perfil);
+        
+        // Usuário só pode aprovar se tiver o perfil que corresponde ao nível atual
+        canUserApproveAtCurrentLevel = currentUserProfileData?.perfil === profileAtCurrentLevel;
+        console.log('✅ Usuário tem o perfil correto para o nível atual?', canUserApproveAtCurrentLevel);
+      }
+      
+      // Verificar se o usuário atual pode aprovar (baseado no array OU no perfil correto)
       const currentApprover = approvers[approverIndex];
-      if (!currentApprover || currentApprover.user_id !== user?.id) {
-        toast.error("Você não é o próximo aprovador nesta sequência");
+      const canUserApproveFromArray = currentApprover && currentApprover.user_id === user?.id;
+      
+      // Com margem baixa, só pode aprovar se tiver o perfil correto para o nível atual
+      const canUserApprove = canUserApproveFromArray || (canUserApproveAtCurrentLevel && approvalRule);
+      
+      console.log('✅ Pode aprovar (do array)?', canUserApproveFromArray);
+      console.log('✅ Pode aprovar (perfil correto para o nível)?', canUserApproveAtCurrentLevel);
+      console.log('✅ Pode aprovar (final)?', canUserApprove);
+      
+      // Se há regra de margem baixa e usuário NÃO tem perfil para aprovar OU não tem o perfil correto para o nível atual
+      // Permitir adicionar observações, mas também passar para o próximo perfil
+      const canAddObservationOnly = approvalRule && requiredProfiles && requiredProfiles.length > 0 
+        && (!hasRequiredProfile || !canUserApproveAtCurrentLevel);
+      
+      if (canAddObservationOnly) {
+        // Usuário não tem perfil para aprovar, mas pode adicionar observações
+        // Adicionar observação no histórico
+        const { error: historyError } = await supabase
+          .from('approval_history')
+          .insert({
+            suggestion_id: suggestionId,
+            approver_id: user?.id,
+            approver_name: user?.email || 'Usuário',
+            action: 'approved', // Usar 'approved' para histórico
+            observations: observations,
+            approval_level: currentLevel
+          });
+        
+        if (historyError) throw historyError;
+        
+        console.log('ℹ️ Usuário adicionou observação, mas também vai passar para o próximo perfil');
+        
+        // IMPORTANTE: Mesmo adicionando apenas observação, deve avançar o approval_level
+        // Continuar o fluxo para calcular o próximo nível e atualizar
+        // Não retornar aqui, deixar o código continuar para atualizar o approval_level
+      }
+      
+      // Verificar se o usuário atual é o próximo aprovador na sequência
+      // IMPORTANTE: Com margem baixa, só pode aprovar se tiver o perfil correto para o nível atual
+      if (!canUserApprove && !canAddObservationOnly) {
+        // Buscar ordem novamente para mostrar mensagem de erro
+        let profileAtCurrentLevel = 'desconhecido';
+        try {
+          const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+          if (orderData && Array.isArray(orderData)) {
+            const approvalOrder = orderData.map((item: any) => item.perfil).filter(Boolean);
+            profileAtCurrentLevel = approvalOrder[currentLevel - 1] || 'desconhecido';
+          }
+        } catch (error) {
+          console.warn('Erro ao buscar ordem:', error);
+        }
+        
+        toast.error(
+          `Você não pode aprovar neste nível. Este nível requer perfil: ${profileAtCurrentLevel}. Seu perfil: ${currentUserProfileData?.perfil || 'desconhecido'}`
+        );
         setLoading(false);
         return;
       }
       
-      // Registrar no histórico
-      const { error: historyError } = await supabase
-        .from('approval_history')
-        .insert({
-          suggestion_id: suggestionId,
-          approver_id: user?.id,
-          approver_name: user?.email || 'Aprovador',
-          action: 'approved',
-          observations: observations,
-          approval_level: currentLevel
-        });
+      // Registrar no histórico (se ainda não foi registrado)
+      if (!(approvalRule && requiredProfiles && requiredProfiles.length > 0 && !hasRequiredProfile)) {
+        const { error: historyError } = await supabase
+          .from('approval_history')
+          .insert({
+            suggestion_id: suggestionId,
+            approver_id: user?.id,
+            approver_name: user?.email || 'Aprovador',
+            action: 'approved',
+            observations: observations,
+            approval_level: currentLevel
+          });
 
-      if (historyError) throw historyError;
+        if (historyError) throw historyError;
+      }
 
       // Verificar se é o último aprovador
       let nextLevel: number;
-      if (approvalRule && requiredProfiles) {
-        // Se há regra específica, incrementar dentro do array filtrado
-        const currentApproverIndex = approverIndex;
-        const isLastApprover = (currentApproverIndex + 1) >= approvers.length;
+      let newStatus: string;
+      let finalLevel: number;
+      
+      if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+        // REGRA ESPECIAL: Margem baixa - sempre passa para o próximo, mesmo quando aprova
+        // A aprovação passa pela equipe para juntar observações, mas não aprova direto
         
-        if (isLastApprover) {
-          // Último aprovador - aprovar completamente
-          nextLevel = currentLevel; // Manter no nível atual
+        console.log('📊 Margem baixa detectada - regra especial aplicada');
+        console.log('📊 Perfis requeridos:', requiredProfiles);
+        console.log('📊 Aprovadores encontrados:', approvers.length);
+        console.log('📊 Approval level atual:', currentLevel);
+        console.log('👤 Perfil do usuário que está aprovando:', currentUserProfileData?.perfil);
+        
+        // Buscar ordem dos perfis na lista completa
+        const approvalOrder = await (async () => {
+          try {
+            const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+            if (orderData && Array.isArray(orderData)) {
+              return orderData.map((item: any) => item.perfil).filter(Boolean);
+            }
+          } catch (error) {
+            console.warn('Erro ao buscar ordem de aprovação:', error);
+          }
+          return ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+        })();
+        
+        // Determinar qual perfil requerido está no approval_level atual
+        // Se o usuário tem perfil requerido, usar o perfil dele para determinar a posição
+        let effectiveProfileIndex = -1;
+        let currentRequiredProfile = null;
+        
+        // Primeiro, tentar encontrar qual perfil requerido corresponde ao approval_level atual
+        const currentProfileInOrder = approvalOrder[currentLevel - 1];
+        effectiveProfileIndex = requiredProfiles.findIndex(p => p === currentProfileInOrder);
+        currentRequiredProfile = currentProfileInOrder;
+        
+        // Se não encontrou no nível atual, buscar o primeiro perfil requerido que vem depois
+        if (effectiveProfileIndex < 0) {
+          for (let i = currentLevel - 1; i < approvalOrder.length; i++) {
+            const profileAtLevel = approvalOrder[i];
+            const indexInRequired = requiredProfiles.findIndex(p => p === profileAtLevel);
+            if (indexInRequired >= 0) {
+              effectiveProfileIndex = indexInRequired;
+              currentRequiredProfile = profileAtLevel;
+              console.log('📊 Perfil requerido encontrado no nível', i + 1, ':', profileAtLevel);
+              break;
+            }
+          }
+        }
+        
+        // Se ainda não encontrou, usar o primeiro perfil requerido
+        if (effectiveProfileIndex < 0 && requiredProfiles.length > 0) {
+          effectiveProfileIndex = 0;
+          currentRequiredProfile = requiredProfiles[0];
+          console.log('📊 Usando primeiro perfil requerido:', currentRequiredProfile);
+        }
+        
+        console.log('📊 Perfil requerido atual determinado:', currentRequiredProfile);
+        console.log('📊 Índice efetivo nos requeridos:', effectiveProfileIndex);
+        
+        console.log('📊 Perfil requerido atual:', currentRequiredProfile);
+        console.log('📊 Índice efetivo nos requeridos:', effectiveProfileIndex);
+        
+        // Verificar se é o último perfil requerido
+        const isLastRequiredProfile = (effectiveProfileIndex + 1) >= requiredProfiles.length;
+        
+        // IMPORTANTE: Com margem baixa, NUNCA aprovar automaticamente
+        // Sempre passar para o próximo perfil requerido até TODOS os diretores aprovarem
+        // Verificar histórico para garantir que todos aprovaram antes de aprovar completamente
+        if (isLastRequiredProfile && effectiveProfileIndex >= 0) {
+          // Verificar se todos os diretores já aprovaram checando o histórico
+          const { data: approvalHistory } = await supabase
+            .from('approval_history')
+            .select('approver_id, action')
+            .eq('suggestion_id', suggestionId)
+            .eq('action', 'approved');
+          
+          // Buscar todos os usuários com os perfis requeridos
+          const { data: requiredUsers } = await supabase
+            .from('user_profiles')
+            .select('user_id, perfil')
+            .in('perfil', requiredProfiles);
+          
+          const approverIds = approvalHistory?.map(h => h.approver_id).filter(Boolean) || [];
+          const requiredUserIds = requiredUsers?.map(u => u.user_id) || [];
+          
+          // Verificar se pelo menos um usuário de cada perfil requerido já aprovou
+          const allProfilesApproved = requiredProfiles.every(profile => {
+            const usersWithProfile = requiredUsers?.filter(u => u.perfil === profile) || [];
+            if (usersWithProfile.length === 0) return false; // Se não há usuários com esse perfil, não pode aprovar
+            return usersWithProfile.some(u => approverIds.includes(u.user_id));
+          });
+          
+          console.log('📊 Verificando aprovações dos diretores...');
+          console.log('📊 Perfis requeridos:', requiredProfiles);
+          console.log('📊 Usuários com perfis requeridos:', requiredUsers?.length || 0);
+          console.log('📊 Aprovadores no histórico:', approverIds.length);
+          console.log('📊 Todos os perfis têm pelo menos um aprovador?', allProfilesApproved);
+          
+          if (allProfilesApproved && requiredProfiles.length > 0) {
+            // Todos os perfis requeridos têm pelo menos um aprovador - aprovar completamente
+            newStatus = 'approved';
+            finalLevel = currentLevel;
+            console.log('✅ Todos os diretores aprovaram - aprovando completamente');
+          } else {
+            // Ainda há perfis que não foram aprovados - continuar fluxo
+            console.log('⚠️ Ainda há perfis sem aprovação - continuando para próximo perfil');
+            
+            // Buscar o próximo perfil requerido na ordem
+            const nextRequiredProfileIndex = (effectiveProfileIndex + 1) % requiredProfiles.length;
+            const nextRequiredProfile = requiredProfiles[nextRequiredProfileIndex];
+            const nextProfileIndexInOrder = approvalOrder.findIndex(p => p === nextRequiredProfile);
+            
+            nextLevel = nextProfileIndexInOrder >= 0 ? nextProfileIndexInOrder + 1 : currentLevel + 1;
+            newStatus = 'pending';
+            finalLevel = nextLevel;
+            console.log('➡️ Passando para próximo perfil requerido:', nextRequiredProfile, '(nível', finalLevel, ')');
+          }
         } else {
-          // Encontrar o próximo aprovador no array completo
-          const nextApproverInFiltered = approvers[currentApproverIndex + 1];
-          const nextApproverInFullList = allApprovers.findIndex(a => a.user_id === nextApproverInFiltered?.user_id);
-          nextLevel = nextApproverInFullList >= 0 ? nextApproverInFullList + 1 : currentLevel + 1;
+          // Ainda há mais perfis requeridos - passar para o próximo
+          const nextRequiredProfileIndex = effectiveProfileIndex >= 0 ? effectiveProfileIndex + 1 : 0;
+          const nextRequiredProfile = requiredProfiles[nextRequiredProfileIndex];
+          console.log('➡️ Próximo perfil requerido (índice', nextRequiredProfileIndex, '):', nextRequiredProfile);
+          
+          // Encontrar o índice do próximo perfil na ordem completa
+          const nextProfileIndexInOrder = approvalOrder.findIndex(p => p === nextRequiredProfile);
+          
+          if (nextProfileIndexInOrder >= 0) {
+            nextLevel = nextProfileIndexInOrder + 1; // approval_level é 1-indexed
+            console.log('➡️ Próximo approval_level encontrado na ordem:', nextLevel);
+          } else {
+            // Se não encontrou na ordem, buscar o próximo perfil requerido que vem depois do atual
+            console.warn('⚠️ Próximo perfil não encontrado na ordem, buscando próximo requerido...');
+            const nextProfileInFullOrder = approvalOrder.findIndex((p, idx) => {
+              // Buscar o próximo perfil requerido que vem depois do nível atual
+              return idx >= currentLevel && requiredProfiles.includes(p) && p !== currentRequiredProfile;
+            });
+            
+            if (nextProfileInFullOrder >= 0) {
+              nextLevel = nextProfileInFullOrder + 1;
+              console.log('➡️ Próximo approval_level (fallback):', nextLevel);
+            } else {
+              // Último recurso: incrementar o nível atual
+              nextLevel = currentLevel + 1;
+              console.warn('⚠️ Não encontrou próximo perfil, incrementando nível:', nextLevel);
+            }
+          }
+          
+          newStatus = 'pending'; // Sempre manter como pending até o último perfil
+          finalLevel = nextLevel;
+          
+          console.log('➡️ Passando para approval_level:', finalLevel);
+          console.log('➡️ Status:', newStatus);
+          console.log('➡️ Comparação: currentLevel =', currentLevel, ', finalLevel =', finalLevel);
+          
+          // GARANTIR que sempre avança pelo menos 1 nível
+          if (finalLevel <= currentLevel) {
+            console.warn('⚠️ finalLevel não é maior que currentLevel, forçando incremento');
+            finalLevel = currentLevel + 1;
+            console.log('➡️ finalLevel ajustado para:', finalLevel);
+          }
         }
       } else {
+        // Comportamento padrão: aprovação normal
         nextLevel = currentLevel + 1;
+        const currentApproverIndex = approverIndex;
+        const isLastApprover = (currentApproverIndex + 1) >= approvers.length;
+        newStatus = isLastApprover ? 'approved' : 'pending';
+        finalLevel = isLastApprover ? totalApprovers : nextLevel;
       }
-      
-      // Verificar se é o último aprovador baseado no array filtrado
-      const currentApproverIndex = approverIndex;
-      const isLastApprover = (currentApproverIndex + 1) >= approvers.length;
-      
-      // Se for o último aprovador, aprovar completamente
-      // Caso contrário, passar para o próximo nível
-      const newStatus = isLastApprover ? 'approved' : 'pending';
-      const finalLevel = isLastApprover 
-        ? (approvalRule && requiredProfiles ? currentLevel : totalApprovers)
-        : nextLevel;
 
       // Atualizar a sugestão
       const updateData: any = {
@@ -565,28 +997,190 @@ export default function Approvals() {
         approvals_count: approvalsCount,
       };
       
+      console.log('📝 Dados para atualização:', {
+        status: newStatus,
+        approval_level: finalLevel,
+        approvals_count: approvalsCount,
+        currentLevel: currentLevel,
+        finalLevel: finalLevel
+      });
+      
       // Atualizar total_approvers com o número dinâmico
       updateData.total_approvers = totalApprovers;
       
       if (newStatus === 'approved') {
         updateData.approved_at = new Date().toISOString();
         updateData.approved_by = user?.id;
+        console.log('✅ Aprovando completamente');
       } else {
         // Se não for o último, marcar quem está com a aprovação agora
-        let nextApproverIndex: number;
-        if (approvalRule && requiredProfiles) {
-          // No array filtrado, próximo aprovador está no próximo índice
-          nextApproverIndex = approverIndex + 1;
+        let nextApprover: any = null;
+        
+        if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+          // Com margem baixa, buscar o próximo aprovador baseado no finalLevel calculado
+          // Usar a mesma lógica que foi usada para calcular o finalLevel
+          console.log('🔍 Buscando próximo aprovador para approval_level:', finalLevel);
+          
+          // Buscar ordem dos perfis (usar a mesma ordem que foi usada para calcular finalLevel)
+          const approvalOrderForNext = await (async () => {
+            try {
+              const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+              if (orderData && Array.isArray(orderData)) {
+                return orderData.map((item: any) => item.perfil).filter(Boolean);
+              }
+            } catch (error) {
+              console.warn('Erro ao buscar ordem de aprovação:', error);
+            }
+            return ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+          })();
+          
+          // Encontrar qual perfil corresponde ao finalLevel
+          const profileAtFinalLevel = approvalOrderForNext[finalLevel - 1];
+          
+          console.log('🔍 Perfil no nível finalLevel:', profileAtFinalLevel);
+          console.log('🔍 Perfis requeridos:', requiredProfiles);
+          
+          // Se o perfil no finalLevel está nos requeridos, buscar usuários com esse perfil
+          // IMPORTANTE: Excluir o usuário atual da busca
+          if (profileAtFinalLevel && requiredProfiles.includes(profileAtFinalLevel)) {
+            console.log('🔍 Buscando usuários com perfil:', profileAtFinalLevel, '(excluindo usuário atual)');
+            const { data: nextProfileUsers } = await supabase
+              .from('user_profiles')
+              .select('user_id, email, perfil, nome')
+              .eq('perfil', profileAtFinalLevel)
+              .neq('user_id', user?.id) // Excluir o usuário atual
+              .order('email')
+              .limit(1);
+            
+            if (nextProfileUsers && nextProfileUsers.length > 0) {
+              nextApprover = nextProfileUsers[0];
+              console.log('✅ Próximo aprovador encontrado:', nextApprover.email, 'com perfil', nextApprover.perfil);
+            } else {
+              console.warn('⚠️ Nenhum usuário encontrado com perfil:', profileAtFinalLevel, '(excluindo o atual)');
+              // Se não encontrou excluindo o atual, buscar qualquer um (pode ser o mesmo)
+              const { data: anyUserWithProfile } = await supabase
+                .from('user_profiles')
+                .select('user_id, email, perfil, nome')
+                .eq('perfil', profileAtFinalLevel)
+                .order('email')
+                .limit(1);
+              
+              if (anyUserWithProfile && anyUserWithProfile.length > 0) {
+                nextApprover = anyUserWithProfile[0];
+                console.log('⚠️ Encontrado usuário (pode ser o mesmo):', nextApprover.email);
+              }
+            }
+          }
+          
+          // Se não encontrou, buscar o próximo perfil requerido baseado no cálculo que foi feito
+          if (!nextApprover) {
+            console.log('🔍 Tentando buscar próximo perfil requerido...');
+            
+            // Usar a mesma lógica que foi usada para calcular finalLevel
+            // Encontrar qual perfil requerido corresponde ao finalLevel
+            for (const profile of approvalOrderForNext) {
+              if (requiredProfiles.includes(profile)) {
+                const profileIndexInOrder = approvalOrderForNext.findIndex(p => p === profile);
+                if (profileIndexInOrder + 1 === finalLevel) {
+                  // Este é o perfil que corresponde ao finalLevel
+                  console.log('🔍 Perfil requerido encontrado para finalLevel:', profile);
+                  
+                  const { data: nextProfileUsers } = await supabase
+                    .from('user_profiles')
+                    .select('user_id, email, perfil, nome')
+                    .eq('perfil', profile)
+                    .neq('user_id', user?.id) // Excluir o usuário atual
+                    .order('email')
+                    .limit(1);
+                  
+                  if (nextProfileUsers && nextProfileUsers.length > 0) {
+                    nextApprover = nextProfileUsers[0];
+                    console.log('✅ Próximo aprovador encontrado:', nextApprover.email);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          
+          // Se ainda não encontrou, buscar qualquer usuário com qualquer perfil requerido (excluindo o atual)
+          if (!nextApprover) {
+            console.log('🔍 Buscando qualquer usuário com perfil requerido (excluindo o atual)...');
+            for (const profile of requiredProfiles) {
+              const { data: nextProfileUsers } = await supabase
+                .from('user_profiles')
+                .select('user_id, email, perfil, nome')
+                .eq('perfil', profile)
+                .neq('user_id', user?.id) // Excluir o usuário atual
+                .order('email')
+                .limit(1);
+              
+              if (nextProfileUsers && nextProfileUsers.length > 0) {
+                nextApprover = nextProfileUsers[0];
+                console.log('✅ Próximo aprovador encontrado (fallback):', nextApprover.email);
+                break;
+              }
+            }
+          }
         } else {
+          // Comportamento padrão
+          let nextApproverIndex: number;
           nextApproverIndex = approvers.findIndex(a => {
             const allApproversIndex = allApprovers.findIndex(aa => aa.user_id === a.user_id);
-            return allApproversIndex === (nextLevel - 1);
+            return allApproversIndex === (finalLevel - 1);
           });
-          if (nextApproverIndex < 0) nextApproverIndex = nextLevel - 1;
+          if (nextApproverIndex < 0 && approvers.length > 0) {
+            nextApproverIndex = Math.min(finalLevel - 1, approvers.length - 1);
+          }
+          
+          if (nextApproverIndex >= 0 && nextApproverIndex < approvers.length) {
+            nextApprover = approvers[nextApproverIndex];
+          }
         }
         
-        const nextApprover = approvers[nextApproverIndex];
+        // IMPORTANTE: Garantir que o próximo aprovador seja diferente do atual
+        if (nextApprover && nextApprover.user_id === user?.id) {
+          console.warn('⚠️ Próximo aprovador é o mesmo que o atual, buscando outro...');
+          nextApprover = null;
+          
+          // Buscar outro usuário com o mesmo perfil ou próximo perfil
+          if (approvalRule && requiredProfiles && requiredProfiles.length > 0) {
+            const approvalOrderForNext = await (async () => {
+              try {
+                const { data: orderData } = await supabase.rpc('get_approval_profile_order');
+                if (orderData && Array.isArray(orderData)) {
+                  return orderData.map((item: any) => item.perfil).filter(Boolean);
+                }
+              } catch (error) {
+                console.warn('Erro ao buscar ordem de aprovação:', error);
+              }
+              return ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+            })();
+            
+            const profileAtFinalLevel = approvalOrderForNext[finalLevel - 1];
+            
+            if (profileAtFinalLevel && requiredProfiles.includes(profileAtFinalLevel)) {
+              // Buscar TODOS os usuários com esse perfil, excluindo o atual
+              const { data: allUsersWithProfile } = await supabase
+                .from('user_profiles')
+                .select('user_id, email, perfil, nome')
+                .eq('perfil', profileAtFinalLevel)
+                .neq('user_id', user?.id)
+                .order('email')
+                .limit(1);
+              
+              if (allUsersWithProfile && allUsersWithProfile.length > 0) {
+                nextApprover = allUsersWithProfile[0];
+                console.log('✅ Próximo aprovador diferente encontrado:', nextApprover.email);
+              }
+            }
+          }
+        }
+        
         if (nextApprover) {
+          console.log('✅ Definindo próximo aprovador:', nextApprover.email);
+          console.log('✅ ID do próximo aprovador:', nextApprover.user_id);
+          
           // Criar notificação para o próximo aprovador
           try {
             await supabase.from('notifications').insert({
@@ -594,31 +1188,59 @@ export default function Approvals() {
               suggestion_id: suggestionId,
               type: 'pending',
               title: 'Nova Aprovação Pendente',
-              message: `Uma solicitação de preço aguarda sua aprovação (nível ${nextLevel})`
+              message: `Uma solicitação de preço aguarda sua aprovação (nível ${finalLevel})`
             });
           } catch (notifErr) {
             console.error('Erro ao criar notificação:', notifErr);
           }
+          
+          updateData.current_approver_id = nextApprover.user_id;
+          updateData.current_approver_name = nextApprover.email || nextApprover.nome || 'Aprovador';
+          console.log('✅ current_approver_name definido como:', updateData.current_approver_name);
+        } else {
+          // Se não encontrou aprovador específico, marcar como aguardando aprovação
+          // Mas ainda assim, atualizar o approval_level para avançar
+          updateData.current_approver_name = 'Aguardando aprovação';
+          updateData.current_approver_id = null;
+          console.warn('⚠️ Não encontrou próximo aprovador, mas approval_level será atualizado para', finalLevel);
+          console.warn('⚠️ current_approver_name será definido como "Aguardando aprovação"');
         }
       }
+      
+      console.log('📤 Atualizando sugestão com:', JSON.stringify(updateData, null, 2));
+      console.log('📤 ID da sugestão:', suggestionId);
+      console.log('📤 approval_level atual no banco:', currentLevel);
+      console.log('📤 approval_level que será definido:', finalLevel);
+      console.log('📤 Mudança de nível:', currentLevel, '→', finalLevel);
       
       // Atualizar com retry
       let updateError: any = null;
       let retries = 3;
+      let updatedData: any = null;
       
       while (retries > 0) {
         try {
-          const { error } = await supabase
+          console.log(`🔄 Tentativa ${4 - retries} de atualizar sugestão...`);
+          const { data, error } = await supabase
             .from('price_suggestions')
             .update(updateData)
-            .eq('id', suggestionId);
+            .eq('id', suggestionId)
+            .select('id, approval_level, current_approver_name, status, margin_cents');
           
-          if (!error) {
+          if (!error && data && data.length > 0) {
+            updatedData = data[0];
+            console.log('✅ Sugestão atualizada com sucesso!');
+            console.log('✅ Dados retornados:', JSON.stringify(updatedData, null, 2));
+            console.log('✅ approval_level após update:', updatedData.approval_level);
+            console.log('✅ current_approver_name após update:', updatedData.current_approver_name);
+            console.log('✅ status após update:', updatedData.status);
             break;
           }
           updateError = error;
+          console.error('❌ Erro ao atualizar:', error);
           retries--;
           if (retries > 0) {
+            console.log('⏳ Aguardando 1 segundo antes de tentar novamente...');
             await new Promise(resolve => setTimeout(resolve, 1000));
           }
         } catch (err: any) {
@@ -631,7 +1253,33 @@ export default function Approvals() {
         }
       }
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('❌ Erro final ao atualizar:', updateError);
+        throw updateError;
+      }
+      
+      // Verificar se realmente foi atualizado
+      if (updatedData) {
+        if (updatedData.approval_level !== finalLevel) {
+          console.error('❌ ERRO: approval_level não foi atualizado corretamente!');
+          console.error('❌ Esperado:', finalLevel, 'Mas recebeu:', updatedData.approval_level);
+        } else {
+          console.log('✅ Confirmação: approval_level foi atualizado corretamente para', finalLevel);
+        }
+        
+        // Verificar se current_approver_name foi atualizado
+        if (updateData.current_approver_name) {
+          if (updatedData.current_approver_name !== updateData.current_approver_name) {
+            console.error('❌ ERRO: current_approver_name não foi atualizado corretamente!');
+            console.error('❌ Esperado:', updateData.current_approver_name);
+            console.error('❌ Mas recebeu:', updatedData.current_approver_name);
+          } else {
+            console.log('✅ Confirmação: current_approver_name foi atualizado corretamente para', updatedData.current_approver_name);
+          }
+        } else {
+          console.warn('⚠️ current_approver_name não foi definido no updateData');
+        }
+      }
 
       console.log('✅ Aprovação concluída, criando notificação...');
 
@@ -665,11 +1313,16 @@ export default function Approvals() {
         // Não bloquear a aprovação se a notificação falhar
       }
 
-      toast.success(
-        isLastApprover 
-          ? "Sugestão aprovada com sucesso por todos os aprovadores!" 
-          : `Aprovação registrada! Aguardando próximo aprovador (nível ${finalLevel})`
-      );
+      // Mensagem de sucesso baseada no tipo de ação
+      if (approvalRule && requiredProfiles && requiredProfiles.length > 0 && !hasRequiredProfile) {
+        toast.success(`Observação adicionada! Passando para o próximo perfil (nível ${finalLevel})`);
+      } else {
+        toast.success(
+          newStatus === 'approved'
+            ? "Sugestão aprovada com sucesso por todos os aprovadores!" 
+            : `Aprovação registrada! Aguardando próximo aprovador (nível ${finalLevel})`
+        );
+      }
       setShowDetails(false);
       setSelectedSuggestion(null);
       loadSuggestions();

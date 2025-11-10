@@ -170,10 +170,11 @@ export default function PriceRequest() {
                (userEmail && (reqBy === userEmail || creBy === userEmail));
       }).slice(0, 50); // Limitar a 50 após filtrar
 
-      // Carregar postos e clientes para enriquecer dados
-      const [stationsRes, clientsRes] = await Promise.all([
+      // Carregar postos, clientes e usuários para enriquecer dados
+      const [stationsRes, clientsRes, usersRes] = await Promise.all([
         supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clientes' as any).select('id_cliente, nome')
+        supabase.from('clientes' as any).select('id_cliente, nome'),
+        supabase.from('user_profiles').select('user_id, email, nome')
       ]);
 
       // Enriquecer dados
@@ -196,10 +197,22 @@ export default function PriceRequest() {
           });
         }
 
+        // Buscar informações do usuário que criou a solicitação
+        let requestUser = null;
+        const reqBy = String(request.requested_by || request.created_by || '');
+        if (reqBy) {
+          requestUser = (usersRes.data as any)?.find((u: any) => {
+            const userId = String(u.user_id || '');
+            const userEmail = String(u.email || '');
+            return userId === reqBy || userEmail === reqBy;
+          });
+        }
+
         return {
           ...request,
           stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
-          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
+          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null,
+          requestUser: requestUser ? { name: requestUser.nome || requestUser.email, email: requestUser.email } : null
         };
       });
 
@@ -1065,8 +1078,25 @@ export default function PriceRequest() {
               .in('perfil', rule.required_profiles);
             
             if (allApprovers && allApprovers.length > 0) {
+              // Buscar ordem hierárquica do banco de dados
+              let approvalOrder: string[] = [];
+              try {
+                const { data: orderData, error: orderError } = await supabase
+                  .rpc('get_approval_profile_order');
+                
+                if (!orderError && orderData && Array.isArray(orderData)) {
+                  approvalOrder = orderData.map((item: any) => item.perfil).filter(Boolean);
+                }
+              } catch (error) {
+                console.warn('Erro ao buscar ordem de aprovação do banco, usando ordem padrão:', error);
+              }
+              
+              // Se não encontrou ordem no banco, usar ordem padrão
+              if (approvalOrder.length === 0) {
+                approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+              }
+              
               // Encontrar o índice do primeiro perfil requerido na ordem hierárquica
-              const approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
               const firstRequiredProfile = rule.required_profiles
                 .map((profile: string) => approvalOrder.indexOf(profile))
                 .filter((idx: number) => idx >= 0)
@@ -1187,16 +1217,17 @@ export default function PriceRequest() {
       setSaveAsDraft(isDraft);
       setSavedSuggestion(enrichedData);
       
-      // Recarregar lista de solicitações após salvar
-      if (activeTab === 'my-requests') {
-        loadMyRequests();
-      }
-      
       // Limpar formulário se não for rascunho
       if (!isDraft) {
         setFormData(initialFormData);
         setAttachments([]);
       }
+      
+      // Mudar para aba de minhas solicitações e recarregar
+      setActiveTab('my-requests');
+      setTimeout(() => {
+        loadMyRequests();
+      }, 500);
       
     } catch (error: any) {
       toast.error("Erro ao salvar solicitação: " + (error?.message || 'Erro desconhecido'));
@@ -1332,17 +1363,25 @@ export default function PriceRequest() {
                     setFormData(initialFormData);
                     setCalculatedPrice(0);
                     setMargin(0);
+                    setActiveTab('my-requests');
+                    loadMyRequests();
                   }}
                   className="flex-1"
                 >
-                  Nova Solicitação
+                  Ver Minhas Solicitações
                 </Button>
                 <Button
-                  onClick={() => navigate("/approvals")}
+                  onClick={() => {
+                    setSavedSuggestion(null);
+                    setFormData(initialFormData);
+                    setCalculatedPrice(0);
+                    setMargin(0);
+                    setActiveTab('new');
+                  }}
                   variant="outline"
                   className="flex-1"
                 >
-                  Ver Aprovações
+                  Nova Solicitação
                 </Button>
               </div>
             </CardContent>
@@ -2191,23 +2230,36 @@ export default function PriceRequest() {
                     <CardContent className="p-6">
                       <div className="flex items-center justify-between">
                         <div className="flex-1 gap-4">
-                          <div className="flex items-center gap-3 mb-2">
+                          <div className="flex items-center gap-3 mb-2 flex-wrap">
                             <span className="font-semibold text-slate-800 dark:text-slate-200">
                               {request.stations?.name || 'Posto'} - {request.clients?.name || 'Cliente'}
                             </span>
                             {request.status === 'pending' && (
-                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>
+                              <Badge variant="secondary" className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300">
+                                <Clock className="h-3 w-3 mr-1" />Pendente
+                              </Badge>
                             )}
                             {request.status === 'approved' && (
-                              <Badge className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>
+                              <Badge className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
+                                <Check className="h-3 w-3 mr-1" />Aprovado
+                              </Badge>
                             )}
                             {request.status === 'rejected' && (
-                              <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>
+                              <Badge variant="destructive">
+                                <X className="h-3 w-3 mr-1" />Rejeitado
+                              </Badge>
                             )}
                           </div>
-                          <p className="text-sm text-slate-600 dark:text-slate-400">
-                            Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
-                          </p>
+                          <div className="space-y-1">
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
+                              Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
+                            </p>
+                            {request.status === 'pending' && request.requestUser && (
+                              <p className="text-xs text-slate-500 dark:text-slate-400">
+                                Solicitado por: <span className="font-medium text-slate-700 dark:text-slate-300">{request.requestUser.name}</span>
+                              </p>
+                            )}
+                          </div>
                         </div>
                         <Button
                           variant="outline"
