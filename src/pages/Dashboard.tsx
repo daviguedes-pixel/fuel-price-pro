@@ -16,7 +16,6 @@ import {
   Settings
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import DashboardStats from "@/components/DashboardStats";
 
 const Dashboard = () => {
   const { profile } = useAuth();
@@ -101,9 +100,6 @@ const Dashboard = () => {
             Sistema de Gestão de Preços
           </p>
         </div>
-
-        {/* Stats */}
-        <DashboardStats />
 
         {/* Quick Actions Grid */}
         {quickActions.length > 0 && (
