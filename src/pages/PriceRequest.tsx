@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { CurrencyInput } from "@/components/ui/currency-input";
+import { DecimalInput } from "@/components/ui/decimal-input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -1552,14 +1554,11 @@ export default function PriceRequest() {
                       </svg>
                       Preço Atual <span className="text-red-500">*</span>
                     </Label>
-                    <Input
+                    <CurrencyInput
                       id="current_price"
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
+                      placeholder="0,00"
                       value={formData.current_price}
-                      onChange={(e) => handleInputChange("current_price", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("current_price", value.toString())}
                       className="h-11"
                     />
                   </div>
@@ -1572,14 +1571,11 @@ export default function PriceRequest() {
                       </svg>
                       Preço Sugerido <span className="text-red-500">*</span>
                     </Label>
-                    <Input
+                    <CurrencyInput
                       id="suggested_price"
-                      type="number"
-                      step="0.01"
-                      placeholder="0.00"
+                      placeholder="0,00"
                       value={formData.suggested_price}
-                      onChange={(e) => handleInputChange("suggested_price", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("suggested_price", value.toString())}
                       className="h-11"
                     />
                   </div>
@@ -1591,14 +1587,11 @@ export default function PriceRequest() {
                         <Label htmlFor="suggested_price_arla" className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2 block">
                           💰 Preço de VENDA do ARLA (R$/L)
                         </Label>
-                        <Input
+                        <CurrencyInput
                           id="suggested_price_arla"
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
+                          placeholder="0,00"
                           value={formData.suggested_price}
-                          onChange={(e) => handleInputChange("suggested_price", e.target.value)}
-                          onWheel={(e) => e.currentTarget.blur()}
+                          onChange={(value) => handleInputChange("suggested_price", value.toString())}
                           className="h-11 bg-white dark:bg-slate-800 text-lg font-semibold"
                         />
                         <p className="text-xs text-green-600 dark:text-green-400 mt-2">
@@ -1615,14 +1608,11 @@ export default function PriceRequest() {
                         <Label htmlFor="arla_purchase_price" className="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-2 block">
                           💧 Preço de VENDA do ARLA (R$/L)
                         </Label>
-                        <Input
+                        <CurrencyInput
                           id="arla_purchase_price"
-                          type="number"
-                          step="0.01"
-                          placeholder="0.00"
+                          placeholder="0,00"
                           value={formData.arla_purchase_price}
-                          onChange={(e) => handleInputChange("arla_purchase_price", e.target.value)}
-                          onWheel={(e) => e.currentTarget.blur()}
+                          onChange={(value) => handleInputChange("arla_purchase_price", value.toString())}
                           className="h-11 bg-white dark:bg-slate-800"
                         />
                         <p className="text-xs text-blue-600 dark:text-blue-400 mt-2">
@@ -1640,14 +1630,12 @@ export default function PriceRequest() {
                       </svg>
                       Volume Feito (m³)
                     </Label>
-                    <Input
+                    <DecimalInput
                       id="volume_made"
-                      type="number"
-                      step="1"
                       placeholder="0"
+                      decimals={0}
                       value={formData.volume_made}
-                      onChange={(e) => handleInputChange("volume_made", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("volume_made", value.toString())}
                       className="h-11"
                     />
                   </div>
@@ -1660,14 +1648,12 @@ export default function PriceRequest() {
                       </svg>
                       Volume Projetado (m³)
                     </Label>
-                    <Input
+                    <DecimalInput
                       id="volume_projected"
-                      type="number"
-                      step="1"
                       placeholder="0"
+                      decimals={0}
                       value={formData.volume_projected}
-                      onChange={(e) => handleInputChange("volume_projected", e.target.value)}
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("volume_projected", value.toString())}
                       className="h-11"
                     />
                   </div>
@@ -1746,15 +1732,12 @@ export default function PriceRequest() {
                       </svg>
                       Custo de Compra (R$/L) 🔒
                     </Label>
-                    <Input
+                    <CurrencyInput
                       id="purchase_cost"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
+                      placeholder="0,00"
                       value={formData.purchase_cost}
-                      readOnly
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("purchase_cost", value.toString())}
+                      disabled
                       className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                     />
                     {priceOrigin && (
@@ -1793,15 +1776,12 @@ export default function PriceRequest() {
                       </svg>
                       Frete (R$/L) 🔒
                     </Label>
-                    <Input
+                    <CurrencyInput
                       id="freight_cost"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
+                      placeholder="0,00"
                       value={formData.freight_cost}
-                      readOnly
-                      onWheel={(e) => e.currentTarget.blur()}
+                      onChange={(value) => handleInputChange("freight_cost", value.toString())}
+                      disabled
                       className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                     />
                     <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -1816,15 +1796,12 @@ export default function PriceRequest() {
                         <Label htmlFor="arla_cost_price" className="text-sm font-semibold text-blue-700 dark:text-blue-300 mb-2 block">
                           💧 Custo de Compra do ARLA (R$/L) 🔒
                         </Label>
-                        <Input
+                        <CurrencyInput
                           id="arla_cost_price"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="0.00"
+                          placeholder="0,00"
                           value={formData.arla_cost_price}
-                          readOnly
-                          onWheel={(e) => e.currentTarget.blur()}
+                          onChange={(value) => handleInputChange("arla_cost_price", value.toString())}
+                          disabled
                           className="bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                         />
                         <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
