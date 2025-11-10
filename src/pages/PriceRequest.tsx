@@ -82,6 +82,7 @@ export default function PriceRequest() {
           const methods = await getPaymentMethodsForStation(formData.station_id);
           setStationPaymentMethods(methods);
         } catch (error) {
+          console.error('Erro ao carregar tipos de pagamento do posto:', error);
           setStationPaymentMethods([]);
         }
       } else {
@@ -144,10 +145,12 @@ export default function PriceRequest() {
 
   const loadMyRequests = async () => {
     if (!user) {
+      console.log('⚠️ Usuário não encontrado no loadMyRequests');
       return;
     }
 
     try {
+      console.log('📋 Carregando minhas solicitações no PriceRequest...');
       const userId = String(user.id);
       const userEmail = user.email ? String(user.email) : null;
       
@@ -159,6 +162,7 @@ export default function PriceRequest() {
         .limit(1000);
       
       if (allError) {
+        console.error('❌ Erro ao buscar solicitações:', allError);
         throw allError;
       }
       
@@ -170,11 +174,10 @@ export default function PriceRequest() {
                (userEmail && (reqBy === userEmail || creBy === userEmail));
       }).slice(0, 50); // Limitar a 50 após filtrar
 
-      // Carregar postos, clientes e usuários para enriquecer dados
-      const [stationsRes, clientsRes, usersRes] = await Promise.all([
+      // Carregar postos e clientes para enriquecer dados
+      const [stationsRes, clientsRes] = await Promise.all([
         supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clientes' as any).select('id_cliente, nome'),
-        supabase.from('user_profiles').select('user_id, email, nome')
+        supabase.from('clientes' as any).select('id_cliente, nome')
       ]);
 
       // Enriquecer dados
@@ -197,27 +200,17 @@ export default function PriceRequest() {
           });
         }
 
-        // Buscar informações do usuário que criou a solicitação
-        let requestUser = null;
-        const reqBy = String(request.requested_by || request.created_by || '');
-        if (reqBy) {
-          requestUser = (usersRes.data as any)?.find((u: any) => {
-            const userId = String(u.user_id || '');
-            const userEmail = String(u.email || '');
-            return userId === reqBy || userEmail === reqBy;
-          });
-        }
-
         return {
           ...request,
           stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
-          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null,
-          requestUser: requestUser ? { name: requestUser.nome || requestUser.email, email: requestUser.email } : null
+          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
         };
       });
 
       setMyRequests(enrichedData);
+      console.log('✅ Solicitações carregadas:', enrichedData.length);
     } catch (error: any) {
+      console.error('❌ Erro ao carregar minhas solicitações:', error);
       toast.error("Erro ao carregar solicitações: " + (error?.message || 'Erro desconhecido'));
       setMyRequests([]);
     }
@@ -268,6 +261,7 @@ export default function PriceRequest() {
         // Get the posto_id from the selected station
         const selectedStation = stations.find(s => s.id === formData.station_id);
         if (!selectedStation) {
+          console.log('⚠️ Estação não encontrada');
           return;
         }
         
@@ -327,13 +321,11 @@ export default function PriceRequest() {
         let resultError: any = null;
         if (!resultData) {
           try {
-            // Usar o cliente Supabase diretamente com o schema cotacao
-            const cot = supabase;
-            
+            const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
             if (cot) {
               // 1) IDs do produto (ex.: S10)
               const { data: gci } = await cot
-                .from('grupo_codigo_item' as any)
+                .from('grupo_codigo_item')
                 .select('id_grupo_codigo_item,nome,descricao')
                 .ilike('nome', `%${produtoBusca}%`)
                 .limit(20);
@@ -342,20 +334,22 @@ export default function PriceRequest() {
               if (ids.length > 0) {
                 // 2) Última data disponível
                 const { data: maxRows } = await cot
-                  .from('cotacao_geral_combustivel' as any)
+                  .from('cotacao_geral_combustivel')
                   .select('data_cotacao')
                   .in('id_grupo_codigo_item', ids)
                   .order('data_cotacao', { ascending: false })
                   .limit(1);
-                const lastDateStr = (maxRows as any[])?.[0]?.data_cotacao as string | undefined;
+                const lastDateStr = maxRows?.[0]?.data_cotacao as string | undefined;
+                console.log('🗓️ Última data geral:', lastDateStr);
 
                 // 3) Resolver id_empresa do posto
                 const { data: emp } = await cot
-                  .from('sis_empresa' as any)
+                  .from('sis_empresa')
                   .select('id_empresa,nome_empresa,cnpj_cpf')
                   .ilike('nome_empresa', `%${selectedStation.name}%`)
                   .limit(1);
                 const idEmpresa = (emp as any[])?.[0]?.id_empresa as number | undefined;
+                console.log('🏢 Empresa resolvida:', { idEmpresa, nome: (emp as any[])?.[0]?.nome_empresa });
 
                 if (lastDateStr) {
                   const start = new Date(lastDateStr);
@@ -366,7 +360,7 @@ export default function PriceRequest() {
 
                   // 4) Cotações do dia mais recente para o produto
                   const { data: cg } = await cot
-                    .from('cotacao_geral_combustivel' as any)
+                    .from('cotacao_geral_combustivel')
                     .select('id_base_fornecedor,valor_unitario,desconto_valor,forma_entrega,data_cotacao')
                     .in('id_grupo_codigo_item', ids)
                     .gte('data_cotacao', startIso)
@@ -378,7 +372,7 @@ export default function PriceRequest() {
                   let freteMap = new Map<number, number>();
                   if (idEmpresa && baseIds.length > 0) {
                     const { data: fretes } = await cot
-                      .from('frete_empresa' as any)
+                      .from('frete_empresa')
                       .select('id_base_fornecedor,frete_real,frete_atual,registro_ativo')
                       .eq('id_empresa', idEmpresa)
                       .in('id_base_fornecedor', baseIds)
@@ -391,53 +385,21 @@ export default function PriceRequest() {
                   // 6) Info de base com bandeira
                   let baseInfo = new Map<number, { nome: string; codigo: string; uf: string; bandeira?: string }>();
                   if (baseIds.length > 0) {
-                    console.log('🔍 Buscando base_fornecedor para IDs:', baseIds);
-                    
-                    // Tentar buscar com schema cotacao explicitamente
-                    const { data: bases, error: baseError } = await supabase
-                      .from('cotacao.base_fornecedor' as any)
+                    const { data: bases } = await cot
+                      .from('base_fornecedor')
                       .select('id_base_fornecedor,nome,codigo_base,uf,bandeira')
                       .in('id_base_fornecedor', baseIds);
                     
-                    if (baseError) {
-                      console.error('❌ Erro (tentativa 1):', baseError);
-                      
-                      // Tentar sem o schema prefixado
-                      const { data: bases2, error: baseError2 } = await supabase
-                        .from('base_fornecedor' as any)
-                        .select('id_base_fornecedor,nome,codigo_base,uf,bandeira')
-                        .in('id_base_fornecedor', baseIds);
-                      
-                      if (baseError2) {
-                        console.error('❌ Erro (tentativa 2):', baseError2);
-                      } else {
-                        console.log('✅ Bases encontradas:', bases2);
-                        (bases2 as any[])?.forEach((b: any) => {
-                          baseInfo.set(b.id_base_fornecedor, { 
-                            nome: b.nome, 
-                            codigo: b.codigo_base, 
-                            uf: String(b.uf || ''),
-                            bandeira: b.bandeira || null
-                          });
-                        });
-                      }
-                    } else {
-                      console.log('✅ Bases encontradas:', bases);
-                    (bases as any[])?.forEach((b: any) => {
-                        baseInfo.set(b.id_base_fornecedor, { 
-                          nome: b.nome, 
-                          codigo: b.codigo_base, 
-                          uf: String(b.uf || ''),
-                          bandeira: b.bandeira || null
-                        });
-                      });
-                    }
+                    console.log('🏢 Bases encontradas:', bases);
                     
-                    console.log('📋 baseInfo final:', Array.from(baseInfo.entries()).map(([id, info]) => ({
-                      id,
-                      nome: info.nome,
-                      bandeira: info.bandeira
-                    })));
+                    (bases as any[])?.forEach((b: any) => {
+                      baseInfo.set(b.id_base_fornecedor, { 
+                        nome: b.nome, 
+                        codigo: b.codigo_base, 
+                        uf: String(b.uf || ''),
+                        bandeira: b.bandeira || null
+                      });
+                    });
                   }
                   
                   // Função para extrair bandeira do nome se não vier da tabela
@@ -479,16 +441,13 @@ export default function PriceRequest() {
                     const frete = row.forma_entrega === 'FOB' ? (freteMap.get(row.id_base_fornecedor) || 0) : 0;
                     const total = custo + frete;
                     const info = baseInfo.get(row.id_base_fornecedor) || { nome: 'Base', codigo: String(row.id_base_fornecedor), uf: '' };
-                    
-                    const bandeiraExtraida = extractBandeira(info.nome, info.bandeira);
-                    
                     if (!best || total < best.custo_total) {
                       best = {
                         base_codigo: info.codigo,
                         base_id: String(row.id_base_fornecedor),
                         base_nome: info.nome,
                         base_uf: info.uf,
-                        base_bandeira: bandeiraExtraida,
+                        base_bandeira: extractBandeira(info.nome, info.bandeira),
                         custo,
                         frete,
                         custo_total: total,
@@ -500,12 +459,13 @@ export default function PriceRequest() {
 
                   if (best) {
                     resultData = [best];
+                    console.log('✅ Fallback cotacao encontrou melhor custo:', best);
                   }
                 }
               }
             }
           } catch (e) {
-            // Erro silencioso
+            console.log('⚠️ Erro no fallback cotacao:', (e as any)?.message || e);
           }
         }
 
@@ -538,7 +498,10 @@ export default function PriceRequest() {
         const data = resultData;
         const error = null;
 
+        console.log('📊 Resposta da função (com fallback):', { data, error });
+
         if (error) {
+          console.error('❌ Erro ao buscar menor custo:', error);
           toast.error(`Erro ao buscar cotação: ${error.message || error}`);
           setFetchStatus({ type: 'error', message: String(error.message || error) });
           return;
@@ -546,10 +509,13 @@ export default function PriceRequest() {
 
         if (data && Array.isArray(data) && data.length > 0) {
           const result = data[0];
+          console.log('✅ Resultado encontrado:', result);
           
           const custo = Number(result.custo || 0);
           const frete = Number(result.frete || 0);
           const custoTotal = Number(result.custo_total || 0);
+          
+          console.log('💰 Valores convertidos:', { custo, frete, custoTotal });
           
           if (custoTotal > 0) {
             setFormData(prev => ({
@@ -579,6 +545,7 @@ export default function PriceRequest() {
             
             // Se for S10, buscar também o preço do ARLA
             if (formData.product === 's10') {
+              console.log('🔍 Produto S10 detectado, buscando preço do ARLA...');
               try {
                 let arlaData: any[] | null = null;
                 
@@ -593,12 +560,14 @@ export default function PriceRequest() {
                   
                   if (!e && d && Array.isArray(d) && d.length > 0) {
                     arlaData = d;
+                    console.log('✅ ARLA encontrado via RPC:', arlaData);
                     break;
                   }
                 }
                 
                 // Fallback: buscar direto na tabela cotacao_arla via id_empresa
                 if (!arlaData) {
+                  console.log('🔄 Fallback: buscando ARLA direto na tabela cotacao.cotacao_arla...');
                   try {
                     // Primeiro, resolver id_empresa
                     let resolvedIdEmpresa: number | null = null;
@@ -627,16 +596,19 @@ export default function PriceRequest() {
                             custo: Number(arlaRows[0].valor_unitario || 0),
                             data_referencia: arlaRows[0].data_cotacao
                           }];
+                          console.log('✅ ARLA encontrado via fallback cotacao_arla:', arlaData);
                         }
                       }
                     }
                   } catch (fallbackErr) {
+                    console.error('⚠️ Erro no fallback cotacao_arla:', fallbackErr);
                   }
                 }
                 
                 if (arlaData && arlaData.length > 0) {
                   const arlaResult = arlaData[0];
                   const arlaCusto = Number(arlaResult.custo || 0);
+                  console.log('✅ Preço do ARLA encontrado:', arlaCusto);
                   
                   if (arlaCusto > 0) {
                     setFormData(prev => ({
@@ -647,18 +619,23 @@ export default function PriceRequest() {
                     // toast.success(`Preço do ARLA encontrado: R$ ${arlaCusto.toFixed(4)}`);
                   }
                 } else {
+                  console.log('⚠️ Preço do ARLA não encontrado');
                 }
               } catch (arlaErr) {
+                console.error('⚠️ Erro ao buscar preço do ARLA:', arlaErr);
               }
             }
           } else {
+            console.log('⚠️ Custo total é zero ou negativo');
             setFetchStatus({ type: 'none' });
           }
         } else {
+          console.log('⚠️ Nenhum custo encontrado para os parâmetros fornecidos');
           setPriceOrigin(null);
           setFetchStatus({ type: 'none' });
         }
       } catch (error) {
+        console.error('❌ Erro inesperado ao buscar menor custo:', error);
         setFetchStatus({ type: 'none' });
         // Silent fail - just don't auto-fill
       }
@@ -671,12 +648,14 @@ export default function PriceRequest() {
 
   const loadReferences = async () => {
     try {
+      console.log('Carregando referências...');
       const { data, error } = await supabase
         .from('referencias' as any)
         .select('*' as any)
         .order('created_at', { ascending: false });
 
       if (error) {
+        console.log('Erro ao carregar referências:', error.message);
         // Tentar carregar da tabela price_suggestions como fallback
         const { data: fallbackData, error: fallbackError } = await supabase
           .from('price_suggestions')
@@ -690,6 +669,7 @@ export default function PriceRequest() {
           .order('created_at', { ascending: false });
 
         if (fallbackError) {
+          console.log('Erro no fallback também:', fallbackError.message);
           setReferences([]);
           return;
         }
@@ -711,25 +691,33 @@ export default function PriceRequest() {
           payment_methods: Array.isArray(suggestion.payment_methods) ? suggestion.payment_methods[0] : suggestion.payment_methods,
         })) || [];
 
+        console.log('Referências carregadas do fallback:', convertedReferences.length);
         setReferences(convertedReferences);
         return;
       }
 
+      console.log('Referências carregadas:', data?.length || 0);
       setReferences(data as any[] || []);
     } catch (error) {
+      console.error('Erro ao carregar referências:', error);
       setReferences([]);
     }
   };
 
   const handleInputChange = async (field: string, value: any) => {
+    console.log('📝 handleInputChange:', { field, value });
     setFormData(prev => ({ ...prev, [field]: value }));
 
     // Se mudou o posto, carregar métodos de pagamento dele
     if (field === 'station_id') {
+      console.log('🚀 station_id mudou, carregando métodos de pagamento...');
       if (value && value !== 'none' && value !== '') {
+        console.log('🔍 Chamando getPaymentMethodsForStation com:', value);
         const methods = await getPaymentMethodsForStation(value);
+        console.log('📋 Métodos retornados:', methods);
         setStationPaymentMethods(methods);
       } else {
+        console.log('⚠️ station_id vazio ou none, limpando métodos');
         setStationPaymentMethods([]);
       }
     }
@@ -740,6 +728,9 @@ export default function PriceRequest() {
       const suggestedPrice = parseFloat(formData.suggested_price);
       const currentPrice = parseFloat(formData.current_price);
       
+      console.log('=== CALCULANDO MARGENS ===');
+      console.log('suggestedPrice:', suggestedPrice);
+      console.log('currentPrice:', currentPrice);
 
       // 1) Aumento vs Preço Atual (em centavos)
       if (!isNaN(suggestedPrice) && !isNaN(currentPrice) && currentPrice > 0) {
@@ -779,11 +770,14 @@ export default function PriceRequest() {
         const marginCents = Math.round((suggestedPrice - finalCost) * 100);
         setCalculatedPrice(suggestedPrice);
         setMargin(marginCents);
+        console.log('✅ Margem (sugerido - custo final):', marginCents, 'centavos');
       } else {
         setCalculatedPrice(0);
         setMargin(0);
+        console.log('❌ Sem preço sugerido válido');
       }
     } catch (error) {
+      console.error('❌ Erro ao calcular margem:', error);
       setCalculatedPrice(0);
       setMargin(0);
     }
@@ -840,18 +834,30 @@ export default function PriceRequest() {
       // Lucro bruto = receita - custo
       const grossProfit = totalRevenue - totalCost;
       
-      setCostCalculations({
-        finalCost,
-        totalRevenue,
-        totalCost,
-        grossProfit,
-        profitPerLiter: grossProfit / volumeProjectedLiters,
-        arlaCompensation: 0,
-        netResult: grossProfit
+      console.log('🛢️ Cálculo Lucro Diesel:', {
+        volumeProjetadoM3: volumeProjected,
+        volumeProjetadoLitros: volumeProjectedLiters,
+        compraPorL: purchaseCost,
+        fretePorL: freightCost,
+        baseCostPorL: baseCost,
+        taxaPercentual: feePercentage,
+        custoFinalPorL: finalCost,
+        precoSugerido: suggestedPrice,
+        receitaTotal: totalRevenue,
+        custoTotal: totalCost,
+        lucroBruto: grossProfit,
+        lucroPorLitro: grossProfit / volumeProjectedLiters
       });
       
       // Verificação manual
       const expectedLucro = (suggestedPrice - finalCost) * volumeProjectedLiters;
+      console.log('✅ Verificação:', {
+        'Preço - Custo por L': (suggestedPrice - finalCost).toFixed(4),
+        '× Volume (L)': volumeProjectedLiters,
+        '= Lucro Esperado': expectedLucro,
+        'Lucro Calculado': grossProfit,
+        'Diferença': Math.abs(expectedLucro - grossProfit)
+      });
       
       // Lucro por litro
       const profitPerLiter = volumeProjectedLiters > 0 ? grossProfit / volumeProjectedLiters : 0;
@@ -868,6 +874,14 @@ export default function PriceRequest() {
         // Volume de ARLA é 5% do volume de diesel (já em litros)
         // arlaVolume já está em litros (volumeProjectedLiters * 0.05)
         arlaCompensation = arlaVolume * arlaMargin;
+        console.log('🔍 Cálculo ARLA S10:', {
+          volumeDieselLitros: volumeProjectedLiters,
+          volumeARLALitros: arlaVolume,
+          arlaPurchasePrice: formData.arla_purchase_price,
+          arlaCostPrice: formData.arla_cost_price,
+          arlaMargin,
+          arlaCompensation
+        });
       } else if (formData.product === 'arla32_granel') {
         // Para ARLA: margem = preço sugerido - preço de compra
         const arlaMargin = suggestedPrice - parseFloat(formData.arla_cost_price);
@@ -887,6 +901,7 @@ export default function PriceRequest() {
         netResult
       });
     } catch (error) {
+      console.error('Erro ao calcular custos:', error);
       setCostCalculations({
         finalCost: 0,
         totalRevenue: 0,
@@ -948,9 +963,12 @@ export default function PriceRequest() {
   const getFilteredReferences = () => {
     try {
       if (!Array.isArray(references)) {
+        console.log('References não é um array:', references);
         return [];
       }
       
+      console.log('Total de referências:', references.length);
+      console.log('Filtros:', { station_id: formData.station_id, client_id: formData.client_id, product: formData.product });
       
       const filtered = references.filter(ref => {
         if (!ref) return false;
@@ -961,8 +979,10 @@ export default function PriceRequest() {
         );
       });
       
+      console.log('Referências filtradas:', filtered.length);
       return filtered;
     } catch (error) {
+      console.error('Error filtering references:', error);
       return [];
     }
   };
@@ -1007,6 +1027,13 @@ export default function PriceRequest() {
       const suggestedPrice = isNaN(suggestedPriceNum) ? null : suggestedPriceNum;
       const costPrice = purchaseCostNum + freightCostNum;
       
+      console.log('💰 Valores de preço:', {
+        final_price: finalPrice,
+        current_price: currentPrice,
+        suggested_price: suggestedPrice,
+        cost_price: costPrice
+      });
+      
       // Como as colunas foram alteradas para TEXT, podemos salvar qualquer ID
       const stationIdToSave = (!formData.station_id || formData.station_id === 'none') 
         ? null 
@@ -1023,6 +1050,19 @@ export default function PriceRequest() {
       const paymentMethodIdToSave = (!formData.payment_method_id || formData.payment_method_id === 'none')
         ? null
         : String(formData.payment_method_id);
+      
+      console.log('📝 IDs DO FORMULÁRIO:', {
+        station_id_form: formData.station_id,
+        client_id_form: formData.client_id,
+        reference_id_form: formData.reference_id,
+        payment_method_id_form: formData.payment_method_id
+      });
+      console.log('📝 IDs VALIDADOS PARA SALVAR:', {
+        station_id: stationIdToSave,
+        client_id: clientIdToSave,
+        reference_id: referenceIdToSave,
+        payment_method_id: paymentMethodIdToSave
+      });
       
       const requestData = {
         station_id: stationIdToSave,
@@ -1078,28 +1118,8 @@ export default function PriceRequest() {
               .in('perfil', rule.required_profiles);
             
             if (allApprovers && allApprovers.length > 0) {
-              // Ordem padrão de aprovação (função RPC desabilitada)
-              let approvalOrder: string[] = [
-                'analista_pricing',
-                'supervisor_comercial',
-                'gerente_comercial',
-                'diretor_pricing',
-                'diretor_comercial'
-              ];
-              
-              try {
-                // Função RPC desabilitada - usando ordem padrão
-                // const { data: orderData, error: orderError } = await supabase.rpc('get_approval_profile_order');
-              } catch (error) {
-                console.warn('Erro ao buscar ordem de aprovação do banco, usando ordem padrão:', error);
-              }
-              
-              // Se não encontrou ordem no banco, usar ordem padrão
-              if (approvalOrder.length === 0) {
-                approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
-              }
-              
               // Encontrar o índice do primeiro perfil requerido na ordem hierárquica
+              const approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
               const firstRequiredProfile = rule.required_profiles
                 .map((profile: string) => approvalOrder.indexOf(profile))
                 .filter((idx: number) => idx >= 0)
@@ -1108,11 +1128,15 @@ export default function PriceRequest() {
               if (firstRequiredProfile !== undefined) {
                 finalApprovalLevel = firstRequiredProfile + 1; // approval_level é 1-indexed
                 finalTotalApprovers = allApprovers.length;
+                console.log('📋 Regra de aprovação aplicada:', rule);
+                console.log('📋 Approval level ajustado para:', finalApprovalLevel);
+                console.log('📋 Total de aprovadores:', finalTotalApprovers);
               }
             }
           }
         }
       } catch (error) {
+        console.error('Erro ao buscar regra de aprovação:', error);
         // Continuar com valores padrão se houver erro
       }
       
@@ -1120,6 +1144,8 @@ export default function PriceRequest() {
       requestData.approval_level = finalApprovalLevel;
       requestData.total_approvers = finalTotalApprovers;
 
+      console.log('🔍 Dados a serem inseridos:', requestData);
+      console.log('📝 isDraft:', isDraft, 'status:', isDraft ? 'draft' : 'pending');
       
       const { data, error } = await supabase
         .from('price_suggestions')
@@ -1128,6 +1154,12 @@ export default function PriceRequest() {
         .single();
 
       if (error) {
+        console.error('❌ Erro completo:', error);
+        console.error('❌ Código do erro:', error.code);
+        console.error('❌ Detalhes do erro:', error.details);
+        console.error('❌ Mensagem:', error.message);
+        console.error('❌ Hint:', (error as any).hint);
+        console.error('❌ Dados tentados:', requestData);
         
         // Verificar se é erro de RLS
         if (error.code === '42501' || error.message?.includes('permission') || error.message?.includes('policy')) {
@@ -1146,6 +1178,10 @@ export default function PriceRequest() {
       let stationData = null;
       let clientData = null;
       
+      console.log('🔍 Buscando dados do posto e cliente...');
+      console.log('station_id:', stationIdToSave, 'client_id:', clientIdToSave);
+      console.log('stations disponíveis:', stations.length);
+      console.log('clients disponíveis:', clients.length);
       
       // Buscar posto - tentar vários campos
       if (stationIdToSave) {
@@ -1159,6 +1195,7 @@ export default function PriceRequest() {
           
           if (!cnpjError && seByCnpj) {
             stationData = { name: (seByCnpj as any).nome_empresa, code: (seByCnpj as any).cnpj_cpf };
+            console.log('✅ Posto encontrado por CNPJ:', stationData.name);
           } else {
             // Tentar como UUID direto
             const { data: seById, error: idError } = await supabase
@@ -1169,16 +1206,21 @@ export default function PriceRequest() {
             
             if (!idError && seById) {
               stationData = { name: (seById as any).nome_empresa, code: (seById as any).cnpj_cpf || stationIdToSave };
+              console.log('✅ Posto encontrado por ID:', stationData.name);
             } else {
               // Buscar da lista de stations que já temos carregada
               const foundStation = stations.find(s => s.id === stationIdToSave || s.code === stationIdToSave);
               if (foundStation) {
                 stationData = { name: foundStation.name, code: foundStation.code || foundStation.id };
+                console.log('✅ Posto encontrado na lista:', stationData.name);
               } else {
+                console.warn('⚠️ Posto não encontrado para:', stationIdToSave);
+                console.warn('IDs disponíveis:', stations.map(s => ({ id: s.id, code: s.code })));
               }
             }
           }
         } catch (err) {
+          console.error('Erro ao buscar dados do posto:', err);
         }
       }
       
@@ -1193,15 +1235,20 @@ export default function PriceRequest() {
           
           if (!clientError && client) {
             clientData = { name: (client as any).nome, code: String((client as any).id_cliente) };
+            console.log('✅ Cliente encontrado:', clientData.name);
           } else {
             // Buscar da lista de clients que já temos carregada
             const foundClient = clients.find(c => c.id === clientIdToSave || c.code === clientIdToSave);
             if (foundClient) {
               clientData = { name: foundClient.name, code: foundClient.code || foundClient.id };
+              console.log('✅ Cliente encontrado na lista:', clientData.name);
             } else {
+              console.warn('⚠️ Cliente não encontrado para:', clientIdToSave);
+              console.warn('IDs disponíveis:', clients.map(c => ({ id: c.id, code: c.code })));
             }
           }
         } catch (err) {
+          console.error('Erro ao buscar dados do cliente:', err);
         }
       }
 
@@ -1215,10 +1262,16 @@ export default function PriceRequest() {
         }) || paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id) || null
       };
       
+      console.log('📊 Dados enriquecidos:', enrichedData);
 
       toast.success(isDraft ? "Rascunho salvo com sucesso!" : "Solicitação enviada para aprovação!");
       setSaveAsDraft(isDraft);
       setSavedSuggestion(enrichedData);
+      
+      // Recarregar lista de solicitações após salvar
+      if (activeTab === 'my-requests') {
+        loadMyRequests();
+      }
       
       // Limpar formulário se não for rascunho
       if (!isDraft) {
@@ -1226,13 +1279,8 @@ export default function PriceRequest() {
         setAttachments([]);
       }
       
-      // Mudar para aba de minhas solicitações e recarregar
-      setActiveTab('my-requests');
-      setTimeout(() => {
-        loadMyRequests();
-      }, 500);
-      
     } catch (error: any) {
+      console.error('❌ Erro ao salvar solicitação:', error);
       toast.error("Erro ao salvar solicitação: " + (error?.message || 'Erro desconhecido'));
     } finally {
       setLoading(false);
@@ -1366,25 +1414,17 @@ export default function PriceRequest() {
                     setFormData(initialFormData);
                     setCalculatedPrice(0);
                     setMargin(0);
-                    setActiveTab('my-requests');
-                    loadMyRequests();
                   }}
-                  className="flex-1"
-                >
-                  Ver Minhas Solicitações
-                </Button>
-                <Button
-                  onClick={() => {
-                    setSavedSuggestion(null);
-                    setFormData(initialFormData);
-                    setCalculatedPrice(0);
-                    setMargin(0);
-                    setActiveTab('new');
-                  }}
-                  variant="outline"
                   className="flex-1"
                 >
                   Nova Solicitação
+                </Button>
+                <Button
+                  onClick={() => navigate("/approvals")}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Ver Aprovações
                 </Button>
               </div>
             </CardContent>
@@ -1425,13 +1465,13 @@ export default function PriceRequest() {
           </h2>
           <div className="flex gap-3">
             {activeTab === 'my-requests' && (
-          <Button
-            onClick={() => setActiveTab('new')}
-            className="flex items-center gap-2"
-          >
-            <DollarSign className="h-4 w-4" />
-            Nova Solicitação
-          </Button>
+              <Button
+                onClick={() => setActiveTab('new')}
+                className="flex items-center gap-2"
+              >
+                <DollarSign className="h-4 w-4" />
+                Nova Solicitação
+              </Button>
             )}
             {activeTab === 'new' && (
               <Button
@@ -1439,8 +1479,8 @@ export default function PriceRequest() {
                 variant="outline"
                 className="flex items-center gap-2"
               >
-              <FileText className="h-4 w-4" />
-              Minhas Solicitações
+                <FileText className="h-4 w-4" />
+                Minhas Solicitações
               </Button>
             )}
           </div>
@@ -1478,6 +1518,7 @@ export default function PriceRequest() {
                     label="Posto"
                     value={formData.station_id}
                     onSelect={async (stationId, stationName) => {
+                      console.log('🎯 SisEmpresaCombobox onSelect:', { stationId, stationName });
                       await handleInputChange("station_id", stationId);
                     }}
                     required={true}
@@ -1540,9 +1581,9 @@ export default function PriceRequest() {
                             </SelectItem>
                           );
                         })}
-                    </SelectContent>
-                  </Select>
-                </div>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
                   {/* Preço Atual */}
                   <div className="space-y-2">
@@ -1873,7 +1914,7 @@ export default function PriceRequest() {
                   <div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
                       Ajuste
-              </CardTitle>
+                    </CardTitle>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Visualize os valores calculados</p>
                   </div>
                 </div>
@@ -1953,10 +1994,10 @@ export default function PriceRequest() {
                               const adjustment = suggested - current;
                               return adjustment >= 0 ? 'Ajuste positivo' : 'Ajuste negativo';
                             })()}
-                      </span>
-                    </div>
-                    </div>
-                  )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                 </>
               ) : (
                 <p className="text-xs text-slate-500 dark:text-slate-400 text-center py-3">
@@ -1976,8 +2017,8 @@ export default function PriceRequest() {
                   </div>
                   <div>
                     <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  Análise de Custos
-                </CardTitle>
+                      Análise de Custos
+                    </CardTitle>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Cálculos detalhados de rentabilidade</p>
                   </div>
                 </div>
@@ -2149,7 +2190,7 @@ export default function PriceRequest() {
                       Origem do Custo
                     </CardTitle>
                   </div>
-                  </div>
+                </div>
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="space-y-2.5">
@@ -2233,36 +2274,23 @@ export default function PriceRequest() {
                     <CardContent className="p-6">
                       <div className="flex items-center justify-between">
                         <div className="flex-1 gap-4">
-                          <div className="flex items-center gap-3 mb-2 flex-wrap">
+                          <div className="flex items-center gap-3 mb-2">
                             <span className="font-semibold text-slate-800 dark:text-slate-200">
                               {request.stations?.name || 'Posto'} - {request.clients?.name || 'Cliente'}
                             </span>
                             {request.status === 'pending' && (
-                              <Badge variant="secondary" className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300">
-                                <Clock className="h-3 w-3 mr-1" />Pendente
-                              </Badge>
+                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>
                             )}
                             {request.status === 'approved' && (
-                              <Badge className="bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300">
-                                <Check className="h-3 w-3 mr-1" />Aprovado
-                              </Badge>
+                              <Badge className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>
                             )}
                             {request.status === 'rejected' && (
-                              <Badge variant="destructive">
-                                <X className="h-3 w-3 mr-1" />Rejeitado
-                              </Badge>
+                              <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>
                             )}
                           </div>
-                          <div className="space-y-1">
-                            <p className="text-sm text-slate-600 dark:text-slate-400">
-                              Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
-                            </p>
-                            {request.status === 'pending' && request.requestUser && (
-                              <p className="text-xs text-slate-500 dark:text-slate-400">
-                                Solicitado por: <span className="font-medium text-slate-700 dark:text-slate-300">{request.requestUser.name}</span>
-                              </p>
-                            )}
-                          </div>
+                          <p className="text-sm text-slate-600 dark:text-slate-400">
+                            Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
+                          </p>
                         </div>
                         <Button
                           variant="outline"

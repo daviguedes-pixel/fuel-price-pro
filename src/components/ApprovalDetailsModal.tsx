@@ -332,18 +332,13 @@ export const ApprovalDetailsModal = ({
                 </div>
               </div>
               
-              {/* Informações de Aprovação - Sempre mostrar quando está pendente */}
-              {dataToShow.status === 'pending' && (
+              {/* Informações de Aprovação */}
+              {(dataToShow.current_approver_name || dataToShow.current_approver_id) && (
                 <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600">
                   <h4 className="font-medium text-sm text-muted-foreground">Em aprovação com</h4>
                   <p className="font-medium text-lg text-orange-600">
-                    {dataToShow.current_approver_name || dataToShow.current_approver_id || 'Aguardando aprovação'}
+                    {dataToShow.current_approver_name || dataToShow.current_approver_id || 'N/A'}
                   </p>
-                  {dataToShow.requires_directors_only && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Margem baixa - requer aprovação de diretores
-                    </p>
-                  )}
                 </div>
               )}
             </CardContent>
@@ -909,9 +904,7 @@ export const ApprovalDetailsModal = ({
                       Observações (obrigatório)
                     </Label>
                     <p className="text-sm text-muted-foreground mb-2">
-                      {dataToShow.requires_directors_only 
-                        ? "Você pode adicionar observações. A aprovação requer diretores (diretor comercial e diretor pricing)."
-                        : "Deixe sua observação para o próximo aprovador ou para o solicitante"}
+                      Deixe sua observação para o próximo aprovador ou para o solicitante
                     </p>
                     <Textarea
                       id="observations"
@@ -933,7 +926,7 @@ export const ApprovalDetailsModal = ({
                       size="lg"
                     >
                       <Check className="h-5 w-5 mr-2" />
-                      {dataToShow.requires_directors_only ? "Adicionar Observação / Aprovar" : "Aprovar"}
+                      Aprovar
                     </Button>
                     <Button
                       onClick={handleReject}
@@ -949,13 +942,7 @@ export const ApprovalDetailsModal = ({
                   
                   {!observations.trim() && (
                     <p className="text-sm text-amber-600 text-center">
-                      Por favor, adicione uma observação antes de continuar
-                    </p>
-                  )}
-                  
-                  {dataToShow.requires_directors_only && observations.trim() && (
-                    <p className="text-sm text-blue-600 dark:text-blue-400 text-center">
-                      ℹ️ Se você não for diretor, sua observação será adicionada ao histórico. A aprovação final requer diretores.
+                      Por favor, adicione uma observação antes de aprovar ou rejeitar
                     </p>
                   )}
                 </div>

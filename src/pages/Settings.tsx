@@ -2,7 +2,7 @@ import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { Users, UsersRound, Database, TrendingUp, ArrowUpDown } from 'lucide-react';
+import { Users, UsersRound, Database, TrendingUp } from 'lucide-react';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -89,24 +89,6 @@ export default function Settings() {
             <CardContent>
               <p className="text-sm text-muted-foreground mb-4">
                 Defina quais perfis devem aprovar baseado na margem de lucro.
-              </p>
-              <Button variant="outline" className="w-full">
-                Abrir Configurações
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => navigate('/approval-order-config')}>
-            <CardHeader>
-              <div className="flex items-center gap-3 mb-2">
-                <ArrowUpDown className="h-6 w-6 text-blue-600" />
-                <CardTitle>Ordem de Aprovação por Perfil</CardTitle>
-              </div>
-              <CardDescription>Configure a ordem hierárquica de aprovação</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground mb-4">
-                Defina qual perfil aprova primeiro na hierarquia de aprovação.
               </p>
               <Button variant="outline" className="w-full">
                 Abrir Configurações

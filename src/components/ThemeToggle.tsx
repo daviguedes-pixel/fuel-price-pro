@@ -44,7 +44,7 @@ export function ThemeToggle() {
       variant="ghost"
       size="sm"
       onClick={toggleTheme}
-      className="text-foreground hover:bg-muted"
+      className="text-white hover:bg-white/20"
     >
       {theme === "light" ? (
         <Moon className="h-5 w-5" />
