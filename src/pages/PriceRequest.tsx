@@ -1078,15 +1078,18 @@ export default function PriceRequest() {
               .in('perfil', rule.required_profiles);
             
             if (allApprovers && allApprovers.length > 0) {
-              // Buscar ordem hierárquica do banco de dados
-              let approvalOrder: string[] = [];
+              // Ordem padrão de aprovação (função RPC desabilitada)
+              let approvalOrder: string[] = [
+                'analista_pricing',
+                'supervisor_comercial',
+                'gerente_comercial',
+                'diretor_pricing',
+                'diretor_comercial'
+              ];
+              
               try {
-                const { data: orderData, error: orderError } = await supabase
-                  .rpc('get_approval_profile_order');
-                
-                if (!orderError && orderData && Array.isArray(orderData)) {
-                  approvalOrder = orderData.map((item: any) => item.perfil).filter(Boolean);
-                }
+                // Função RPC desabilitada - usando ordem padrão
+                // const { data: orderData, error: orderError } = await supabase.rpc('get_approval_profile_order');
               } catch (error) {
                 console.warn('Erro ao buscar ordem de aprovação do banco, usando ordem padrão:', error);
               }
