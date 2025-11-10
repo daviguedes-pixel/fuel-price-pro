@@ -6,12 +6,10 @@ import './index.css'
 import { AuthProvider } from './hooks/useAuth.tsx'
 import { PermissionsProvider } from './hooks/usePermissions.tsx'
 import { SecurityProvider } from './context/SecurityContext.tsx'
-import { disableAutoTranslate } from './lib/disable-translation'
-
-disableAutoTranslate()
 
 // Configurações de segurança do navegador
 if (import.meta.env.PROD) {
+  // Desabilitar console em produção
   console.log = () => {}
   console.warn = () => {}
   console.error = () => {}

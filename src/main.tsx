@@ -1,10 +1,8 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
-import { disableAutoTranslate } from "./lib/disable-translation";
 
 console.log('🚀 Main.tsx executado');
-disableAutoTranslate();
 
 try {
   const rootElement = document.getElementById("root");
