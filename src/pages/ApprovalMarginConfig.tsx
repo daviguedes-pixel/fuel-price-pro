@@ -38,22 +38,22 @@ export default function ApprovalMarginConfig() {
   const loadRules = async () => {
     try {
       setLoading(true);
-      // Tabela ainda não criada no banco
-      // const { data, error } = await supabase
-      //   .from('approval_margin_rules')
-      //   .select('*')
-      //   .order('priority_order', { ascending: false })
-      //   .order('min_margin_cents', { ascending: true });
+      const { data, error } = await supabase
+        .from('approval_margin_rules')
+        .select('*')
+        .order('priority_order', { ascending: false })
+        .order('min_margin_cents', { ascending: true });
 
-      // if (error) throw error;
-      setRules([]);
+      if (error) throw error;
+      setRules(data || []);
     } catch (error: any) {
       console.error('Erro ao carregar regras:', error);
       toast({
         title: "Erro",
-        description: 'Erro ao carregar regras de aprovação',
+        description: 'Erro ao carregar regras de aprovação: ' + (error.message || 'Erro desconhecido'),
         variant: "destructive"
       });
+      setRules([]);
     } finally {
       setLoading(false);
     }
@@ -96,12 +96,32 @@ export default function ApprovalMarginConfig() {
 
       console.log('💾 Salvando regra:', ruleData);
       
-      // Funcionalidade temporariamente desabilitada - tabela não existe
-      toast({
-        title: "Aviso",
-        description: 'Funcionalidade em desenvolvimento - tabela approval_margin_rules não criada',
-        variant: "destructive"
-      });
+      if (editingRule?.id) {
+        // Atualizar regra existente
+        const { error } = await supabase
+          .from('approval_margin_rules')
+          .update(ruleData)
+          .eq('id', editingRule.id);
+        
+        if (error) throw error;
+        
+        toast({
+          title: "Sucesso",
+          description: 'Regra atualizada com sucesso',
+        });
+      } else {
+        // Criar nova regra
+        const { error } = await supabase
+          .from('approval_margin_rules')
+          .insert([ruleData]);
+        
+        if (error) throw error;
+        
+        toast({
+          title: "Sucesso",
+          description: 'Regra criada com sucesso',
+        });
+      }
       
       setEditingRule(null);
       setIsCreating(false);
@@ -121,19 +141,53 @@ export default function ApprovalMarginConfig() {
   };
 
   const handleDelete = async (id: string) => {
-    toast({
-      title: "Aviso",
-      description: 'Funcionalidade em desenvolvimento',
-      variant: "destructive"
-    });
+    try {
+      const { error } = await supabase
+        .from('approval_margin_rules')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Sucesso",
+        description: 'Regra excluída com sucesso',
+      });
+      
+      loadRules();
+    } catch (error: any) {
+      console.error('Erro ao excluir regra:', error);
+      toast({
+        title: "Erro",
+        description: 'Erro ao excluir regra: ' + (error.message || 'Erro desconhecido'),
+        variant: "destructive"
+      });
+    }
   };
 
   const toggleActive = async (rule: ApprovalMarginRule) => {
-    toast({
-      title: "Aviso",
-      description: 'Funcionalidade em desenvolvimento',
-      variant: "destructive"
-    });
+    try {
+      const { error } = await supabase
+        .from('approval_margin_rules')
+        .update({ is_active: !rule.is_active })
+        .eq('id', rule.id);
+      
+      if (error) throw error;
+      
+      toast({
+        title: "Sucesso",
+        description: `Regra ${!rule.is_active ? 'ativada' : 'desativada'} com sucesso`,
+      });
+      
+      loadRules();
+    } catch (error: any) {
+      console.error('Erro ao alterar status da regra:', error);
+      toast({
+        title: "Erro",
+        description: 'Erro ao alterar status da regra: ' + (error.message || 'Erro desconhecido'),
+        variant: "destructive"
+      });
+    }
   };
 
   const formatMargin = (cents: number) => {
