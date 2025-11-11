@@ -18,10 +18,14 @@ export const ImageViewerModal = ({
 }: ImageViewerModalProps) => {
   const [zoom, setZoom] = useState(100);
 
+  // Detectar se é PDF
+  const isPdf = imageUrl.toLowerCase().endsWith('.pdf') || imageUrl.toLowerCase().includes('.pdf') || imageName.toLowerCase().endsWith('.pdf');
+
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = imageUrl;
     link.download = imageName;
+    link.target = '_blank';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -44,27 +48,31 @@ export const ImageViewerModal = ({
             {imageName}
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleZoomOut}
-              className="text-white hover:bg-white/20"
-              disabled={zoom <= 50}
-            >
-              <ZoomOut className="h-4 w-4" />
-            </Button>
-            <span className="text-white text-sm min-w-[4rem] text-center">
-              {zoom}%
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleZoomIn}
-              className="text-white hover:bg-white/20"
-              disabled={zoom >= 200}
-            >
-              <ZoomIn className="h-4 w-4" />
-            </Button>
+            {!isPdf && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomOut}
+                  className="text-white hover:bg-white/20"
+                  disabled={zoom <= 50}
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
+                <span className="text-white text-sm min-w-[4rem] text-center">
+                  {zoom}%
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleZoomIn}
+                  className="text-white hover:bg-white/20"
+                  disabled={zoom >= 200}
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+              </>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -84,14 +92,23 @@ export const ImageViewerModal = ({
           </div>
         </div>
 
-        {/* Image Container */}
-        <div className="w-full h-full flex items-center justify-center p-4 overflow-auto">
-          <img
-            src={imageUrl}
-            alt={imageName}
-            className="max-w-full max-h-full object-contain transition-all duration-200"
-            style={{ transform: `scale(${zoom / 100})` }}
-          />
+        {/* Content Container */}
+        <div className="w-full h-full flex items-center justify-center p-4 overflow-auto bg-white">
+          {isPdf ? (
+            <iframe
+              src={imageUrl}
+              className="w-full h-full border-0"
+              title={imageName}
+              style={{ minHeight: '100%' }}
+            />
+          ) : (
+            <img
+              src={imageUrl}
+              alt={imageName}
+              className="max-w-full max-h-full object-contain transition-all duration-200"
+              style={{ transform: `scale(${zoom / 100})` }}
+            />
+          )}
         </div>
       </DialogContent>
     </Dialog>

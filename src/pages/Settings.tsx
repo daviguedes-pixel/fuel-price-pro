@@ -95,6 +95,24 @@ export default function Settings() {
               </Button>
             </CardContent>
           </Card>
+
+          <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => navigate('/approval-order-config')}>
+            <CardHeader>
+              <div className="flex items-center gap-3 mb-2">
+                <UsersRound className="h-6 w-6 text-blue-600" />
+                <CardTitle>Ordem de Aprovação</CardTitle>
+              </div>
+              <CardDescription>Defina a ordem hierárquica de aprovação dos perfis</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground mb-4">
+                Configure em qual ordem os perfis devem aprovar as solicitações.
+              </p>
+              <Button variant="outline" className="w-full">
+                Abrir Configurações
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

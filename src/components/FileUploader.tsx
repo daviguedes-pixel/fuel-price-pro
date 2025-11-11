@@ -1,9 +1,10 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, X, Eye } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { ImageViewerModal } from "@/components/ImageViewerModal";
 
 interface FileUploaderProps {
   onFilesUploaded: (urls: string[]) => void;
@@ -20,8 +21,14 @@ export const FileUploader = ({
 }: FileUploaderProps) => {
   const [uploading, setUploading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<string[]>(currentFiles);
+  const [viewingFile, setViewingFile] = useState<{ url: string; name: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  // Sincronizar uploadedFiles com currentFiles quando mudar
+  useEffect(() => {
+    setUploadedFiles(currentFiles);
+  }, [currentFiles]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -88,7 +95,8 @@ export const FileUploader = ({
   };
 
   const viewFile = (url: string) => {
-    window.open(url, '_blank');
+    const fileName = url.split('/').pop() || 'Arquivo';
+    setViewingFile({ url, name: fileName });
   };
 
   return (
@@ -147,6 +155,16 @@ export const FileUploader = ({
             );
           })}
         </div>
+      )}
+
+      {/* Modal de Visualização */}
+      {viewingFile && (
+        <ImageViewerModal
+          isOpen={!!viewingFile}
+          onClose={() => setViewingFile(null)}
+          imageUrl={viewingFile.url}
+          imageName={viewingFile.name}
+        />
       )}
     </div>
   );

@@ -10,6 +10,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import PriceRequest from "./pages/PriceRequest";
+import PriceRequestTest from "./pages/PriceRequestTest";
 import Approvals from "./pages/Approvals";
 import Admin from "./pages/Admin";
 import MapView from "./pages/MapView";
@@ -25,6 +26,7 @@ import PublicPriceResearch from "./pages/CompetitorResearch";
 import Settings from "./pages/Settings";
 import Gestao from "./pages/Gestao";
 import ApprovalMarginConfig from "./pages/ApprovalMarginConfig";
+import ApprovalOrderConfig from "./pages/ApprovalOrderConfig";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 
@@ -90,6 +92,7 @@ const App = () => {
                   <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                   <Route path="/pricing-suggestion" element={<Navigate to="/solicitacao-preco" replace />} />
                   <Route path="/solicitacao-preco" element={<ProtectedRoute><PriceRequest /></ProtectedRoute>} />
+                  <Route path="/solicitacao-preco-test" element={<ProtectedRoute><PriceRequestTest /></ProtectedRoute>} />
                   <Route path="/approvals" element={<ProtectedRoute><Approvals /></ProtectedRoute>} />
                   <Route path="/competitor-research" element={<ProtectedRoute><PublicPriceResearch /></ProtectedRoute>} />
                   <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
@@ -103,6 +106,7 @@ const App = () => {
                   <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                   <Route path="/gestao" element={<ProtectedRoute><Gestao /></ProtectedRoute>} />
                   <Route path="/approval-margin-config" element={<ProtectedRoute><ApprovalMarginConfig /></ProtectedRoute>} />
+                  <Route path="/approval-order-config" element={<ProtectedRoute><ApprovalOrderConfig /></ProtectedRoute>} />
                   <Route path="/change-password" element={<PasswordChange />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

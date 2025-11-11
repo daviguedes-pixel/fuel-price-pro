@@ -18,7 +18,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, Send, Save, TrendingUp, BarChart, MapPin, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText } from "lucide-react";
+import { ArrowLeft, Send, Save, TrendingUp, BarChart, MapPin, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText, ChevronDown, Plus } from "lucide-react";
+import { SaoRoqueLogo } from "@/components/SaoRoqueLogo";
 import { useNavigate } from "react-router-dom";
 
 interface Reference {
@@ -53,9 +54,38 @@ export default function PriceRequest() {
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [showRequestDetails, setShowRequestDetails] = useState(false);
+  
+  // Cards adicionados (Resultados Individuais por Posto)
+  const [addedCards, setAddedCards] = useState<Array<{
+    id: string;
+    stationName: string;
+    stationCode: string;
+    location: string;
+    netResult: number;
+    suggestionId: string;
+    expanded: boolean;
+    costAnalysis?: any;
+    attachments?: string[];
+  }>>([]);
+  
+  // Custos e cálculos por posto (quando múltiplos postos são selecionados)
+  const [stationCosts, setStationCosts] = useState<Record<string, {
+    purchase_cost: number;
+    freight_cost: number;
+    final_cost?: number;
+    margin_cents?: number;
+    station_name: string;
+    total_revenue?: number;
+    total_cost?: number;
+    gross_profit?: number;
+    profit_per_liter?: number;
+    arla_compensation?: number;
+    net_result?: number;
+  }>>({});
 
   const initialFormData = {
-    station_id: "",
+    station_id: "", // Mantido para compatibilidade
+    station_ids: [] as string[], // Array de IDs de postos
     client_id: "",
     product: "",
     current_price: "",
@@ -179,17 +209,58 @@ export default function PriceRequest() {
         supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
         supabase.from('clientes' as any).select('id_cliente, nome')
       ]);
+      
+      // Buscar informações completas dos postos (incluindo cidade/UF)
+      const stationsWithLocation: any[] = [];
+      for (const s of (stationsRes.data || [])) {
+        if (s.cnpj_cpf || s.id_empresa) {
+          try {
+            const { data: fullStation } = await supabase
+              .from('sis_empresa' as any)
+              .select('municipio, uf')
+              .or(`cnpj_cpf.eq.${s.cnpj_cpf},id_empresa.eq.${s.id_empresa}`)
+              .maybeSingle();
+            stationsWithLocation.push({ 
+              ...s, 
+              municipio: (fullStation as any)?.municipio, 
+              uf: (fullStation as any)?.uf 
+            });
+          } catch (e) {
+            stationsWithLocation.push(s);
+          }
+        } else {
+          stationsWithLocation.push(s);
+        }
+      }
 
       // Enriquecer dados
       const enrichedData = (data || []).map((request: any) => {
-        let station = null;
-        if (request.station_id) {
-          station = (stationsRes.data as any)?.find((s: any) => {
-            const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
-            const suggId = String(request.station_id);
-            return stationId === suggId || s.cnpj_cpf === suggId || s.id_empresa === suggId;
-          });
-        }
+        // Buscar múltiplos postos se station_ids existir, senão usar station_id
+        let stations = [];
+        const stationIds = request.station_ids && Array.isArray(request.station_ids) 
+          ? request.station_ids 
+          : (request.station_id ? [request.station_id] : []);
+        
+        stationIds.forEach((stationId: string) => {
+          if (stationId) {
+            const station = stationsWithLocation.find((s: any) => {
+              const sId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
+              const reqId = String(stationId);
+              return sId === reqId || s.cnpj_cpf === reqId || s.id_empresa === reqId;
+            });
+            if (station) {
+              stations.push({ 
+                name: station.nome_empresa || station.name, 
+                code: station.cnpj_cpf || station.id || station.id_empresa,
+                municipio: station.municipio,
+                uf: station.uf
+              });
+            }
+          }
+        });
+        
+        // Manter compatibilidade: stations como primeiro posto ou null
+        const firstStation = stations.length > 0 ? stations[0] : null;
         
         let client = null;
         if (request.client_id) {
@@ -202,13 +273,62 @@ export default function PriceRequest() {
 
         return {
           ...request,
-          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
+          stations: firstStation, // Compatibilidade
+          stations_list: stations, // Lista completa de postos
           clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
         };
       });
 
-      setMyRequests(enrichedData);
-      console.log('✅ Solicitações carregadas:', enrichedData.length);
+      // Agrupar solicitações por lote (mesmo dia e mesmo criador)
+      const groupedBatches = new Map<string, any[]>();
+      
+      enrichedData.forEach((request: any) => {
+        const dateKey = new Date(request.created_at).toISOString().split('T')[0]; // YYYY-MM-DD
+        const creatorKey = request.created_by || request.requested_by || 'unknown';
+        const batchKey = `${dateKey}_${creatorKey}`;
+        
+        if (!groupedBatches.has(batchKey)) {
+          groupedBatches.set(batchKey, []);
+        }
+        groupedBatches.get(batchKey)!.push(request);
+      });
+      
+      // Verificar quais lotes estão completamente aprovados
+      const approvedBatches: any[] = [];
+      const individualRequests: any[] = [];
+      
+      groupedBatches.forEach((batch, batchKey) => {
+        const allApproved = batch.every((r: any) => r.status === 'approved');
+        const allSameClient = batch.every((r: any) => {
+          const firstClient = batch[0].client_id;
+          return r.client_id === firstClient;
+        });
+        
+        if (allApproved && batch.length > 1 && allSameClient) {
+          // É um lote aprovado - adicionar como proposta comercial
+          approvedBatches.push({
+            type: 'batch',
+            batchKey,
+            requests: batch,
+            created_at: batch[0].created_at,
+            client: batch[0].clients,
+            created_by: batch[0].created_by || batch[0].requested_by
+          });
+        } else {
+          // Adicionar como solicitações individuais
+          batch.forEach((r: any) => individualRequests.push(r));
+        }
+      });
+      
+      // Combinar lotes aprovados e solicitações individuais, ordenar por data
+      const allRequests = [...approvedBatches, ...individualRequests].sort((a, b) => {
+        const dateA = new Date(a.created_at || a.requests?.[0]?.created_at || 0).getTime();
+        const dateB = new Date(b.created_at || b.requests?.[0]?.created_at || 0).getTime();
+        return dateB - dateA;
+      });
+      
+      setMyRequests(allRequests);
+      console.log('✅ Solicitações carregadas:', allRequests.length, 'Lotes aprovados:', approvedBatches.length);
     } catch (error: any) {
       console.error('❌ Erro ao carregar minhas solicitações:', error);
       toast.error("Erro ao carregar solicitações: " + (error?.message || 'Erro desconhecido'));
@@ -232,6 +352,183 @@ export default function PriceRequest() {
   // Auto-fill lowest cost + freight when station and product are selected
   const [lastSearchedStation, setLastSearchedStation] = useState<string>('');
   const [lastSearchedProduct, setLastSearchedProduct] = useState<string>('');
+  
+  // Buscar custos para todos os postos selecionados
+  useEffect(() => {
+    // Função para buscar custos de um posto específico
+    const fetchCostForStation = async (stationId: string, stationName: string): Promise<{
+      purchase_cost: number;
+      freight_cost: number;
+      station_name: string;
+    } | null> => {
+      if (!formData.product) return null;
+      
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const selectedStation = stations.find(s => s.id === stationId);
+        if (!selectedStation) return null;
+        
+        const rawId = selectedStation.code || selectedStation.id;
+        const cleanedId = rawId.replace(/-\d+\.\d+$/, '');
+        
+        const productMap: Record<string, string> = {
+          gasolina_comum: 'Gasolina Comum',
+          gasolina_aditivada: 'Aditivada',
+          etanol: 'Etanol',
+          diesel_comum: 'S500',
+          s10: 'S10',
+          arla32_granel: 'ARLA'
+        };
+        const produtoBusca = productMap[formData.product] || formData.product;
+        
+        const candidates: string[] = [];
+        if (selectedStation.code) candidates.push(selectedStation.code);
+        if (cleanedId && !candidates.includes(cleanedId)) candidates.push(cleanedId);
+        if (selectedStation.name && !candidates.includes(selectedStation.name)) candidates.push(selectedStation.name);
+        
+        // Tentar RPC
+        let resultData: any[] | null = null;
+        for (const cand of candidates) {
+          const { data: d, error: e } = await supabase
+            .rpc('get_lowest_cost_freight', {
+              p_posto_id: cand,
+              p_produto: produtoBusca,
+              p_date: today
+            });
+          
+          if (!e && d && Array.isArray(d) && d.length > 0) {
+            resultData = d;
+            break;
+          }
+        }
+        
+        // Fallback similar ao código existente (simplificado)
+        if (!resultData) {
+          try {
+            const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
+            if (cot) {
+              const { data: gci } = await cot
+                .from('grupo_codigo_item')
+                .select('id_grupo_codigo_item,nome,descricao')
+                .ilike('nome', `%${produtoBusca}%`)
+                .limit(20);
+              const ids = (gci as any[])?.map((r: any) => r.id_grupo_codigo_item) || [];
+              
+              if (ids.length > 0) {
+                const { data: maxRows } = await cot
+                  .from('cotacao_geral_combustivel')
+                  .select('data_cotacao')
+                  .in('id_grupo_codigo_item', ids)
+                  .order('data_cotacao', { ascending: false })
+                  .limit(1);
+                const lastDateStr = maxRows?.[0]?.data_cotacao as string | undefined;
+                
+                if (lastDateStr) {
+                  const start = new Date(lastDateStr);
+                  const end = new Date(start);
+                  end.setDate(end.getDate() + 1);
+                  
+                  const { data: emp } = await cot
+                    .from('sis_empresa')
+                    .select('id_empresa')
+                    .ilike('nome_empresa', `%${selectedStation.name}%`)
+                    .limit(1);
+                  const idEmpresa = (emp as any[])?.[0]?.id_empresa as number | undefined;
+                  
+                  if (idEmpresa) {
+                    const { data: cg } = await cot
+                      .from('cotacao_geral_combustivel')
+                      .select('id_base_fornecedor,valor_unitario,desconto_valor,forma_entrega')
+                      .in('id_grupo_codigo_item', ids)
+                      .gte('data_cotacao', start.toISOString())
+                      .lt('data_cotacao', end.toISOString());
+                    
+                    const baseIds = Array.from(new Set((cg as any[])?.map((r: any) => r.id_base_fornecedor) || []));
+                    
+                    let freteMap = new Map<number, number>();
+                    if (baseIds.length > 0) {
+                      const { data: fretes } = await cot
+                        .from('frete_empresa')
+                        .select('id_base_fornecedor,frete_real,frete_atual')
+                        .eq('id_empresa', idEmpresa)
+                        .in('id_base_fornecedor', baseIds)
+                        .eq('registro_ativo', true);
+                      (fretes as any[])?.forEach((f: any) => {
+                        freteMap.set(f.id_base_fornecedor, Number(f.frete_real ?? f.frete_atual ?? 0));
+                      });
+                    }
+                    
+                    let best: any = null;
+                    (cg as any[])?.forEach((row: any) => {
+                      const custo = Number(row.valor_unitario) - Number(row.desconto_valor || 0);
+                      const frete = row.forma_entrega === 'FOB' ? (freteMap.get(row.id_base_fornecedor) || 0) : 0;
+                      const total = custo + frete;
+                      if (!best || total < best.custo_total) {
+                        best = { custo, frete, custo_total: total };
+                      }
+                    });
+                    
+                    if (best) {
+                      resultData = [best];
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Erro no fallback:', e);
+          }
+        }
+        
+        if (resultData && resultData.length > 0) {
+          const result = resultData[0];
+          return {
+            purchase_cost: Number(result.custo || 0),
+            freight_cost: Number(result.frete || 0),
+            station_name: stationName
+          };
+        }
+        
+        return null;
+      } catch (error) {
+        console.error(`Erro ao buscar custo para posto ${stationId}:`, error);
+        return null;
+      }
+    };
+    
+    // Buscar custos apenas se houver station_id selecionado
+    const fetchCostForSelectedStation = async () => {
+      if (!formData.station_id || formData.station_id === 'none' || !formData.product) {
+        setStationCosts({});
+        return;
+      }
+      
+      // Verificar se mudou
+      if (formData.station_id === lastSearchedStation && formData.product === lastSearchedProduct) {
+        return;
+      }
+      
+      setLastSearchedStation(formData.station_id);
+      setLastSearchedProduct(formData.product);
+      
+      const station = stations.find(s => s.id === formData.station_id);
+      if (!station) return;
+      
+      const costs = await fetchCostForStation(formData.station_id, station.name);
+      if (costs) {
+        setStationCosts({ [formData.station_id]: costs });
+        
+        // Atualizar formData com os custos encontrados
+        setFormData(prev => ({
+          ...prev,
+          purchase_cost: costs.purchase_cost.toFixed(4),
+          freight_cost: costs.freight_cost.toFixed(4)
+        }));
+      }
+    };
+    
+    fetchCostForSelectedStation();
+  }, [formData.station_id, formData.product, stations]);
   
   useEffect(() => {
     // console.log('🔄 ===== useEffect BUSCA DE CUSTO INICIADO =====');
@@ -747,15 +1044,11 @@ export default function PriceRequest() {
         setPriceIncreaseCents(0);
       }
 
-      // 2) Margem (Sugerido - Custo final) em centavos
-      // Recalcula custo final localmente para evitar dessincronização
+      // Cálculo único para um posto
       const purchaseCost = parseFloat(formData.purchase_cost) || 0;
       const freightCost = parseFloat(formData.freight_cost) || 0;
-      
-      // Os custos JÁ estão em R$/L
       const baseCost = purchaseCost + freightCost;
       
-      // Buscar taxa específica do posto ou taxa padrão
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
         const stationMethod = stationPaymentMethods.find(pm => {
@@ -792,19 +1085,22 @@ export default function PriceRequest() {
 
   const calculateCosts = useCallback(() => {
     try {
-      const purchaseCost = parseFloat(formData.purchase_cost) || 0;
-      const freightCost = parseFloat(formData.freight_cost) || 0;
       const volumeMade = parseFloat(formData.volume_made) || 0;
       const volumeProjected = parseFloat(formData.volume_projected) || 0;
       const suggestedPrice = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
       const arlaPurchase = (parsePriceToInteger(formData.arla_purchase_price) / 100) || 0;
-      // Usar o preço sugerido como preço de venda do ARLA quando o produto for ARLA
       const arlaSale = formData.product === 'arla32_granel' ? suggestedPrice : 0;
+      
+      // Converter m³ para litros (1 m³ = 1000 litros)
+      const volumeProjectedLiters = volumeProjected * 1000;
+      
+      // Cálculo único para um posto
+      const purchaseCost = parseFloat(formData.purchase_cost) || 0;
+      const freightCost = parseFloat(formData.freight_cost) || 0;
       
       // Buscar taxa específica do posto ou taxa padrão
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-        // Buscar tanto pelo ID quanto pelo CARTAO
         const stationMethod = stationPaymentMethods.find(pm => {
           const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
           return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
@@ -813,19 +1109,11 @@ export default function PriceRequest() {
         if (stationMethod) {
           feePercentage = stationMethod.TAXA || 0;
         } else {
-          // Tentar em paymentMethods padrão
           const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
           feePercentage = defaultMethod?.TAXA || 0;
         }
       }
       
-      // NOTA: Os valores de purchase_cost e freight_cost JÁ VÊM em R$/L
-      // O preço sugerido também já vem em R$/L
-      
-      // Converter m³ para litros (1 m³ = 1000 litros)
-      const volumeProjectedLiters = volumeProjected * 1000;
-      
-      // Os custos JÁ estão em R$/L, então não precisa converter
       // Calcular base cost em R$/L
       const baseCost = purchaseCost + freightCost;
       
@@ -926,6 +1214,7 @@ export default function PriceRequest() {
     formData.volume_projected,
     formData.suggested_price,
     formData.arla_purchase_price,
+    formData.arla_cost_price,
     formData.product,
     formData.payment_method_id,
     paymentMethods,
@@ -944,8 +1233,11 @@ export default function PriceRequest() {
     formData.purchase_cost,
     formData.freight_cost,
     formData.payment_method_id,
+    formData.station_ids,
+    stationCosts,
     stationPaymentMethods,
-    paymentMethods
+    paymentMethods,
+    calculateMargin
   ]);
 
   // Recalcular custos quando os campos relevantes mudarem (com debounce)
@@ -1015,7 +1307,7 @@ export default function PriceRequest() {
 
   const handleSubmit = async (isDraft: boolean = false) => {
     // Só validar campos obrigatórios se não for rascunho
-    if (!isDraft && (!formData.station_id || !formData.client_id || !formData.product || !formData.suggested_price)) {
+    if (!isDraft && ((!formData.station_id || formData.station_id === 'none') || !formData.client_id || !formData.product || !formData.suggested_price)) {
       toast.error("Por favor, preencha todos os campos obrigatórios");
       return;
     }
@@ -1042,9 +1334,13 @@ export default function PriceRequest() {
       });
       
       // Como as colunas foram alteradas para TEXT, podemos salvar qualquer ID
-      const stationIdToSave = (!formData.station_id || formData.station_id === 'none') 
-        ? null 
+      // Usar station_id (seleção única)
+      const stationIdToSave = (!formData.station_id || formData.station_id === 'none')
+        ? null
         : String(formData.station_id);
+      
+      // Manter station_ids como array com um elemento para compatibilidade com dados existentes
+      const stationIdsToSave = stationIdToSave ? [stationIdToSave] : [];
         
       const clientIdToSave = (!formData.client_id || formData.client_id === 'none')
         ? null
@@ -1059,12 +1355,14 @@ export default function PriceRequest() {
         : String(formData.payment_method_id);
       
       console.log('📝 IDs DO FORMULÁRIO:', {
+        station_ids_form: formData.station_ids,
         station_id_form: formData.station_id,
         client_id_form: formData.client_id,
         reference_id_form: formData.reference_id,
         payment_method_id_form: formData.payment_method_id
       });
       console.log('📝 IDs VALIDADOS PARA SALVAR:', {
+        station_ids: stationIdsToSave,
         station_id: stationIdToSave,
         client_id: clientIdToSave,
         reference_id: referenceIdToSave,
@@ -1073,6 +1371,7 @@ export default function PriceRequest() {
       
       const requestData = {
         station_id: stationIdToSave,
+        // station_ids removido - coluna não existe na tabela
         client_id: clientIdToSave,
         product: formData.product as any,
         current_price: currentPrice,
@@ -1086,7 +1385,7 @@ export default function PriceRequest() {
         created_by: user?.id ? String(user.id) : (user?.email || ''),
         margin_cents: margin, // Margem já está em centavos
         cost_price: costPrice,
-        status: isDraft ? 'draft' as any : 'pending' as any,
+        status: 'draft' as any, // Sempre salvar como draft ao adicionar
         // Dados de cálculo para análise
         purchase_cost: parseBrazilianDecimal(formData.purchase_cost) || null,
         freight_cost: parseBrazilianDecimal(formData.freight_cost) || null,
@@ -1125,8 +1424,20 @@ export default function PriceRequest() {
               .in('perfil', rule.required_profiles);
             
             if (allApprovers && allApprovers.length > 0) {
+              // Buscar ordem hierárquica de aprovação do banco de dados
+              const { data: orderData } = await supabase
+                .from('approval_profile_order')
+                .select('perfil, order_position')
+                .eq('is_active', true)
+                .order('order_position', { ascending: true });
+
+              // Se não houver ordem configurada, usar ordem padrão
+              let approvalOrder: string[] = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
+              if (orderData && orderData.length > 0) {
+                approvalOrder = orderData.map((item: any) => item.perfil);
+              }
+
               // Encontrar o índice do primeiro perfil requerido na ordem hierárquica
-              const approvalOrder = ['supervisor_comercial', 'diretor_comercial', 'diretor_pricing'];
               const firstRequiredProfile = rule.required_profiles
                 .map((profile: string) => approvalOrder.indexOf(profile))
                 .filter((idx: number) => idx >= 0)
@@ -1154,6 +1465,7 @@ export default function PriceRequest() {
       console.log('🔍 Dados a serem inseridos:', requestData);
       console.log('📝 isDraft:', isDraft, 'status:', isDraft ? 'draft' : 'pending');
       
+      // Código para um único posto
       const { data, error } = await supabase
         .from('price_suggestions')
         .insert([requestData])
@@ -1271,24 +1583,161 @@ export default function PriceRequest() {
       
       console.log('📊 Dados enriquecidos:', enrichedData);
 
-      toast.success(isDraft ? "Rascunho salvo com sucesso!" : "Solicitação enviada para aprovação!");
-      setSaveAsDraft(isDraft);
-      setSavedSuggestion(enrichedData);
-      
-      // Recarregar lista de solicitações após salvar
-      if (activeTab === 'my-requests') {
-        loadMyRequests();
-      }
-      
-      // Limpar formulário se não for rascunho
+      // Se for "Adicionar" (não é rascunho), criar card ao invés de mostrar tela de sucesso
       if (!isDraft) {
+        // Buscar dados do posto para o card
+        const stationName = stationData?.name || formData.station_id || 'N/A';
+        const stationCode = stationData?.code || formData.station_id || '';
+        
+        // Buscar localização do posto (usar dados já disponíveis ou deixar vazio)
+        let location = '';
+        // Por enquanto, deixar vazio ou usar dados já disponíveis do stationData
+        // A localização pode ser adicionada posteriormente se necessário
+        
+        // Calcular resultado líquido
+        const volumeProjected = parseFloat(formData.volume_projected) || 0;
+        const volumeProjectedLiters = volumeProjected * 1000;
+        const suggestedPrice = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
+        const purchaseCost = parseFloat(formData.purchase_cost) || 0;
+        const freightCost = parseFloat(formData.freight_cost) || 0;
+        const baseCost = purchaseCost + freightCost;
+        
+        let feePercentage = 0;
+        if (formData.payment_method_id && formData.payment_method_id !== 'none') {
+          const stationMethod = stationPaymentMethods.find(pm => {
+            const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+            return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+          });
+          
+          if (stationMethod) {
+            feePercentage = stationMethod.TAXA || 0;
+          } else {
+            const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
+            feePercentage = defaultMethod?.TAXA || 0;
+          }
+        }
+        
+        const finalCost = baseCost * (1 + feePercentage / 100);
+        const totalRevenue = volumeProjectedLiters * suggestedPrice;
+        const totalCost = volumeProjectedLiters * finalCost;
+        const grossProfit = totalRevenue - totalCost;
+        
+        // ARLA compensation
+        let arlaCompensation = 0;
+        if (formData.product === 's10') {
+          const arlaPurchase = parseFloat(formData.arla_purchase_price) || 0;
+          const arlaMargin = arlaPurchase - parseFloat(formData.arla_cost_price || '0');
+          const arlaVolume = volumeProjectedLiters * 0.05;
+          arlaCompensation = arlaVolume * arlaMargin;
+        } else if (formData.product === 'arla32_granel') {
+          const arlaMargin = suggestedPrice - parseFloat(formData.arla_cost_price || '0');
+          arlaCompensation = volumeProjectedLiters * arlaMargin;
+        }
+        
+        const netResult = grossProfit + arlaCompensation;
+        
+        // Criar novo card
+        const newCard = {
+          id: data.id || `card-${Date.now()}`,
+          stationName: stationName,
+          stationCode: stationCode,
+          location: location || 'N/A',
+          netResult: netResult,
+          suggestionId: data.id,
+          expanded: false,
+          attachments: attachments.length > 0 ? [...attachments] : undefined,
+          costAnalysis: {
+            purchase_cost: purchaseCost,
+            freight_cost: freightCost,
+            final_cost: finalCost,
+            total_revenue: totalRevenue,
+            total_cost: totalCost,
+            gross_profit: grossProfit,
+            profit_per_liter: volumeProjectedLiters > 0 ? grossProfit / volumeProjectedLiters : 0,
+            arla_compensation: arlaCompensation,
+            net_result: netResult,
+            margin_cents: Math.round((suggestedPrice - finalCost) * 100),
+            volume_projected: volumeProjected,
+            suggested_price: suggestedPrice
+          }
+        };
+        
+        setAddedCards(prev => [...prev, newCard]);
+        toast.success("Card adicionado com sucesso!");
+        
+        // Resetar TODOS os campos do formulário
         setFormData(initialFormData);
+        
+        // Limpar anexos
         setAttachments([]);
+        
+        // Limpar custos relacionados ao posto/cliente/produto
+        setStationCosts({});
+        setPriceOrigin(null);
+        setFetchStatus(null);
+        
+        // Limpar cálculos
+        setCalculatedPrice(0);
+        setMargin(0);
+      } else {
+        // Se for rascunho, comportamento original
+        toast.success("Rascunho salvo com sucesso!");
+        setSaveAsDraft(isDraft);
+        setSavedSuggestion(enrichedData);
+        
+        // Recarregar lista de solicitações após salvar
+        if (activeTab === 'my-requests') {
+          loadMyRequests();
+        }
       }
       
     } catch (error: any) {
       console.error('❌ Erro ao salvar solicitação:', error);
       toast.error("Erro ao salvar solicitação: " + (error?.message || 'Erro desconhecido'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendAllForApproval = async () => {
+    if (addedCards.length === 0) {
+      toast.error("Nenhuma solicitação para enviar");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Atualizar status de todas as solicitações de 'draft' para 'pending'
+      const suggestionIds = addedCards
+        .map(card => card.suggestionId)
+        .filter(id => id); // Remover IDs vazios
+
+      if (suggestionIds.length === 0) {
+        toast.error("Nenhuma solicitação válida para enviar");
+        return;
+      }
+
+      const { error } = await supabase
+        .from('price_suggestions')
+        .update({ status: 'pending' as any })
+        .in('id', suggestionIds);
+
+      if (error) {
+        throw error;
+      }
+
+      toast.success(`${suggestionIds.length} solicitação(ões) enviada(s) para aprovação com sucesso!`);
+      
+      // Limpar os cards após enviar
+      setAddedCards([]);
+      
+      // Recarregar lista de solicitações
+      if (activeTab === 'my-requests') {
+        loadMyRequests();
+      }
+    } catch (error: any) {
+      console.error('❌ Erro ao enviar solicitações para aprovação:', error);
+      toast.error("Erro ao enviar solicitações: " + (error?.message || 'Erro desconhecido'));
     } finally {
       setLoading(false);
     }
@@ -1358,9 +1807,19 @@ export default function PriceRequest() {
                   <div className="flex items-center gap-3 mb-3">
                     <Label className="text-sm font-semibold text-blue-700 dark:text-blue-300">Posto</Label>
                   </div>
-                  <p className="text-xl font-bold text-blue-900 dark:text-blue-100">
-                    {savedSuggestion.stations?.name || savedSuggestion.station_id || 'N/A'}
-                  </p>
+                  <div className="space-y-1">
+                    {savedSuggestion.stations_list && savedSuggestion.stations_list.length > 0 ? (
+                      savedSuggestion.stations_list.map((station: any, idx: number) => (
+                        <p key={idx} className="text-lg font-bold text-blue-900 dark:text-blue-100">
+                          {station.name}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-xl font-bold text-blue-900 dark:text-blue-100">
+                        {savedSuggestion.stations?.name || savedSuggestion.station_id || 'N/A'}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl p-6 border border-green-200 dark:border-green-800">
@@ -1440,6 +1899,38 @@ export default function PriceRequest() {
       </div>
     );
   }
+
+  // Estado para controlar abertura de modais de anexos por card
+  const [openAttachmentModals, setOpenAttachmentModals] = useState<Record<string, number | null>>({});
+  
+  // Componente auxiliar para exibir um item de anexo
+  const AttachmentItem = ({ attachment, fileName, cardId, index }: { attachment: string; fileName: string; cardId: string; index: number }) => {
+    const modalKey = `${cardId}-${index}`;
+    const isOpen = openAttachmentModals[modalKey] === index;
+    
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700 rounded-lg border border-slate-200 dark:border-slate-600">
+        <Eye className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+        <span className="text-xs text-slate-700 dark:text-slate-300 truncate max-w-[200px]">
+          {fileName}
+        </span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 w-6 p-0"
+          onClick={() => setOpenAttachmentModals(prev => ({ ...prev, [modalKey]: isOpen ? null : index }))}
+        >
+          <Eye className="h-3 w-3" />
+        </Button>
+        <ImageViewerModal
+          isOpen={isOpen}
+          onClose={() => setOpenAttachmentModals(prev => ({ ...prev, [modalKey]: null }))}
+          imageUrl={attachment}
+          imageName={fileName}
+        />
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
@@ -1521,23 +2012,28 @@ export default function PriceRequest() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Posto */}
-                  <SisEmpresaCombobox
-                    label="Posto"
-                    value={formData.station_id}
-                    onSelect={async (stationId, stationName) => {
-                      console.log('🎯 SisEmpresaCombobox onSelect:', { stationId, stationName });
-                      await handleInputChange("station_id", stationId);
-                    }}
-                    required={true}
-                  />
+                  <div className="md:col-span-2">
+                    <SisEmpresaCombobox
+                      label="Posto"
+                      value={formData.station_id}
+                      onSelect={(stationId) => {
+                        handleInputChange("station_id", stationId);
+                        // Manter station_ids como array com um elemento para compatibilidade
+                        handleInputChange("station_ids", stationId ? [stationId] : []);
+                      }}
+                      required={true}
+                    />
+                  </div>
 
                 {/* Cliente */}
-                  <ClientCombobox
-                    label="Cliente"
-                    value={formData.client_id}
-                    onSelect={(clientId, clientName) => handleInputChange("client_id", clientId)}
-                    required={true}
-                  />
+                  <div className="md:col-span-2">
+                    <ClientCombobox
+                      label="Cliente"
+                      value={formData.client_id}
+                      onSelect={(clientId, clientName) => handleInputChange("client_id", clientId)}
+                      required={true}
+                    />
+                  </div>
 
                 {/* Produto */}
                   <div className="space-y-2">
@@ -1885,19 +2381,17 @@ export default function PriceRequest() {
                       </div>
                     </div>
                   )}
-
-
                 </div>
-                </div>
+            </div>
               
-              <div className="flex flex-col sm:flex-row gap-4 pt-6">
+            <div className="flex flex-col sm:flex-row gap-4 pt-6">
                 <Button
                   onClick={() => handleSubmit(false)}
                   disabled={loading || dbLoadingHook}
                   className="flex items-center gap-3 h-12 px-8 bg-gradient-to-r from-slate-700 to-slate-800 hover:from-slate-800 hover:to-slate-900 text-white font-semibold rounded-xl shadow-lg hover:shadow-xl transition-all duration-200"
                 >
-                  <Send className="h-5 w-5" />
-                  {loading ? "Enviando..." : "Enviar para Aprovação"}
+                  <Plus className="h-5 w-5" />
+                  {loading ? "Adicionando..." : "Adicionar"}
                 </Button>
                 <Button 
                   type="button"
@@ -1916,6 +2410,194 @@ export default function PriceRequest() {
 
         {/* Summary Panel */}
         <div className="space-y-3">
+          {/* Resultados Individuais por Posto */}
+          {addedCards.length > 0 && (
+            <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                    Resultados Individuais por Posto ({addedCards.length})
+                  </CardTitle>
+                  <Button
+                    onClick={handleSendAllForApproval}
+                    disabled={loading || addedCards.length === 0}
+                    className="flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white font-semibold rounded-lg shadow-md hover:shadow-lg transition-all duration-200"
+                  >
+                    <Send className="h-4 w-4" />
+                    Enviar para Aprovação
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {addedCards.map((card) => (
+                    <div
+                      key={card.id}
+                      className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4 hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
+                              {card.stationName.toUpperCase()} - {card.stationCode}
+                            </h3>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            {card.location}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <div className="text-right">
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Resultado</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Líquido</p>
+                            <p className={`text-base font-bold ${card.netResult >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                              {formatPrice(card.netResult)}
+                            </p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setAddedCards(prev =>
+                                prev.map(c =>
+                                  c.id === card.id ? { ...c, expanded: !c.expanded } : c
+                                )
+                              );
+                            }}
+                            className="h-8 w-8 p-0"
+                          >
+                            <ChevronDown
+                              className={`h-5 w-5 text-slate-600 dark:text-slate-400 transition-transform ${
+                                card.expanded ? 'transform rotate-180' : ''
+                              }`}
+                            />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Análise de Custos Expandida */}
+                      {card.expanded && card.costAnalysis && (
+                        <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                          <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                            <CardHeader className="pb-3 border-b border-slate-200 dark:border-slate-700">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                                  <BarChart className="h-5 w-5 text-slate-600 dark:text-slate-300" />
+                                </div>
+                                <div>
+                                  <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                                    Análise de Custos
+                                  </CardTitle>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Cálculos detalhados de rentabilidade</p>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="pt-3 space-y-2.5">
+                              <div className="space-y-2">
+                                {/* Custo Final por Litro */}
+                                <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                                  <div className="flex justify-between items-center mb-1.5">
+                                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Final/L:</span>
+                                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                      {formatPrice4Decimals(card.costAnalysis.final_cost)}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Receita Total */}
+                                <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                                  <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Receita Total:</span>
+                                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatPrice(card.costAnalysis.total_revenue)}
+                                  </span>
+                                </div>
+
+                                {/* Custo Total */}
+                                <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                                  <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Total:</span>
+                                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatPrice(card.costAnalysis.total_cost)}
+                                  </span>
+                                </div>
+
+                                {/* Lucro Bruto */}
+                                <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                                  <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro Bruto:</span>
+                                  <span className={`text-sm font-semibold ${card.costAnalysis.gross_profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                    {formatPrice(card.costAnalysis.gross_profit)}
+                                  </span>
+                                </div>
+
+                                {/* Lucro por Litro */}
+                                <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                                  <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro/Litro:</span>
+                                  <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                    {formatPrice4Decimals(card.costAnalysis.profit_per_liter)}
+                                  </span>
+                                </div>
+
+                                {/* Compensação ARLA */}
+                                {card.costAnalysis.arla_compensation !== 0 && (
+                                  <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                                    <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Compensação ARLA:</span>
+                                    <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                      {formatPrice(card.costAnalysis.arla_compensation)}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Resultado Líquido */}
+                                <div className={`flex justify-between items-center p-3 rounded border ${card.costAnalysis.net_result >= 0 ? 'border-green-500/50 dark:border-green-500/30 bg-green-50/50 dark:bg-green-950/20' : 'border-red-500/50 dark:border-red-500/30 bg-red-50/50 dark:bg-red-950/20'}`}>
+                                  <div className="flex items-center gap-2">
+                                    {card.costAnalysis.net_result >= 0 ? (
+                                      <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                                    ) : (
+                                      <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                                    )}
+                                    <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                                      Resultado Líquido:
+                                    </span>
+                                  </div>
+                                  <span className={`text-sm font-bold ${card.costAnalysis.net_result >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                    {formatPrice(card.costAnalysis.net_result)}
+                                  </span>
+                                </div>
+                                
+                                {/* Anexos */}
+                                {card.attachments && card.attachments.length > 0 && (
+                                  <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                                    <div className="space-y-2">
+                                      <Label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
+                                        Anexos:
+                                      </Label>
+                                      <div className="flex flex-wrap gap-2">
+                                        {card.attachments.map((attachment, idx) => {
+                                          const fileName = attachment.split('/').pop() || `Anexo ${idx + 1}`;
+                                          return (
+                                            <AttachmentItem
+                                              key={idx}
+                                              attachment={attachment}
+                                              fileName={fileName}
+                                              cardId={card.id}
+                                              index={idx}
+                                            />
+                                          );
+                                        })}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
             <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
               <CardHeader className="pb-3">
                 <div className="flex items-center gap-3">
@@ -2018,7 +2700,139 @@ export default function PriceRequest() {
             </CardContent>
           </Card>
 
-          {/* Análise de Custos */}
+          {/* Análise de Custos - para múltiplos postos */}
+          {formData.station_ids && formData.station_ids.length > 1 && (
+            <div className="space-y-4">
+              {formData.station_ids.map((stationId) => {
+                const stationCost = stationCosts[stationId];
+                const station = stations.find(s => s.id === stationId);
+                if (!stationCost || !station) return null;
+                
+                // Calcular valores para este posto
+                const volumeProjected = parseFloat(formData.volume_projected) || 0;
+                const volumeProjectedLiters = volumeProjected * 1000;
+                const suggestedPrice = (parsePriceToInteger(formData.suggested_price) / 100) || 0;
+                
+                const finalCost = stationCost.final_cost || 0;
+                const totalRevenue = stationCost.total_revenue || 0;
+                const totalCost = stationCost.total_cost || 0;
+                const grossProfit = stationCost.gross_profit || 0;
+                const profitPerLiter = stationCost.profit_per_liter || 0;
+                const arlaCompensation = stationCost.arla_compensation || 0;
+                const netResult = stationCost.net_result || 0;
+                
+                // Buscar taxa para este posto
+                let feePercentage = 0;
+                if (formData.payment_method_id && formData.payment_method_id !== 'none') {
+                  const stationMethod = stationPaymentMethods.find(pm => {
+                    const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
+                    return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
+                  });
+                  
+                  if (stationMethod) {
+                    feePercentage = stationMethod.TAXA || 0;
+                  } else {
+                    const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
+                    feePercentage = defaultMethod?.TAXA || 0;
+                  }
+                }
+                
+                return (
+                  <Card key={`cost-analysis-${stationId}`} className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
+                    <CardHeader className="pb-3 border-b border-slate-200 dark:border-slate-700">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                          <BarChart className="h-5 w-5 text-slate-600 dark:text-slate-300" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                            Análise de Custos - {station.name}
+                          </CardTitle>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Cálculos detalhados de rentabilidade</p>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-3 space-y-2.5">
+                      <div className="space-y-2">
+                        {/* Custo Final por Litro */}
+                        <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                          <div className="flex justify-between items-center mb-1.5">
+                            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Final/L:</span>
+                            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(finalCost)}</span>
+                          </div>
+                          {feePercentage > 0 && (
+                            <div className="text-xs text-slate-600 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700 pt-2 mt-2 space-y-1">
+                              <div className="flex justify-between">
+                                <span>Base (compra + frete)/L:</span>
+                                <span>{formatPrice4Decimals(stationCost.purchase_cost + stationCost.freight_cost)}</span>
+                              </div>
+                              <div className="flex justify-between text-slate-700 dark:text-slate-300 font-medium">
+                                <span>Taxa ({feePercentage.toFixed(2)}%):</span>
+                                <span>+{formatPrice4Decimals(finalCost - (stationCost.purchase_cost + stationCost.freight_cost))}</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Receita Total */}
+                        <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Receita Total:</span>
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(totalRevenue)}</span>
+                        </div>
+
+                        {/* Custo Total */}
+                        <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Custo Total:</span>
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(totalCost)}</span>
+                        </div>
+
+                        {/* Lucro Bruto */}
+                        <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro Bruto:</span>
+                          <span className={`text-sm font-semibold ${grossProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {formatPrice(grossProfit)}
+                          </span>
+                        </div>
+
+                        {/* Lucro por Litro */}
+                        <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Lucro/Litro:</span>
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice4Decimals(profitPerLiter)}</span>
+                        </div>
+
+                        {/* Compensação ARLA */}
+                        {arlaCompensation !== 0 && (
+                          <div className="flex justify-between items-center p-2.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50">
+                            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">Compensação ARLA:</span>
+                            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">{formatPrice(arlaCompensation)}</span>
+                          </div>
+                        )}
+
+                        {/* Resultado Líquido */}
+                        <div className={`flex justify-between items-center p-3 rounded border ${netResult >= 0 ? 'border-green-500/50 dark:border-green-500/30 bg-green-50/50 dark:bg-green-950/20' : 'border-red-500/50 dark:border-red-500/30 bg-red-50/50 dark:bg-red-950/20'}`}>
+                          <div className="flex items-center gap-2">
+                            {netResult >= 0 ? (
+                              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
+                            ) : (
+                              <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400" />
+                            )}
+                            <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                              Resultado Líquido:
+                            </span>
+                          </div>
+                          <span className={`text-sm font-bold ${netResult >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {formatPrice(netResult)}
+                          </span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Análise de Custos - solicitação atual */}
           {(costCalculations.finalCost > 0 || costCalculations.totalRevenue > 0) && (
             <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
               <CardHeader className="pb-3 border-b border-slate-200 dark:border-slate-700">
@@ -2068,49 +2882,6 @@ export default function PriceRequest() {
                           </div>
                         </div>
                       ) : null;
-                    })()}
-                    
-                    {/* Informações de taxa */}
-                    {(() => {
-                      let feePercentage = 0;
-                      if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-                        const stationMethod = stationPaymentMethods.find(pm => {
-                          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-                          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-                        });
-                        
-                        if (stationMethod) {
-                          feePercentage = stationMethod.TAXA || 0;
-                        } else {
-                          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-                          feePercentage = defaultMethod?.TAXA || 0;
-                        }
-                      }
-                      
-                      if (feePercentage > 0) {
-                        const purchaseCost = parseFloat(formData.purchase_cost) || 0;
-                        const freightCost = parseFloat(formData.freight_cost) || 0;
-                        const baseCost = purchaseCost + freightCost;
-                        const taxValue = baseCost * (feePercentage / 100);
-                        
-                        return (
-                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-1">
-                            <div className="flex justify-between items-center">
-                              <span className="font-medium">Taxa aplicada:</span>
-                              <span className="font-semibold text-slate-900 dark:text-slate-100">{feePercentage.toFixed(2)}%</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span>Custo base (sem taxa):</span>
-                              <span>{formatPrice4Decimals(baseCost)}</span>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="font-medium">Acréscimo da taxa:</span>
-                              <span className="font-semibold text-slate-900 dark:text-slate-100">+{formatPrice4Decimals(taxValue)}</span>
-                            </div>
-                          </div>
-                        );
-                      }
-                      return null;
                     })()}
                   </div>
 
@@ -2164,25 +2935,6 @@ export default function PriceRequest() {
                       {formatPrice(costCalculations.netResult)}
                     </span>
                   </div>
-
-                  {/* Alerta de Compensação */}
-                  {costCalculations.grossProfit < 0 && costCalculations.arlaCompensation > 0 && (
-                    <div className="p-4 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700">
-                      <div className="flex items-start gap-3">
-                        <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5 flex-shrink-0" />
-                        <div className="flex-1">
-                          <p className="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-1">
-                            ⚠️ Atenção: Ajuste Negativo
-                          </p>
-                          <p className="text-xs text-yellow-700 dark:text-yellow-300">
-                            {costCalculations.netResult >= 0 
-                              ? "A operação está sendo compensada pela margem do ARLA, resultando em lucro líquido positivo."
-                              : "Mesmo com a compensação do ARLA, a operação resulta em prejuízo líquido."}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </CardContent>
             </Card>
@@ -2258,7 +3010,7 @@ export default function PriceRequest() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-slate-600 dark:text-slate-400">Aprovadas</p>
-                        <p className="text-2xl font-bold text-green-600">{myRequests.filter(r => r.status === 'approved').length}</p>
+                        <p className="text-2xl font-bold text-green-600">{myRequests.filter(r => r.type !== 'batch' && r.status === 'approved').length}</p>
                       </div>
                       <Check className="h-6 w-6 text-green-500" />
                     </div>
@@ -2270,7 +3022,7 @@ export default function PriceRequest() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-slate-600 dark:text-slate-400">Rejeitadas</p>
-                        <p className="text-2xl font-bold text-red-600">{myRequests.filter(r => r.status === 'rejected').length}</p>
+                        <p className="text-2xl font-bold text-red-600">{myRequests.filter(r => r.type !== 'batch' && r.status === 'rejected').length}</p>
                       </div>
                       <X className="h-6 w-6 text-red-500" />
                     </div>
@@ -2280,44 +3032,208 @@ export default function PriceRequest() {
 
               {/* My Requests List */}
               <div className="space-y-4">
-                {myRequests.map((request) => (
-                  <Card key={request.id} className="hover:shadow-lg transition-shadow">
-                    <CardContent className="p-6">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 gap-4">
-                          <div className="flex items-center gap-3 mb-2">
-                            <span className="font-semibold text-slate-800 dark:text-slate-200">
-                              {request.stations?.name || 'Posto'} - {request.clients?.name || 'Cliente'}
-                            </span>
-                            {request.status === 'pending' && (
-                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>
-                            )}
-                            {request.status === 'approved' && (
-                              <Badge className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>
-                            )}
-                            {request.status === 'rejected' && (
-                              <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>
-                            )}
+                {myRequests.map((request, index) => {
+                  // Se for um lote aprovado, mostrar visualização de proposta comercial
+                  if (request.type === 'batch' && request.requests) {
+                    const batch = request.requests;
+                    const firstRequest = batch[0];
+                    const client = firstRequest.clients;
+                    const proposalDate = new Date(firstRequest.created_at).toLocaleDateString('pt-BR');
+                    const proposalNumber = index + 1;
+                    
+                    // Calcular totais
+                    const totalVolume = batch.reduce((sum: number, r: any) => {
+                      const volume = r.volume_projected || 0;
+                      return sum + (volume * 1000); // Converter m³ para litros
+                    }, 0);
+                    
+                    // Buscar informações do vendedor
+                    const sellerName = user?.email || user?.user_metadata?.name || 'Vendedor';
+                    
+                    return (
+                      <Card key={request.batchKey} className="hover:shadow-lg transition-shadow bg-white dark:bg-slate-800">
+                        <CardContent className="p-8">
+                          {/* Header com logo e navegação */}
+                          <div className="flex items-center justify-between mb-6">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setActiveTab('new-request')}
+                              className="text-blue-600 hover:text-blue-700"
+                            >
+                              <ArrowLeft className="h-4 w-4 mr-2" />
+                              Voltar para Minhas Solicitações
+                            </Button>
+                            <div className="flex items-center gap-2">
+                              <SaoRoqueLogo className="h-8" />
+                              <div className="text-right">
+                                <p className="text-xs font-semibold text-slate-600 dark:text-slate-400">REDE</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-500">Rede São Roque Logo</p>
+                              </div>
+                            </div>
                           </div>
-                          <p className="text-sm text-slate-600 dark:text-slate-400">
-                            Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
-                          </p>
+                          
+                          {/* Título */}
+                          <div className="text-center mb-8">
+                            <h1 className="text-4xl font-bold text-slate-900 dark:text-slate-100 mb-2">
+                              PROPOSTA COMERCIAL
+                            </h1>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
+                              Detalhes da Oferta de Combustível
+                            </p>
+                          </div>
+                          
+                          {/* Informações Gerais */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                            <div className="space-y-3">
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Data da Proposta:</Label>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{proposalDate}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Cliente:</Label>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{client?.name || 'N/A'}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">CNPJ:</Label>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{client?.code || 'N/A'}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Vendedor:</Label>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{sellerName} (Simulado)</p>
+                              </div>
+                            </div>
+                            <div className="space-y-3">
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Número da Proposta:</Label>
+                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">#{proposalNumber}</p>
+                              </div>
+                              <div>
+                                <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Status Geral:</Label>
+                                <Badge className="bg-green-100 text-green-800 border-green-300">
+                                  Aprovado
+                                </Badge>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Postos e Condições */}
+                          <div className="mb-8">
+                            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-4">Postos e Condições</h2>
+                            <div className="overflow-x-auto">
+                              <table className="w-full border-collapse">
+                                <thead>
+                                  <tr className="border-b border-slate-300 dark:border-slate-600">
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">CIDADE/UF</th>
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO (R$/L)</th>
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">VOLUME (M³)</th>
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">STATUS</th>
+                                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">RESULTADO</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {batch.map((req: any) => {
+                                    const station = req.stations || req.stations_list?.[0];
+                                    const price = req.final_price || req.suggested_price || 0;
+                                    const priceReais = price >= 100 ? price / 100 : price;
+                                    const volume = req.volume_projected || 0;
+                                    
+                                    return (
+                                      <tr key={req.id} className="border-b border-slate-200 dark:border-slate-700">
+                                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                          {station?.name || req.station_id || 'N/A'}
+                                        </td>
+                                        <td className="p-3 text-sm text-slate-600 dark:text-slate-400">
+                                          {station?.municipio || '-'} / {station?.uf || '-'}
+                                        </td>
+                                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                          {formatPrice(priceReais)}
+                                        </td>
+                                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                          {volume}
+                                        </td>
+                                        <td className="p-3">
+                                          <Badge className="bg-green-100 text-green-800">
+                                            Aprovado
+                                          </Badge>
+                                        </td>
+                                        <td className="p-3">
+                                          <CheckCircle className="h-5 w-5 text-green-600" />
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                          
+                          {/* Volume Total */}
+                          <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-6 mb-6 text-white">
+                            <p className="text-sm font-medium mb-2 opacity-90">Volume total projetado: {totalVolume.toLocaleString('pt-BR')} L</p>
+                          </div>
+                          
+                          {/* Notas Importantes */}
+                          <div className="space-y-2 text-sm text-slate-600 dark:text-slate-400 mb-6">
+                            <p>• Preço sujeito a alteração, conforme anúncio da companhia.</p>
+                            <p>• Posto não negociado, sujeito a cobrança com base no preço da bomba.</p>
+                            <p className="text-red-600 dark:text-red-400 font-semibold">• Alterações podem ocorrer dentro de um prazo de até 24 horas.</p>
+                          </div>
+                          
+                          {/* Footer */}
+                          <div className="text-center text-sm text-slate-600 dark:text-slate-400">
+                            <p className="mb-2">Agradecemos sua atenção e ficamos à disposição para quaisquer esclarecimentos.</p>
+                            <p className="text-blue-600 dark:text-blue-400 font-semibold">REDE SÃO ROQUE</p>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  }
+                  
+                  // Visualização normal para solicitações individuais
+                  return (
+                    <Card key={request.id} className="hover:shadow-lg transition-shadow">
+                      <CardContent className="p-6">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 gap-4">
+                            <div className="flex items-center gap-3 mb-2">
+                              <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                {request.stations_list && request.stations_list.length > 0 
+                                  ? request.stations_list.map((s: any) => s.name).join(', ')
+                                  : (request.stations?.name || 'Posto')
+                                } - {request.clients?.name || 'Cliente'}
+                              </span>
+                              {request.status === 'pending' && (
+                                <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>
+                              )}
+                              {request.status === 'approved' && (
+                                <Badge className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>
+                              )}
+                              {request.status === 'rejected' && (
+                                <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-slate-600 dark:text-slate-400">
+                              Criado em: {new Date(request.created_at).toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedRequest(request);
+                              setShowRequestDetails(true);
+                            }}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Detalhes
+                          </Button>
                         </div>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedRequest(request);
-                            setShowRequestDetails(true);
-                          }}
-                        >
-                          <Eye className="h-4 w-4 mr-2" />
-                          Ver Detalhes
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
                 
                 {myRequests.length === 0 && (
                   <Card>

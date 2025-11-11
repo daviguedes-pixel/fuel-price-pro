@@ -44,6 +44,7 @@ const getProfileDisplayName = (perfil: string) => {
 const allMenuItems = [
   { icon: Home, label: "Início", href: "/dashboard", permission: "dashboard" },
   { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
+  { icon: DollarSign, label: "Solicitação (Teste)", href: "/solicitacao-preco-test", permission: "price_request", testMode: true },
   { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
   { icon: Search, label: "Pesquisa de Preços", href: "/competitor-research", permission: "research" },
   { icon: Map, label: "Mapa", href: "/map", permission: "map" },
@@ -119,7 +120,7 @@ function Layout({ children }: LayoutProps) {
                 location.pathname === item.href 
                   ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
                   : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
-              }`}
+              } ${(item as any).testMode ? 'opacity-60 border-l-2 border-yellow-500/50' : ''}`}
               onClick={() => handleMenuClick(item.href)}
             >
               <item.icon className="h-4 w-4 flex-shrink-0" />

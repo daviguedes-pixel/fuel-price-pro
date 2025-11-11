@@ -70,20 +70,38 @@ export const ApprovalDetailsModal = ({
     try {
       console.log('🔍 Buscando dados faltantes para suggestion:', suggestion.id);
       
-      // Buscar posto se necessário
-      if (!suggestion.stations && suggestion.station_id) {
-        console.log('🔍 Buscando posto:', suggestion.station_id);
-        const { data: stationData } = await supabase
-          .from('sis_empresa' as any)
-          .select('nome_empresa, cnpj_cpf')
-          .or(`cnpj_cpf.eq.${suggestion.station_id},id.eq.${suggestion.station_id}`)
-          .maybeSingle();
+      // Buscar postos se necessário (múltiplos ou único)
+      const stationIds = suggestion.station_ids && Array.isArray(suggestion.station_ids) 
+        ? suggestion.station_ids 
+        : (suggestion.station_id ? [suggestion.station_id] : []);
+      
+      if (stationIds.length > 0 && (!suggestion.stations_list || suggestion.stations_list.length === 0)) {
+        console.log('🔍 Buscando postos:', stationIds);
+        const stationsList = [];
         
-        if (stationData) {
-          setEnrichedSuggestion({
-            ...suggestion,
-            stations: { name: (stationData as any).nome_empresa, code: (stationData as any).cnpj_cpf }
-          });
+        for (const stationId of stationIds) {
+          if (!stationId) continue;
+          
+          const { data: stationData } = await supabase
+            .from('sis_empresa' as any)
+            .select('nome_empresa, cnpj_cpf, id_empresa')
+            .or(`cnpj_cpf.eq.${stationId},id.eq.${stationId},id_empresa.eq.${stationId}`)
+            .maybeSingle();
+          
+          if (stationData) {
+            stationsList.push({ 
+              name: (stationData as any).nome_empresa, 
+              code: (stationData as any).cnpj_cpf || (stationData as any).id_empresa 
+            });
+          }
+        }
+        
+        if (stationsList.length > 0) {
+          setEnrichedSuggestion(prev => ({
+            ...prev!,
+            stations: stationsList[0], // Primeiro para compatibilidade
+            stations_list: stationsList // Lista completa
+          }));
         }
       }
       
@@ -294,12 +312,22 @@ export const ApprovalDetailsModal = ({
             <CardContent className="pt-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h4 className="font-medium text-sm text-muted-foreground">Posto</h4>
-                  <p className="font-medium text-lg">
-                    {dataToShow.stations?.name 
-                      || dataToShow.station_id 
-                      || (dataToShow.station_id === null ? '⚠️ Aprovação antiga (sem posto)' : 'N/A')}
-                  </p>
+                  <h4 className="font-medium text-sm text-muted-foreground">Posto{dataToShow.stations_list && dataToShow.stations_list.length > 1 ? 's' : ''}</h4>
+                  {dataToShow.stations_list && dataToShow.stations_list.length > 0 ? (
+                    <div className="space-y-1">
+                      {dataToShow.stations_list.map((station: any, idx: number) => (
+                        <p key={idx} className="font-medium text-lg">
+                          {station.name}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="font-medium text-lg">
+                      {dataToShow.stations?.name 
+                        || dataToShow.station_id 
+                        || (dataToShow.station_id === null ? '⚠️ Aprovação antiga (sem posto)' : 'N/A')}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Cliente</h4>

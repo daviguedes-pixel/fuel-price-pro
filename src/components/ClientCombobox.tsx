@@ -36,20 +36,28 @@ export const ClientCombobox = ({
   
   const { clients } = useDatabase();
 
-  // Load selected client if value is provided
+  // Load selected client if value is provided, or clear if value is empty
   useEffect(() => {
-    if (value && clients.length > 0) {
+    if (!value || value === "") {
+      // Se value for vazio, limpar seleção
+      setSelectedClient(null);
+    } else if (value && clients.length > 0) {
       const client = clients.find(c => c.id === value);
       if (client) {
-        setSelectedClient(client as Client);
         // Atualizar o nome exibido para qualquer cliente com o mesmo nome
         const clientsWithSameName = clients.filter(c => 
           c.name.toLowerCase() === client.name.toLowerCase()
         );
         if (clientsWithSameName.length > 0) {
           // Manter o primeiro selecionado mas mostrar que pode haver múltiplos
+          const clientToSet = clientsWithSameName.find(c => c.active) || clientsWithSameName[0] || client;
+          setSelectedClient(clientToSet as Client);
+        } else {
           setSelectedClient(client as Client);
         }
+      } else {
+        // Se não encontrou o cliente, limpar seleção
+        setSelectedClient(null);
       }
     }
   }, [value, clients]);

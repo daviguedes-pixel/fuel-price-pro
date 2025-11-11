@@ -48,15 +48,25 @@ export const SisEmpresaCombobox = ({
     loadEmpresas();
   }, []);
 
-  // Load selected empresa if value is provided
+  // Load selected empresa if value is provided, or clear if value is empty
   useEffect(() => {
-    if (value && empresas.length > 0 && !selectedEmpresa) {
-      const empresa = empresas.find(e => e.id_empresa === value || e.nome_empresa === value || e.cnpj_cpf === value);
+    if (!value || value === "") {
+      // Se value for vazio, limpar seleção
+      setSelectedEmpresa(null);
+    } else if (value && empresas.length > 0) {
+      const empresa = empresas.find(e => 
+        String(e.id_empresa) === String(value) || 
+        e.nome_empresa === value || 
+        String(e.cnpj_cpf) === String(value)
+      );
       if (empresa) {
         setSelectedEmpresa(empresa);
+      } else {
+        // Se não encontrou a empresa, limpar seleção
+        setSelectedEmpresa(null);
       }
     }
-  }, [value, empresas, selectedEmpresa]);
+  }, [value, empresas]);
 
   const loadEmpresas = async () => {
     setLoading(true);

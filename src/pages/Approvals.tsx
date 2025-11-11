@@ -4,8 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -18,9 +21,11 @@ import {
   Search, 
   Eye, 
   ChevronDown,
+  ChevronRight,
   MessageSquare,
   Download,
-  Trash2
+  Trash2,
+  DollarSign
 } from "lucide-react";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
 import { formatBrazilianCurrency } from "@/lib/utils";
@@ -33,6 +38,17 @@ export default function Approvals() {
   const [filteredSuggestions, setFilteredSuggestions] = useState<any[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchApprovals, setBatchApprovals] = useState<any[]>([]);
+  const [individualApprovals, setIndividualApprovals] = useState<any[]>([]);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+  const [batchObservations, setBatchObservations] = useState<Record<string, string>>({});
+  const [batchSuggestedPrices, setBatchSuggestedPrices] = useState<Record<string, number>>({});
+  const [showPriceModal, setShowPriceModal] = useState<Record<string, boolean>>({});
+  const [showObservationModal, setShowObservationModal] = useState<Record<string, boolean>>({});
+  const [showBatchApproveModal, setShowBatchApproveModal] = useState<Record<string, boolean>>({});
+  const [batchApproveObservation, setBatchApproveObservation] = useState<Record<string, string>>({});
   
   const [filters, setFilters] = useState({
     status: "all",
@@ -73,15 +89,25 @@ export default function Approvals() {
   };
 
   // Buscar todos os usuários que podem aprovar em ordem hierárquica
-  // Ordem: supervisor_comercial -> diretor_comercial -> diretor_pricing
   const loadApprovers = async (requiredProfiles?: string[]) => {
     try {
-      // Ordem hierárquica de aprovação padrão
-      const approvalOrder = [
+      // Buscar ordem hierárquica de aprovação do banco de dados
+      const { data: orderData, error: orderError } = await supabase
+        .from('approval_profile_order')
+        .select('perfil, order_position')
+        .eq('is_active', true)
+        .order('order_position', { ascending: true });
+
+      // Se não houver ordem configurada, usar ordem padrão
+      let approvalOrder: string[] = [
         'supervisor_comercial',
         'diretor_comercial', 
         'diretor_pricing'
       ];
+
+      if (!orderError && orderData && orderData.length > 0) {
+        approvalOrder = orderData.map((item: any) => item.perfil);
+      }
       
       // Se requiredProfiles foi especificado, usar apenas esses perfis
       const profilesToLoad = requiredProfiles && requiredProfiles.length > 0
@@ -116,17 +142,17 @@ export default function Approvals() {
       const approvers: any[] = [];
       
       for (const perfil of orderedProfiles) {
-        const { data: users, error: usersError } = await supabase
-          .from('user_profiles')
-          .select('user_id, email, perfil')
+      const { data: users, error: usersError } = await supabase
+        .from('user_profiles')
+        .select('user_id, email, perfil')
           .eq('perfil', perfil)
-          .order('email');
-        
-        if (usersError) {
+        .order('email');
+      
+      if (usersError) {
           console.error(`Erro ao buscar usuários do perfil ${perfil}:`, usersError);
           continue;
-        }
-        
+      }
+      
         if (users && users.length > 0) {
           approvers.push(...users);
         }
@@ -356,6 +382,62 @@ export default function Approvals() {
       setSuggestions(enrichedWithCurrentApprover);
       setFilteredSuggestions(filteredForUser);
       
+    // Identificar lotes de aprovações (mesma data, mesmo criador - clientes podem divergir)
+    const groupedBatches = new Map<string, any[]>();
+    
+    filteredForUser.forEach((suggestion: any) => {
+      if (suggestion.status === 'pending') {
+        const dateKey = new Date(suggestion.created_at).toISOString().split('T')[0]; // YYYY-MM-DD
+        const creatorKey = suggestion.created_by || suggestion.requested_by || 'unknown';
+        // Removido clientKey - agora agrupa apenas por data e criador
+        const batchKey = `${dateKey}_${creatorKey}`;
+        
+        if (!groupedBatches.has(batchKey)) {
+          groupedBatches.set(batchKey, []);
+        }
+        groupedBatches.get(batchKey)!.push(suggestion);
+      }
+    });
+      
+      // Separar lotes (mais de 1 solicitação) de aprovações individuais
+      const batches: any[] = [];
+      const individuals: any[] = [];
+      
+    groupedBatches.forEach((batch, batchKey) => {
+      if (batch.length > 1) {
+        // É um lote - pode ter clientes diferentes
+        // Pegar o primeiro cliente para exibição, mas indicar se há múltiplos
+        const uniqueClients = new Set(batch.map((r: any) => r.client_id || r.clients?.id || 'unknown'));
+        const hasMultipleClients = uniqueClients.size > 1;
+        
+        batches.push({
+          batchKey,
+          requests: batch,
+          client: batch[0].clients, // Primeiro cliente para exibição
+          clients: hasMultipleClients ? Array.from(uniqueClients).map((cid: string) => {
+            const req = batch.find((r: any) => (r.client_id || r.clients?.id || 'unknown') === cid);
+            return req?.clients || { name: 'N/A' };
+          }) : [batch[0].clients],
+          hasMultipleClients,
+          created_at: batch[0].created_at,
+          created_by: batch[0].created_by || batch[0].requested_by
+        });
+      } else {
+        // É uma aprovação individual
+        individuals.push(batch[0]);
+      }
+    });
+      
+      // Adicionar aprovações não pendentes às individuais
+      filteredForUser.forEach((suggestion: any) => {
+        if (suggestion.status !== 'pending') {
+          individuals.push(suggestion);
+        }
+      });
+      
+      setBatchApprovals(batches);
+      setIndividualApprovals(individuals);
+      
       // Calculate stats
       const total = enrichedData.length;
       const pending = enrichedWithCurrentApprover.filter(s => s.status === 'pending').length;
@@ -363,6 +445,8 @@ export default function Approvals() {
       const rejected = enrichedData.filter(s => s.status === 'rejected').length;
       
       console.log('Stats calculadas:', { total, pending, approved, rejected });
+      console.log('Lotes encontrados:', batches.length);
+      console.log('Aprovações individuais:', individuals.length);
       setStats({ total, pending, approved, rejected });
     } catch (error) {
       console.error('Erro ao carregar sugestões:', error);
@@ -422,7 +506,7 @@ export default function Approvals() {
         .single();
 
       if (fetchError) throw fetchError;
-      
+
       console.log('✅ Sugestão encontrada:', currentSuggestion);
       console.log('👤 requested_by:', currentSuggestion.requested_by);
 
@@ -608,18 +692,18 @@ export default function Approvals() {
       
       while (retries > 0) {
         try {
-          const { error } = await supabase
-            .from('price_suggestions')
-            .update(updateData)
-            .eq('id', suggestionId);
-          
-          if (!error) {
-            break;
-          }
-          updateError = error;
-          retries--;
-          if (retries > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        const { error } = await supabase
+          .from('price_suggestions')
+          .update(updateData)
+          .eq('id', suggestionId);
+        
+        if (!error) {
+          break;
+        }
+        updateError = error;
+        retries--;
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
           }
         } catch (err: any) {
           console.warn('Erro ao atualizar, tentando novamente...', err.message);
@@ -813,13 +897,13 @@ export default function Approvals() {
       while (retries > 0) {
         try {
           const { error } = await supabase
-            .from('price_suggestions')
-            .update({
-              status: newStatus,
-              approval_level: nextLevel,
-              rejections_count: rejectionsCount,
-            })
-            .eq('id', suggestionId);
+        .from('price_suggestions')
+        .update({
+          status: newStatus,
+          approval_level: nextLevel,
+          rejections_count: rejectionsCount,
+        })
+        .eq('id', suggestionId);
 
           if (!error) {
             break;
@@ -885,6 +969,102 @@ export default function Approvals() {
       } else {
         toast.error(`Erro ao rejeitar sugestão: ${error?.message || 'Erro desconhecido'}`);
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchApprove = async () => {
+    const pendingIds = selectedIds.size > 0 
+      ? Array.from(selectedIds)
+      : filteredSuggestions.filter(s => s.status === 'pending').map(s => s.id);
+    
+    if (pendingIds.length === 0) {
+      toast.error("Nenhuma solicitação pendente para aprovar");
+      return;
+    }
+
+    const observations = prompt("Digite uma observação para todas as aprovações:");
+    if (!observations || !observations.trim()) {
+      toast.error("Observação é obrigatória");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const idsArray = pendingIds;
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const id of idsArray) {
+        try {
+          await handleApprove(id, observations);
+          successCount++;
+        } catch (error) {
+          console.error(`Erro ao aprovar ${id}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`${successCount} solicitação(ões) aprovada(s) com sucesso!`);
+      }
+      if (errorCount > 0) {
+        toast.error(`${errorCount} solicitação(ões) falharam ao aprovar`);
+      }
+
+      setSelectedIds(new Set());
+      loadSuggestions();
+    } catch (error: any) {
+      toast.error("Erro ao aprovar em lote: " + (error?.message || 'Erro desconhecido'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBatchReject = async () => {
+    const pendingIds = selectedIds.size > 0 
+      ? Array.from(selectedIds)
+      : filteredSuggestions.filter(s => s.status === 'pending').map(s => s.id);
+    
+    if (pendingIds.length === 0) {
+      toast.error("Nenhuma solicitação pendente para negar");
+      return;
+    }
+
+    const observations = prompt("Digite uma observação para todas as negações:");
+    if (!observations || !observations.trim()) {
+      toast.error("Observação é obrigatória");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const idsArray = pendingIds;
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (const id of idsArray) {
+        try {
+          await handleReject(id, observations);
+          successCount++;
+        } catch (error) {
+          console.error(`Erro ao negar ${id}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        toast.success(`${successCount} solicitação(ões) negada(s) com sucesso!`);
+      }
+      if (errorCount > 0) {
+        toast.error(`${errorCount} solicitação(ões) falharam ao negar`);
+      }
+
+      setSelectedIds(new Set());
+      loadSuggestions();
+    } catch (error: any) {
+      toast.error("Erro ao negar em lote: " + (error?.message || 'Erro desconhecido'));
     } finally {
       setLoading(false);
     }
@@ -965,14 +1145,14 @@ export default function Approvals() {
                 Gerencie e aprove as solicitações de alteração de preços
               </p>
             </div>
-            <Button 
+              <Button 
               variant="outline"
               size="sm"
-              onClick={() => window.location.reload()}
-            >
+                onClick={() => window.location.reload()}
+              >
               <Filter className="h-4 w-4 mr-2" />
-              Atualizar
-            </Button>
+                Atualizar
+              </Button>
           </div>
         </div>
 
@@ -1082,14 +1262,510 @@ export default function Approvals() {
         </CardContent>
       </Card>
 
+      {/* Batch Approvals Section - Only for batch requests */}
+      {batchApprovals.length > 0 && (
+        <Card className="shadow-lg border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+          <CardHeader>
+            <CardTitle>Aprovações em Lote ({batchApprovals.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {batchApprovals.map((batch) => {
+                const isExpanded = expandedBatches.has(batch.batchKey);
+                
+                return (
+                  <div key={batch.batchKey} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                    {/* Header do Lote - Colapsável */}
+                    <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50">
+                      <div 
+                        className="flex items-center gap-3 flex-1 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors rounded-lg p-2 -m-2"
+                        onClick={() => {
+                          const newExpanded = new Set(expandedBatches);
+                          if (isExpanded) {
+                            newExpanded.delete(batch.batchKey);
+                          } else {
+                            newExpanded.add(batch.batchKey);
+                            // Inicializar observações e preços quando expandir
+                            const obs: Record<string, string> = { ...batchObservations };
+                            const prices: Record<string, number> = { ...batchSuggestedPrices };
+                            batch.requests.forEach((req: any) => {
+                              if (!obs[req.id]) obs[req.id] = '';
+                              if (!prices[req.id]) {
+                                const price = req.final_price || req.suggested_price || 0;
+                                prices[req.id] = price >= 100 ? price / 100 : price;
+                              }
+                            });
+                            setBatchObservations(obs);
+                            setBatchSuggestedPrices(prices);
+                          }
+                          setExpandedBatches(newExpanded);
+                        }}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                        ) : (
+                          <ChevronRight className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+                        )}
+                        <div>
+                          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                            {batch.hasMultipleClients ? (
+                              <>Clientes: {batch.clients?.map((c: any) => c?.name || 'N/A').join(', ') || 'Múltiplos'}</>
+                            ) : (
+                              <>Cliente: {batch.client?.name || 'N/A'}</>
+                            )}
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Data: {new Date(batch.created_at).toLocaleDateString('pt-BR')} | {batch.requests.length} solicitação(ões)
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setShowBatchApproveModal(prev => ({
+                            ...prev,
+                            [batch.batchKey]: true
+                          }));
+                          if (!batchApproveObservation[batch.batchKey]) {
+                            setBatchApproveObservation(prev => ({
+                              ...prev,
+                              [batch.batchKey]: ''
+                            }));
+                          }
+                        }}
+                        disabled={loading}
+                        className="text-green-600 hover:text-green-700 hover:bg-green-50 border-green-300"
+                      >
+                        <Check className="h-4 w-4 mr-2" />
+                        Aprovar Lote
+                      </Button>
+                    </div>
+                    
+                    {/* Tabela de Solicitações do Lote - Expandível */}
+                    {isExpanded && (
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">CLIENTE</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PRODUTO</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO ATUAL</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO SUGERIDO</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">VOLUME PROJETADO</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">MARGEM COM BASE NO CUSTO</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">STATUS</th>
+                              <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">AÇÕES</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {batch.requests.map((req: any) => {
+                              const currentPrice = req.current_price || req.cost_price || 0;
+                              const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
+                              const finalPrice = req.final_price || req.suggested_price || 0;
+                              const finalPriceReais = finalPrice >= 100 ? finalPrice / 100 : finalPrice;
+                              const costPrice = req.cost_price || req.cost || 0;
+                              const costPriceReais = costPrice >= 100 ? costPrice / 100 : costPrice;
+                              const margin = finalPriceReais - costPriceReais;
+                              const volumeProjected = req.volume_projected || 0;
+                              const station = req.stations || { name: req.station_id || 'N/A', code: '' };
+                              const suggestedPrice = batchSuggestedPrices[req.id] || finalPriceReais;
+                              
+                              return (
+                                <tr key={req.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {station.name}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {req.clients?.name || batch.client?.name || 'N/A'}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {getProductName(req.product)}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {currentPriceReais > 0 ? formatPrice(currentPriceReais) : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {finalPriceReais > 0 ? formatPrice(finalPriceReais) : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {volumeProjected ? `${volumeProjected} m³` : '-'}
+                                  </td>
+                                  <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                                    {costPriceReais > 0 ? formatPrice(margin) : '-'}
+                                  </td>
+                                  <td className="p-3">
+                                    {getStatusBadge(req.status)}
+                                  </td>
+                                  <td className="p-3">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedSuggestion(req);
+                                          setShowDetails(true);
+                                        }}
+                                        className="h-7 w-7 p-0"
+                                        title="Ver detalhes"
+                                      >
+                                        <Eye className="h-3 w-3 text-slate-600 dark:text-slate-400" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setShowObservationModal(prev => ({
+                                            ...prev,
+                                            [req.id]: !prev[req.id]
+                                          }));
+                                        }}
+                                        className="h-7 px-2 text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                        title="Adicionar observação"
+                                      >
+                                        <MessageSquare className="h-3 w-3" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={async () => {
+                                          const obs = batchObservations[req.id] || '';
+                                          if (!obs.trim()) {
+                                            toast.error("Por favor, adicione uma observação antes de aprovar");
+                                            return;
+                                          }
+                                          
+                                          // Se houver preço sugerido diferente, atualizar antes de aprovar
+                                          if (suggestedPrice && suggestedPrice !== finalPriceReais) {
+                                            const priceInCents = Math.round(suggestedPrice * 100);
+                                            await supabase
+                                              .from('price_suggestions')
+                                              .update({ 
+                                                final_price: priceInCents,
+                                                suggested_price: priceInCents
+                                              })
+                                              .eq('id', req.id);
+                                          }
+                                          
+                                          await handleApprove(req.id, obs);
+                                        }}
+                                        className="h-7 px-2 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                        title="Aprovar"
+                                        disabled={loading || !batchObservations[req.id]?.trim()}
+                                      >
+                                        <Check className="h-3 w-3" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={async () => {
+                                          const obs = batchObservations[req.id] || '';
+                                          if (!obs.trim()) {
+                                            toast.error("Por favor, adicione uma observação antes de rejeitar");
+                                            return;
+                                          }
+                                          await handleReject(req.id, obs);
+                                        }}
+                                        className="h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                        title="Rejeitar"
+                                        disabled={loading || !batchObservations[req.id]?.trim()}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setShowPriceModal(prev => ({
+                                            ...prev,
+                                            [req.id]: !prev[req.id]
+                                          }));
+                                        }}
+                                        className="h-7 px-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                        title="Sugerir preço"
+                                      >
+                                        <DollarSign className="h-3 w-3" />
+                                      </Button>
+                                    </div>
+                                    {/* Modal para Adicionar Observação */}
+                                    {showObservationModal[req.id] && (
+                                      <Dialog open={showObservationModal[req.id]} onOpenChange={(open) => {
+                                        setShowObservationModal(prev => ({
+                                          ...prev,
+                                          [req.id]: open
+                                        }));
+                                      }}>
+                                        <DialogContent className="max-w-md">
+                                          <DialogHeader>
+                                            <DialogTitle>Adicionar Observação</DialogTitle>
+                                          </DialogHeader>
+                                          <div className="space-y-4">
+                                            <div>
+                                              <Label className="text-sm font-semibold mb-2 block">
+                                                {station.name} - {getProductName(req.product)}
+                                              </Label>
+                                              <Textarea
+                                                placeholder="Adicione uma observação para esta solicitação..."
+                                                value={batchObservations[req.id] || ''}
+                                                onChange={(e) => {
+                                                  setBatchObservations(prev => ({
+                                                    ...prev,
+                                                    [req.id]: e.target.value
+                                                  }));
+                                                }}
+                                                className="min-h-[120px]"
+                                                rows={5}
+                                              />
+                                            </div>
+                                            <div className="flex gap-3">
+                                              <Button
+                                                onClick={() => {
+                                                  setShowObservationModal(prev => ({
+                                                    ...prev,
+                                                    [req.id]: false
+                                                  }));
+                                                }}
+                                                className="flex-1"
+                                              >
+                                                Salvar
+                                              </Button>
+                                              <Button
+                                                variant="outline"
+                                                onClick={() => {
+                                                  setShowObservationModal(prev => ({
+                                                    ...prev,
+                                                    [req.id]: false
+                                                  }));
+                                                }}
+                                              >
+                                                Cancelar
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </DialogContent>
+                                      </Dialog>
+                                    )}
+                                    {/* Modal para Sugerir Preço */}
+                                    {showPriceModal[req.id] && (
+                                      <Dialog open={showPriceModal[req.id]} onOpenChange={(open) => {
+                                        setShowPriceModal(prev => ({
+                                          ...prev,
+                                          [req.id]: open
+                                        }));
+                                      }}>
+                                        <DialogContent className="max-w-md">
+                                          <DialogHeader>
+                                            <DialogTitle>Sugerir Preço</DialogTitle>
+                                          </DialogHeader>
+                                          <div className="space-y-4">
+                                            <div>
+                                              <Label>Posto: {station.name}</Label>
+                                              <p className="text-sm text-slate-500">{getProductName(req.product)}</p>
+                                            </div>
+                                            <div>
+                                              <Label className="text-xs text-slate-500">Preço Atual:</Label>
+                                              <p className="text-sm font-semibold">{formatPrice(currentPriceReais)}</p>
+                                            </div>
+                                            <div>
+                                              <Label htmlFor={`suggest-price-${req.id}`} className="text-xs">Preço Sugerido (R$/L):</Label>
+                                              <Input
+                                                id={`suggest-price-${req.id}`}
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={suggestedPrice}
+                                                onChange={(e) => {
+                                                  setBatchSuggestedPrices(prev => ({
+                                                    ...prev,
+                                                    [req.id]: parseFloat(e.target.value) || 0
+                                                  }));
+                                                }}
+                                                placeholder="0.00"
+                                              />
+                                            </div>
+                                            <div className="flex gap-2 pt-2">
+                                              <Button
+                                                onClick={async () => {
+                                                  const priceInCents = Math.round(suggestedPrice * 100);
+                                                  const { error } = await supabase
+                                                    .from('price_suggestions')
+                                                    .update({ 
+                                                      final_price: priceInCents,
+                                                      suggested_price: priceInCents
+                                                    })
+                                                    .eq('id', req.id);
+                                                  
+                                                  if (error) {
+                                                    toast.error("Erro ao atualizar preço: " + error.message);
+                                                  } else {
+                                                    toast.success("Preço sugerido atualizado com sucesso!");
+                                                    setShowPriceModal(prev => ({
+                                                      ...prev,
+                                                      [req.id]: false
+                                                    }));
+                                                    loadSuggestions();
+                                                  }
+                                                }}
+                                                className="flex-1"
+                                                disabled={loading}
+                                              >
+                                                Salvar Preço
+                                              </Button>
+                                              <Button
+                                                variant="outline"
+                                                onClick={() => {
+                                                  setShowPriceModal(prev => ({
+                                                    ...prev,
+                                                    [req.id]: false
+                                                  }));
+                                                }}
+                                              >
+                                                Cancelar
+                                              </Button>
+                                            </div>
+                                          </div>
+                                        </DialogContent>
+                                      </Dialog>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Suggestions List */}
       <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
         <CardHeader>
-          <CardTitle>Sugestões de Preço ({filteredSuggestions.length})</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Sugestões de Preço ({individualApprovals.length})</CardTitle>
+            <div className="flex gap-2">
+              <Button
+                variant={viewMode === 'cards' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('cards')}
+              >
+                Cards
+              </Button>
+              <Button
+                variant={viewMode === 'table' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('table')}
+              >
+                Tabela
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
+          {viewMode === 'table' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-200 dark:border-slate-700">
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">CIDADE/UF</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO VEND. (R$/L)</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">VOLUME (M³)</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">MARGEM SUG. (R$/L)</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO SUG. (R$/L)</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">STATUS</th>
+                    <th className="text-left p-3 text-sm font-semibold text-slate-700 dark:text-slate-300">AÇÕES</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {individualApprovals.map((suggestion) => {
+                    const currentPrice = suggestion.current_price || suggestion.cost_price || 0;
+                    const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
+                    const finalPrice = suggestion.final_price || suggestion.suggested_price || 0;
+                    const finalPriceReais = finalPrice >= 100 ? finalPrice / 100 : finalPrice;
+                    const margin = finalPriceReais - currentPriceReais;
+                    const volumeProjected = suggestion.volume_projected || 0;
+                    
+                    return (
+                      <tr key={suggestion.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                          {suggestion.stations?.name || suggestion.station_id || 'N/A'}
+                        </td>
+                        <td className="p-3 text-sm text-slate-600 dark:text-slate-400">
+                          {suggestion.stations?.code ? suggestion.stations.code.split('/')[0] : '-'} / {suggestion.stations?.code ? suggestion.stations.code.split('/')[1] : '-'}
+                        </td>
+                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                          {currentPriceReais > 0 ? formatPrice(currentPriceReais) : '-'}
+                        </td>
+                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                          {volumeProjected || '-'}
+                        </td>
+                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                          {margin !== 0 ? formatPrice(margin) : '-'}
+                        </td>
+                        <td className="p-3 text-sm text-slate-700 dark:text-slate-300">
+                          {finalPriceReais > 0 ? formatPrice(finalPriceReais) : '-'}
+                        </td>
+                        <td className="p-3">
+                          {getStatusBadge(suggestion.status)}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedSuggestion(suggestion);
+                                setShowDetails(true);
+                              }}
+                              className="h-8 w-8 p-0"
+                              title="Ver detalhes"
+                            >
+                              <Eye className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+                            </Button>
+                            {suggestion.status === 'pending' && permissions?.permissions?.can_approve && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedSuggestion(suggestion);
+                                    setShowDetails(true);
+                                  }}
+                                  className="text-green-600 hover:text-green-700 hover:bg-green-50 h-8 px-3"
+                                >
+                                  Aprovar
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setSelectedSuggestion(suggestion);
+                                    setShowDetails(true);
+                                  }}
+                                  className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 px-3"
+                                >
+                                  Negar
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
           <div className="space-y-4">
-            {filteredSuggestions.map((suggestion) => (
+            {individualApprovals.map((suggestion) => (
               <div key={suggestion.id} className="p-4 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:shadow-lg transition-all duration-300">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div className="flex-1">
@@ -1215,12 +1891,13 @@ export default function Approvals() {
               </div>
             ))}
             
-            {filteredSuggestions.length === 0 && (
+            {individualApprovals.length === 0 && (
               <div className="text-center py-8">
                 <p className="text-slate-600 dark:text-slate-400">Nenhuma sugestão encontrada</p>
               </div>
             )}
           </div>
+          )}
         </CardContent>
       </Card>
       </div>
@@ -1237,6 +1914,302 @@ export default function Approvals() {
       onReject={(observations) => handleReject(selectedSuggestion?.id, observations)}
       loading={loading}
     />
+
+    {/* Modal para Aprovação em Lote - REMOVIDO - Agora é inline */}
+    {/* 
+    <Dialog open={showBatchModal} onOpenChange={setShowBatchModal}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Aprovar Solicitações em Lote</DialogTitle>
+        </DialogHeader>
+        {selectedBatch && (
+          <div className="space-y-6">
+            <div>
+              <Label className="text-sm font-semibold">Cliente:</Label>
+              <p className="text-sm">{selectedBatch.client?.name || 'N/A'}</p>
+            </div>
+            
+            <Tabs defaultValue="observations" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="observations">Observações</TabsTrigger>
+                <TabsTrigger value="prices">Sugerir Preços</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="observations" className="space-y-4">
+                {selectedBatch.requests.map((req: any) => {
+                  const station = req.stations || { name: req.station_id || 'N/A' };
+                  return (
+                    <div key={req.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+                      <Label className="text-sm font-semibold mb-2 block">
+                        {station.name} - {getProductName(req.product)}
+                      </Label>
+                      <Textarea
+                        placeholder="Adicione uma observação para esta solicitação..."
+                        value={batchObservations[req.id] || ''}
+                        onChange={(e) => {
+                          setBatchObservations(prev => ({
+                            ...prev,
+                            [req.id]: e.target.value
+                          }));
+                        }}
+                        className="min-h-[100px]"
+                      />
+                    </div>
+                  );
+                })}
+              </TabsContent>
+              
+              <TabsContent value="prices" className="space-y-4">
+                {selectedBatch.requests.map((req: any) => {
+                  const station = req.stations || { name: req.station_id || 'N/A' };
+                  const currentPrice = req.current_price || req.cost_price || 0;
+                  const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
+                  const suggestedPrice = batchSuggestedPrices[req.id] || 0;
+                  
+                  return (
+                    <div key={req.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+                      <Label className="text-sm font-semibold mb-2 block">
+                        {station.name} - {getProductName(req.product)}
+                      </Label>
+                      <div className="space-y-2">
+                        <div>
+                          <Label className="text-xs text-slate-500">Preço Atual:</Label>
+                          <p className="text-sm font-semibold">{formatPrice(currentPriceReais)}</p>
+                        </div>
+                        <div>
+                          <Label htmlFor={`price-${req.id}`} className="text-xs">Preço Sugerido (R$/L):</Label>
+                          <Input
+                            id={`price-${req.id}`}
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={suggestedPrice}
+                            onChange={(e) => {
+                              setBatchSuggestedPrices(prev => ({
+                                ...prev,
+                                [req.id]: parseFloat(e.target.value) || 0
+                              }));
+                            }}
+                            placeholder="0.00"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </TabsContent>
+            </Tabs>
+            
+            <div className="flex gap-3 pt-4">
+              <Button
+                onClick={async () => {
+                  if (!selectedBatch) return;
+                  
+                  setLoading(true);
+                  try {
+                    // Validar que todas as observações foram preenchidas
+                    const allHaveObservations = selectedBatch.requests.every((req: any) => {
+                      const obs = batchObservations[req.id] || '';
+                      return obs.trim().length > 0;
+                    });
+                    
+                    if (!allHaveObservations) {
+                      toast.error("Por favor, adicione observações para todas as solicitações");
+                      setLoading(false);
+                      return;
+                    }
+                    
+                    // Aprovar cada solicitação do lote
+                    let successCount = 0;
+                    let errorCount = 0;
+                    
+                    for (const req of selectedBatch.requests) {
+                      try {
+                        const obs = batchObservations[req.id] || '';
+                        const suggestedPrice = batchSuggestedPrices[req.id];
+                        
+                        // Se houver preço sugerido diferente, atualizar antes de aprovar
+                        if (suggestedPrice && suggestedPrice > 0) {
+                          const priceInCents = Math.round(suggestedPrice * 100);
+                          await supabase
+                            .from('price_suggestions')
+                            .update({ 
+                              final_price: priceInCents,
+                              suggested_price: priceInCents
+                            })
+                            .eq('id', req.id);
+                        }
+                        
+                        await handleApprove(req.id, obs);
+                        successCount++;
+                      } catch (error) {
+                        console.error(`Erro ao aprovar ${req.id}:`, error);
+                        errorCount++;
+                      }
+                    }
+                    
+                    if (successCount > 0) {
+                      toast.success(`${successCount} solicitação(ões) aprovada(s) com sucesso!`);
+                    }
+                    if (errorCount > 0) {
+                      toast.error(`${errorCount} solicitação(ões) falharam ao aprovar`);
+                    }
+                    
+                    setShowBatchModal(false);
+                    setSelectedBatch(null);
+                    setBatchObservations({});
+                    setBatchSuggestedPrices({});
+                    loadSuggestions();
+                  } catch (error: any) {
+                    toast.error("Erro ao aprovar em lote: " + (error?.message || 'Erro desconhecido'));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                disabled={loading}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+              >
+                <Check className="h-4 w-4 mr-2" />
+                Aprovar Lote
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowBatchModal(false);
+                  setSelectedBatch(null);
+                  setBatchObservations({});
+                  setBatchSuggestedPrices({});
+                }}
+                variant="outline"
+                disabled={loading}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    */}
+    
+    {/* Modal para Aprovar Lote */}
+    {batchApprovals.map((batch) => (
+      <Dialog 
+        key={`batch-approve-${batch.batchKey}`}
+        open={showBatchApproveModal[batch.batchKey] || false} 
+        onOpenChange={(open) => {
+          setShowBatchApproveModal(prev => ({
+            ...prev,
+            [batch.batchKey]: open
+          }));
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Aprovar Lote Completo</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-sm font-semibold mb-2 block">
+                {batch.hasMultipleClients ? (
+                  <>Clientes: {batch.clients?.map((c: any) => c?.name || 'N/A').join(', ') || 'Múltiplos'}</>
+                ) : (
+                  <>Cliente: {batch.client?.name || 'N/A'}</>
+                )}
+              </Label>
+              <p className="text-xs text-slate-500 mb-4">
+                {batch.requests.length} solicitação(ões) serão aprovadas com a mesma observação
+              </p>
+            </div>
+            <div>
+              <Label htmlFor={`batch-obs-${batch.batchKey}`} className="text-xs">Observação para todo o lote:</Label>
+              <Textarea
+                id={`batch-obs-${batch.batchKey}`}
+                placeholder="Digite uma observação que será aplicada a todas as solicitações do lote..."
+                value={batchApproveObservation[batch.batchKey] || ''}
+                onChange={(e) => {
+                  setBatchApproveObservation(prev => ({
+                    ...prev,
+                    [batch.batchKey]: e.target.value
+                  }));
+                }}
+                className="min-h-[120px] mt-2"
+                rows={5}
+              />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <Button
+                onClick={async () => {
+                  const observation = batchApproveObservation[batch.batchKey] || '';
+                  if (!observation.trim()) {
+                    toast.error("Observação é obrigatória para aprovar o lote");
+                    return;
+                  }
+                  
+                  setLoading(true);
+                  try {
+                    let successCount = 0;
+                    let errorCount = 0;
+                    
+                    for (const req of batch.requests) {
+                      try {
+                        // Atualizar observação para esta solicitação
+                        setBatchObservations(prev => ({
+                          ...prev,
+                          [req.id]: observation
+                        }));
+                        
+                        await handleApprove(req.id, observation);
+                        successCount++;
+                      } catch (error) {
+                        console.error(`Erro ao aprovar ${req.id}:`, error);
+                        errorCount++;
+                      }
+                    }
+                    
+                    if (successCount > 0) {
+                      toast.success(`${successCount} solicitação(ões) do lote aprovada(s) com sucesso!`);
+                    }
+                    if (errorCount > 0) {
+                      toast.error(`${errorCount} solicitação(ões) falharam ao aprovar`);
+                    }
+                    
+                    setShowBatchApproveModal(prev => ({
+                      ...prev,
+                      [batch.batchKey]: false
+                    }));
+                    setBatchApproveObservation(prev => ({
+                      ...prev,
+                      [batch.batchKey]: ''
+                    }));
+                    
+                    loadSuggestions();
+                  } catch (error: any) {
+                    toast.error("Erro ao aprovar lote: " + (error?.message || 'Erro desconhecido'));
+                  } finally {
+                    setLoading(false);
+                  }
+                }}
+                className="flex-1"
+                disabled={loading || !batchApproveObservation[batch.batchKey]?.trim()}
+              >
+                Aprovar Lote
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowBatchApproveModal(prev => ({
+                    ...prev,
+                    [batch.batchKey]: false
+                  }));
+                }}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    ))}
     </div>
   );
 }
