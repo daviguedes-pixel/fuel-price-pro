@@ -34,15 +34,30 @@ export default function ApprovalOrderConfig() {
   const [hasChanges, setHasChanges] = useState(false);
 
 
-  const loadProfiles = async () => {
+  const loadProfiles = async (retryCount = 0) => {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 segundo
+
     try {
       setLoading(true);
+
       const { data, error } = await supabase
         .from('approval_profile_order' as any)
         .select('*')
         .order('order_position', { ascending: true });
 
-      if (error) throw error;
+      if (error) {
+        // Se for erro de rede, tentar novamente
+        if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+          if (retryCount < MAX_RETRIES) {
+            console.log(`Tentativa ${retryCount + 1} de ${MAX_RETRIES}...`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (retryCount + 1)));
+            return loadProfiles(retryCount + 1);
+          }
+          throw new Error('Erro de conexão com o servidor. Verifique sua conexão com a internet.');
+        }
+        throw error;
+      }
 
       // Se não houver dados, criar ordem padrão
       if (!data || data.length === 0) {
@@ -63,7 +78,18 @@ export default function ApprovalOrderConfig() {
           .from('approval_profile_order' as any)
           .insert(inserts);
 
-        if (insertError) throw insertError;
+        if (insertError) {
+          // Se for erro de rede, tentar novamente
+          if (insertError.message?.includes('Failed to fetch') || insertError.message?.includes('NetworkError')) {
+            if (retryCount < MAX_RETRIES) {
+              console.log(`Tentativa ${retryCount + 1} de ${MAX_RETRIES}...`);
+              await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * (retryCount + 1)));
+              return loadProfiles(retryCount + 1);
+            }
+            throw new Error('Erro de conexão com o servidor. Verifique sua conexão com a internet.');
+          }
+          throw insertError;
+        }
 
         setProfiles(defaultProfiles.map((p, idx) => ({
           id: `temp-${idx}`,
@@ -76,7 +102,29 @@ export default function ApprovalOrderConfig() {
       setHasChanges(false);
     } catch (error: any) {
       console.error('Erro ao carregar perfis:', error);
-      toast.error('Erro ao carregar ordem de aprovação: ' + (error?.message || 'Erro desconhecido'));
+      
+      // Mensagem de erro mais amigável
+      let errorMessage = 'Erro desconhecido';
+      if (error?.message) {
+        if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+          errorMessage = 'Erro de conexão com o servidor. Verifique sua conexão com a internet e tente novamente.';
+        } else if (error.message.includes('JWT')) {
+          errorMessage = 'Sessão expirada. Por favor, faça login novamente.';
+        } else if (error.message.includes('permission') || error.message.includes('permissão')) {
+          errorMessage = 'Você não tem permissão para acessar esta página.';
+        } else {
+          errorMessage = error.message;
+        }
+      }
+      
+      toast.error('Erro ao carregar ordem de aprovação: ' + errorMessage);
+      
+      // Se ainda não tentou todas as vezes, tentar novamente após um delay maior
+      if (retryCount < MAX_RETRIES && (error?.message?.includes('Failed to fetch') || error?.message?.includes('NetworkError'))) {
+        setTimeout(() => {
+          loadProfiles(retryCount + 1);
+        }, RETRY_DELAY * (retryCount + 2));
+      }
     } finally {
       setLoading(false);
     }
@@ -152,6 +200,15 @@ export default function ApprovalOrderConfig() {
 
       toast.success('Ordem de aprovação salva com sucesso!');
       setHasChanges(false);
+      
+      // Invalidar cache de aprovadores em todas as páginas
+      try {
+        localStorage.removeItem('approvals_approvers_cache');
+        localStorage.removeItem('approvals_approvers_cache_timestamp');
+        localStorage.removeItem('approvals_suggestions_cache');
+        localStorage.removeItem('approvals_suggestions_cache_timestamp');
+      } catch {}
+      
       await loadProfiles();
     } catch (error: any) {
       console.error('Erro ao salvar ordem:', error);

@@ -3,8 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Eye, Download, Check, X, User, Calendar, MessageSquare } from "lucide-react";
+import { Eye, Download, Check, X, User, Calendar, MessageSquare, DollarSign } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -26,6 +27,7 @@ interface ApprovalDetailsModalProps {
   suggestion: any;
   onApprove: (observations: string) => void;
   onReject: (observations: string) => void;
+  onSuggestPrice?: (observations: string, suggestedPrice: number) => void;
   loading: boolean;
   readOnly?: boolean;
 }
@@ -36,10 +38,12 @@ export const ApprovalDetailsModal = ({
   suggestion, 
   onApprove, 
   onReject,
+  onSuggestPrice,
   loading,
   readOnly = false
 }: ApprovalDetailsModalProps) => {
   const [observations, setObservations] = useState("");
+  const [suggestedPrice, setSuggestedPrice] = useState<string>("");
   const [approvalHistory, setApprovalHistory] = useState<ApprovalHistory[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [imageViewerOpen, setImageViewerOpen] = useState(false);
@@ -57,6 +61,35 @@ export const ApprovalDetailsModal = ({
       }
     }
   }, [suggestion?.id, isOpen, suggestion]);
+  
+  // Listener de real-time para atualizar histórico quando houver mudanças
+  useEffect(() => {
+    if (!suggestion?.id || !isOpen) return;
+    
+    const channel = supabase
+      .channel(`approval_history_${suggestion.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'approval_history',
+          filter: `suggestion_id=eq.${suggestion.id}`
+        },
+        (payload) => {
+          console.log('🔄 Mudança detectada no histórico de aprovação:', payload.eventType);
+          // Recarregar histórico após um pequeno delay
+          setTimeout(() => {
+            loadApprovalHistory();
+          }, 500);
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [suggestion?.id, isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   
   const loadMissingData = async () => {
     if (!suggestion) return;
@@ -297,6 +330,18 @@ export const ApprovalDetailsModal = ({
   const handleReject = () => {
     onReject(observations);
     setObservations("");
+  };
+
+  const handleSuggestPrice = () => {
+    if (onSuggestPrice) {
+      const priceValue = suggestedPrice.trim() ? parseBrazilianDecimal(suggestedPrice) : (dataToShow.final_price || dataToShow.suggested_price || 0) / 100;
+      if (!priceValue || priceValue <= 0) {
+        return; // Preço inválido
+      }
+      onSuggestPrice(observations, priceValue);
+      setObservations("");
+      setSuggestedPrice("");
+    }
   };
 
   return (
@@ -944,6 +989,64 @@ export const ApprovalDetailsModal = ({
                     />
                   </div>
 
+                  {onSuggestPrice && (
+                    <div>
+                      <Label htmlFor="suggested-price" className="text-base font-semibold">
+                        Preço Sugerido (R$/L) - Opcional
+                      </Label>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        Se desejar sugerir um preço diferente, informe abaixo
+                      </p>
+                      <Input
+                        id="suggested-price"
+                        type="text"
+                        placeholder={formatPriceDynamic((dataToShow.final_price || dataToShow.suggested_price || 0) / 100)}
+                        value={suggestedPrice}
+                        onChange={(e) => {
+                          let value = e.target.value.replace(/[^\d,]/g, '');
+                          
+                          // Se não tem vírgula e tem mais de 2 dígitos, adicionar vírgula antes dos últimos 2
+                          if (!value.includes(',') && value.length > 2) {
+                            value = value.slice(0, -2) + ',' + value.slice(-2);
+                          }
+                          
+                          // Garantir apenas uma vírgula
+                          const parts = value.split(',');
+                          if (parts.length > 2) {
+                            value = parts[0] + ',' + parts.slice(1).join('');
+                          }
+                          
+                          // Limitar a 2 casas decimais após a vírgula
+                          if (parts.length === 2 && parts[1].length > 2) {
+                            value = parts[0] + ',' + parts[1].slice(0, 2);
+                          }
+                          
+                          setSuggestedPrice(value);
+                        }}
+                        onBlur={(e) => {
+                          const value = e.target.value.trim();
+                          if (value) {
+                            // Se não tem vírgula, adicionar ,00
+                            if (!value.includes(',')) {
+                              const numValue = parseFloat(value.replace(/[^\d]/g, ''));
+                              if (!isNaN(numValue) && numValue > 0) {
+                                setSuggestedPrice(numValue.toFixed(2).replace('.', ','));
+                                return;
+                              }
+                            }
+                            
+                            const numValue = parseBrazilianDecimal(value);
+                            if (!isNaN(numValue) && numValue > 0) {
+                              // Formatar com vírgula e 2 casas decimais
+                              const formatted = numValue.toFixed(2).replace('.', ',');
+                              setSuggestedPrice(formatted);
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+
                   <Separator />
 
                   <div className="flex gap-3">
@@ -966,11 +1069,28 @@ export const ApprovalDetailsModal = ({
                       <X className="h-5 w-5 mr-2" />
                       Rejeitar
                     </Button>
+                    {onSuggestPrice && (
+                      <Button
+                        onClick={handleSuggestPrice}
+                        disabled={loading || !suggestedPrice.trim()}
+                        variant="outline"
+                        className="flex-1 border-blue-600 text-blue-600 hover:bg-blue-50"
+                        size="lg"
+                      >
+                        <DollarSign className="h-5 w-5 mr-2" />
+                        Sugerir Preço
+                      </Button>
+                    )}
                   </div>
                   
                   {!observations.trim() && (
                     <p className="text-sm text-amber-600 text-center">
                       Por favor, adicione uma observação antes de aprovar ou rejeitar
+                    </p>
+                  )}
+                  {onSuggestPrice && !suggestedPrice.trim() && (
+                    <p className="text-sm text-amber-600 text-center">
+                      Por favor, informe um preço sugerido
                     </p>
                   )}
                 </div>
