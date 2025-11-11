@@ -10,7 +10,6 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import PriceRequest from "./pages/PriceRequest";
-import PriceRequestTest from "./pages/PriceRequestTest";
 import Approvals from "./pages/Approvals";
 import Admin from "./pages/Admin";
 import MapView from "./pages/MapView";
@@ -92,7 +91,6 @@ const App = () => {
                   <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                   <Route path="/pricing-suggestion" element={<Navigate to="/solicitacao-preco" replace />} />
                   <Route path="/solicitacao-preco" element={<ProtectedRoute><PriceRequest /></ProtectedRoute>} />
-                  <Route path="/solicitacao-preco-test" element={<ProtectedRoute><PriceRequestTest /></ProtectedRoute>} />
                   <Route path="/approvals" element={<ProtectedRoute><Approvals /></ProtectedRoute>} />
                   <Route path="/competitor-research" element={<ProtectedRoute><PublicPriceResearch /></ProtectedRoute>} />
                   <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />

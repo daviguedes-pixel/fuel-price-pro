@@ -1426,7 +1426,7 @@ export default function PriceRequest() {
             if (allApprovers && allApprovers.length > 0) {
               // Buscar ordem hierárquica de aprovação do banco de dados
               const { data: orderData } = await supabase
-                .from('approval_profile_order')
+                .from('approval_profile_order' as any)
                 .select('perfil, order_position')
                 .eq('is_active', true)
                 .order('order_position', { ascending: true });

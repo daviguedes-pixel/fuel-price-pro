@@ -38,7 +38,7 @@ export default function ApprovalOrderConfig() {
     try {
       setLoading(true);
       const { data, error } = await supabase
-        .from('approval_profile_order')
+        .from('approval_profile_order' as any)
         .select('*')
         .order('order_position', { ascending: true });
 
@@ -60,7 +60,7 @@ export default function ApprovalOrderConfig() {
         }));
 
         const { error: insertError } = await supabase
-          .from('approval_profile_order')
+          .from('approval_profile_order' as any)
           .insert(inserts);
 
         if (insertError) throw insertError;
@@ -70,7 +70,7 @@ export default function ApprovalOrderConfig() {
           ...p,
         })));
       } else {
-        setProfiles(data);
+        setProfiles(data as any);
       }
 
       setHasChanges(false);
@@ -139,7 +139,7 @@ export default function ApprovalOrderConfig() {
       // Atualizar cada perfil
       for (const profile of profiles) {
         const { error } = await supabase
-          .from('approval_profile_order')
+          .from('approval_profile_order' as any)
           .update({
             order_position: profile.order_position,
             is_active: profile.is_active,
@@ -168,7 +168,7 @@ export default function ApprovalOrderConfig() {
     try {
       const maxPosition = Math.max(...profiles.map(p => p.order_position), 0);
       const { data, error } = await supabase
-        .from('approval_profile_order')
+        .from('approval_profile_order' as any)
         .insert({
           perfil: profileName.trim(),
           order_position: maxPosition + 1,
@@ -180,7 +180,7 @@ export default function ApprovalOrderConfig() {
 
       if (error) throw error;
 
-      setProfiles([...profiles, data]);
+      setProfiles([...profiles, data as any]);
       setHasChanges(true);
       toast.success('Perfil adicionado com sucesso!');
     } catch (error: any) {
