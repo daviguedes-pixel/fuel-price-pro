@@ -39,13 +39,13 @@ export default function ApprovalMarginConfig() {
     try {
       setLoading(true);
       const { data, error } = await supabase
-        .from('approval_margin_rules')
+        .from('approval_margin_rules' as any)
         .select('*')
         .order('priority_order', { ascending: false })
         .order('min_margin_cents', { ascending: true });
 
       if (error) throw error;
-      setRules(data || []);
+      setRules((data as any) || []);
     } catch (error: any) {
       console.error('Erro ao carregar regras:', error);
       toast({
@@ -99,7 +99,7 @@ export default function ApprovalMarginConfig() {
       if (editingRule?.id) {
         // Atualizar regra existente
         const { error } = await supabase
-          .from('approval_margin_rules')
+          .from('approval_margin_rules' as any)
           .update(ruleData)
           .eq('id', editingRule.id);
         
@@ -112,7 +112,7 @@ export default function ApprovalMarginConfig() {
       } else {
         // Criar nova regra
         const { error } = await supabase
-          .from('approval_margin_rules')
+          .from('approval_margin_rules' as any)
           .insert([ruleData]);
         
         if (error) throw error;
@@ -143,7 +143,7 @@ export default function ApprovalMarginConfig() {
   const handleDelete = async (id: string) => {
     try {
       const { error } = await supabase
-        .from('approval_margin_rules')
+        .from('approval_margin_rules' as any)
         .delete()
         .eq('id', id);
       
@@ -168,7 +168,7 @@ export default function ApprovalMarginConfig() {
   const toggleActive = async (rule: ApprovalMarginRule) => {
     try {
       const { error } = await supabase
-        .from('approval_margin_rules')
+        .from('approval_margin_rules' as any)
         .update({ is_active: !rule.is_active })
         .eq('id', rule.id);
       

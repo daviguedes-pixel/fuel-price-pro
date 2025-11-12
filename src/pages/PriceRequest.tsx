@@ -1933,8 +1933,8 @@ export default function PriceRequest() {
               
               if (existingSuggestionIds.length > 0) {
                 const { error: updateError } = await supabase
-                  .from('price_suggestions')
-                  .update({ batch_id: batchIdToUse })
+                  .from('price_suggestions' as any)
+                  .update({ batch_id: batchIdToUse } as any)
                   .in('id', existingSuggestionIds)
                   .is('batch_id', null); // Só atualizar as que não têm batch_id
                 

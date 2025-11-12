@@ -10,7 +10,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import PriceRequest from "./pages/PriceRequest";
-import Approvals from "./pages/Approvals";
+import Approvals from "./pages/ApprovalsOptimized";
 import Admin from "./pages/Admin";
 import MapView from "./pages/MapView";
 import PriceHistory from "./pages/PriceHistory";
