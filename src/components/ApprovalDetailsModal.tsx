@@ -117,14 +117,14 @@ export const ApprovalDetailsModal = ({
           
           const { data: stationData } = await supabase
             .from('sis_empresa' as any)
-            .select('nome_empresa, cnpj_cpf, id_empresa')
-            .or(`cnpj_cpf.eq.${stationId},id.eq.${stationId},id_empresa.eq.${stationId}`)
+            .select('nome_empresa, cnpj_cpf')
+            .eq('cnpj_cpf', stationId)
             .maybeSingle();
           
           if (stationData) {
             stationsList.push({ 
               name: (stationData as any).nome_empresa, 
-              code: (stationData as any).cnpj_cpf || (stationData as any).id_empresa 
+              code: (stationData as any).cnpj_cpf
             });
           }
         }
