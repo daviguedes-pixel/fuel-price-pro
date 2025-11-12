@@ -11,6 +11,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { parseBrazilianDecimal } from "@/lib/utils";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
+import { usePermissions } from "@/hooks/usePermissions";
+import { toast } from "sonner";
 
 interface ApprovalHistory {
   id: string;
@@ -42,6 +44,7 @@ export const ApprovalDetailsModal = ({
   loading,
   readOnly = false
 }: ApprovalDetailsModalProps) => {
+  const { permissions } = usePermissions();
   const [observations, setObservations] = useState("");
   const [suggestedPrice, setSuggestedPrice] = useState<string>("");
   const [approvalHistory, setApprovalHistory] = useState<ApprovalHistory[]>([]);
@@ -50,6 +53,22 @@ export const ApprovalDetailsModal = ({
   const [selectedImage, setSelectedImage] = useState<string>("");
 
   const [enrichedSuggestion, setEnrichedSuggestion] = useState(suggestion);
+  
+  const hasPermission = permissions?.permissions?.can_approve;
+  
+  // Debug: verificar condições
+  useEffect(() => {
+    if (suggestion) {
+      const dataToShow = enrichedSuggestion || suggestion;
+      console.log('🔍 ApprovalDetailsModal Debug:', {
+        hasPermission,
+        status: dataToShow.status,
+        readOnly,
+        shouldShowObservationSection: !hasPermission && dataToShow.status !== 'pending' && !readOnly,
+        permissions: permissions?.permissions
+      });
+    }
+  }, [suggestion, enrichedSuggestion, hasPermission, readOnly, permissions]);
 
   useEffect(() => {
     if (suggestion?.id && isOpen) {
@@ -330,6 +349,71 @@ export const ApprovalDetailsModal = ({
   const handleReject = () => {
     onReject(observations);
     setObservations("");
+  };
+
+  const handleAddObservation = async () => {
+    console.log('🔵 handleAddObservation chamado:', { 
+      suggestionId: suggestion?.id, 
+      observationsLength: observations?.trim()?.length,
+      status: dataToShow.status 
+    });
+    
+    if (!suggestion?.id || !observations.trim()) {
+      console.warn('⚠️ Validação falhou:', { hasId: !!suggestion?.id, hasObservations: !!observations.trim() });
+      toast.error("Por favor, adicione uma observação");
+      return;
+    }
+
+    try {
+      // Buscar nome do usuário
+      let approverName = 'Usuário';
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (user) {
+        try {
+          const { data: userProfile } = await supabase
+            .from('user_profiles')
+            .select('nome, email')
+            .eq('user_id', user.id)
+            .single();
+          if (userProfile?.nome) {
+            approverName = userProfile.nome;
+          } else if (userProfile?.email) {
+            approverName = userProfile.email;
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar nome do usuário:', err);
+        }
+      }
+
+      // Registrar observação no histórico - usar 'approved' ou 'rejected' baseado no status atual
+      // Se o status não for approved ou rejected, usar 'approved' como padrão
+      const action = dataToShow.status === 'rejected' ? 'rejected' : 'approved';
+      
+      const { error: historyError } = await supabase
+        .from('approval_history')
+        .insert({
+          suggestion_id: suggestion.id,
+          approver_id: user?.id,
+          approver_name: approverName,
+          action: action,
+          observations: observations.trim(),
+          approval_level: dataToShow.approval_level || 1
+        });
+
+      if (historyError) {
+        console.error('Erro ao registrar observação:', historyError);
+        toast.error("Erro ao registrar observação: " + historyError.message);
+      } else {
+        // Recarregar histórico
+        await loadApprovalHistory();
+        setObservations("");
+        toast.success("Observação registrada com sucesso!");
+      }
+    } catch (error: any) {
+      console.error('Erro ao adicionar observação:', error);
+      toast.error("Erro ao adicionar observação: " + (error?.message || 'Erro desconhecido'));
+    }
   };
 
   const handleSuggestPrice = () => {
@@ -967,17 +1051,19 @@ export const ApprovalDetailsModal = ({
             </CardContent>
           </Card>
 
-          {/* Ações de Aprovação - Apenas se status for pending E não for readOnly */}
+          {/* Ações de Aprovação - Se status for pending E não for readOnly */}
           {dataToShow.status === 'pending' && !readOnly && (
             <Card className="bg-slate-50 dark:bg-slate-900">
               <CardContent className="pt-6">
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="observations" className="text-base font-semibold">
-                      Observações (obrigatório)
+                      Observações {hasPermission ? '(obrigatório)' : '(opcional - você não possui permissão para aprovar/rejeitar)'}
                     </Label>
                     <p className="text-sm text-muted-foreground mb-2">
-                      Deixe sua observação para o próximo aprovador ou para o solicitante
+                      {hasPermission 
+                        ? 'Deixe sua observação para o próximo aprovador ou para o solicitante'
+                        : 'Você pode adicionar uma observação, mas não possui permissão para aprovar ou rejeitar esta solicitação'}
                     </p>
                     <Textarea
                       id="observations"
@@ -1052,22 +1138,24 @@ export const ApprovalDetailsModal = ({
                   <div className="flex gap-3">
                     <Button
                       onClick={handleApprove}
-                      disabled={loading || !observations.trim()}
+                      disabled={loading || (hasPermission && !observations.trim())}
                       className="flex-1 bg-green-600 hover:bg-green-700"
                       size="lg"
+                      title={!hasPermission ? "Você pode adicionar uma observação, mas não possui permissão para aprovar" : ""}
                     >
                       <Check className="h-5 w-5 mr-2" />
-                      Aprovar
+                      {!hasPermission ? "Adicionar Observação (Aprovar)" : "Aprovar"}
                     </Button>
                     <Button
                       onClick={handleReject}
-                      disabled={loading || !observations.trim()}
+                      disabled={loading || (hasPermission && !observations.trim())}
                       variant="destructive"
                       className="flex-1"
                       size="lg"
+                      title={!hasPermission ? "Você pode adicionar uma observação, mas não possui permissão para rejeitar" : ""}
                     >
                       <X className="h-5 w-5 mr-2" />
-                      Rejeitar
+                      {!hasPermission ? "Adicionar Observação (Rejeitar)" : "Rejeitar"}
                     </Button>
                     {onSuggestPrice && (
                       <Button
@@ -1083,14 +1171,86 @@ export const ApprovalDetailsModal = ({
                     )}
                   </div>
                   
-                  {!observations.trim() && (
+                  {hasPermission && !observations.trim() && (
                     <p className="text-sm text-amber-600 text-center">
                       Por favor, adicione uma observação antes de aprovar ou rejeitar
+                    </p>
+                  )}
+                  {!hasPermission && (
+                    <p className="text-sm text-blue-600 text-center">
+                      Você pode adicionar uma observação, mas não possui permissão para aprovar ou rejeitar esta solicitação
                     </p>
                   )}
                   {onSuggestPrice && !suggestedPrice.trim() && (
                     <p className="text-sm text-amber-600 text-center">
                       Por favor, informe um preço sugerido
+                    </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Seção para adicionar observações em solicitações já processadas */}
+          {(() => {
+            // Mostrar seção se status não é pending e não está em modo readOnly
+            const isNotPending = dataToShow.status !== 'pending' && dataToShow.status !== 'draft';
+            const shouldShow = !readOnly && isNotPending;
+            console.log('🔍 Verificando seção de observação:', {
+              hasPermission,
+              status: dataToShow.status,
+              isNotPending,
+              readOnly,
+              shouldShow,
+              'dataToShow': dataToShow
+            });
+            return shouldShow;
+          })() && (
+            <Card className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+              <CardContent className="pt-6">
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="observations-history" className="text-base font-semibold">
+                      Adicionar Observação ao Histórico {hasPermission ? '' : '(sem permissão de aprovação)'}
+                    </Label>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {hasPermission 
+                        ? 'Você pode adicionar uma observação ao histórico desta solicitação já processada.'
+                        : 'Você pode adicionar uma observação ao histórico desta solicitação, mesmo que ela já tenha sido processada. A observação será registrada mas não alterará o status.'}
+                    </p>
+                    <Textarea
+                      id="observations-history"
+                      placeholder="Digite suas observações sobre esta solicitação..."
+                      value={observations}
+                      onChange={(e) => setObservations(e.target.value)}
+                      rows={4}
+                      className="resize-none"
+                    />
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={handleAddObservation}
+                      disabled={loading || !observations.trim()}
+                      variant="outline"
+                      className="flex-1 border-blue-600 text-blue-600 hover:bg-blue-50"
+                      size="lg"
+                    >
+                      <MessageSquare className="h-5 w-5 mr-2" />
+                      Adicionar Observação
+                    </Button>
+                  </div>
+                  
+                  {!observations.trim() && (
+                    <p className="text-sm text-amber-600 text-center">
+                      Por favor, adicione uma observação antes de salvar.
+                    </p>
+                  )}
+                  {observations.trim() && (
+                    <p className="text-sm text-blue-600 text-center">
+                      A observação será registrada no histórico, mas não alterará o status da solicitação.
                     </p>
                   )}
                 </div>

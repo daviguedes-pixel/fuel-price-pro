@@ -46,7 +46,6 @@ export default function Approvals() {
   const [filteredSuggestions, setFilteredSuggestions] = useState<any[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchApprovals, setBatchApprovals] = useState<any[]>([]);
   const [individualApprovals, setIndividualApprovals] = useState<any[]>([]);
@@ -67,7 +66,10 @@ export default function Approvals() {
     status: "all",
     station: "all",
     client: "all",
-    search: ""
+    search: "",
+    startDate: "",
+    endDate: "",
+    myApprovalsOnly: false
   });
 
   const [stats, setStats] = useState({
@@ -93,7 +95,6 @@ export default function Approvals() {
         clearTimeout(reloadTimeout);
       }
       reloadTimeout = setTimeout(() => {
-        console.log('🔄 Recarregando aprovações após mudança detectada...');
         localStorage.removeItem('approvals_suggestions_cache');
         localStorage.removeItem('approvals_suggestions_cache_timestamp');
         loadSuggestions(false).then(() => {
@@ -119,11 +120,6 @@ export default function Approvals() {
           table: 'price_suggestions'
         },
         (payload) => {
-          console.log('🔄 Mudança detectada em price_suggestions:', payload.eventType, {
-            id: payload.new?.id || payload.old?.id,
-            status: payload.new?.status || payload.old?.status,
-            batch_id: payload.new?.batch_id || payload.old?.batch_id
-          });
           setIsRefreshing(true);
           // Invalidar cache imediatamente e recarregar após delay maior para garantir que a transação completou
           debouncedReload(1500); // Aumentado para 1.5s para garantir que a transação completou
@@ -137,7 +133,6 @@ export default function Approvals() {
           table: 'approval_profile_order'
         },
         (payload) => {
-          console.log('🔄 Mudança detectada em approval_profile_order:', payload.eventType);
           // Invalidar cache de aprovadores quando ordem mudar
           localStorage.removeItem('approvals_approvers_cache');
           localStorage.removeItem('approvals_approvers_cache_timestamp');
@@ -153,7 +148,6 @@ export default function Approvals() {
           filter: `user_id=eq.${user.id}`
         },
         (payload) => {
-          console.log('🔔 Nova notificação recebida:', payload.new);
           debouncedReload(1000);
         }
       )
@@ -166,7 +160,6 @@ export default function Approvals() {
           filter: `user_id=eq.${user.id}`
         },
         (payload) => {
-          console.log('🔔 Notificação atualizada:', payload.new);
           debouncedReload(1000);
         }
       )
@@ -178,17 +171,12 @@ export default function Approvals() {
           table: 'approval_history'
         },
         (payload) => {
-          console.log('🔄 Mudança detectada em approval_history:', payload.eventType, {
-            suggestion_id: payload.new?.suggestion_id || payload.old?.suggestion_id,
-            approval_level: payload.new?.approval_level || payload.old?.approval_level
-          });
           // Invalidar cache quando houver mudança no histórico
           debouncedReload(1500); // Delay maior para approval_history pois pode ter múltiplas atualizações
         }
       )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('✅ Canal de real-time subscrito com sucesso');
           setRealtimeStatus('connected');
         } else if (status === 'CHANNEL_ERROR') {
           console.error('❌ Erro ao subscrever canal de real-time');
@@ -197,7 +185,6 @@ export default function Approvals() {
           console.warn('⚠️ Canal de real-time desconectado:', status);
           setRealtimeStatus('disconnected');
         } else {
-          console.log('⏳ Status do canal:', status);
           if (status === 'JOINING' || status === 'JOINED') {
             setRealtimeStatus('connecting');
           }
@@ -209,7 +196,6 @@ export default function Approvals() {
         clearTimeout(reloadTimeout);
       }
       supabase.removeChannel(channel);
-      console.log('🔌 Canal de real-time desconectado');
     };
   }, [user]);
 
@@ -328,12 +314,8 @@ export default function Approvals() {
       const perfisComPermissao = profilesWithPermission?.map(p => p.perfil) || [];
       
       if (perfisComPermissao.length === 0) {
-        console.log('⚠️ Nenhum perfil tem permissão de aprovar');
         return [];
       }
-      
-      console.log('📋 Perfis que podem aprovar:', perfisComPermissao);
-      console.log('🔍 Perfis requeridos:', requiredProfiles || 'todos');
       
       // Ordenar perfis pela ordem hierárquica (filtrando apenas os que estão em profilesToLoad)
       const orderedProfiles = profilesToLoad.filter(p => perfisComPermissao.includes(p));
@@ -357,8 +339,6 @@ export default function Approvals() {
           approvers.push(...users);
         }
       }
-      
-      console.log('👥 Usuários que podem aprovar (em ordem):', approvers);
       
       return approvers;
     } catch (error) {
@@ -546,7 +526,6 @@ export default function Approvals() {
           const timestamp = parseInt(cacheTimestamp, 10);
           
           if (now - timestamp < cacheExpiry) {
-            console.log('📦 Usando dados do cache');
             const parsedData = JSON.parse(cachedData);
             // Processar dados do cache (já estão enriquecidos)
             if (Array.isArray(parsedData) && parsedData.length > 0) {
@@ -834,6 +813,9 @@ export default function Approvals() {
       // Processar dados finais (isso atualiza todos os estados: suggestions, filteredSuggestions, batches, individuals, stats)
       await processSuggestionsData(enrichedWithCurrentApprover);
       
+      // Aplicar filtros após carregar os dados
+      applyFilters(filters);
+      
       // Salvar no cache
       const cacheKey = 'approvals_suggestions_cache';
       const cacheTimestampKey = 'approvals_suggestions_cache_timestamp';
@@ -851,7 +833,7 @@ export default function Approvals() {
     }
   };
 
-  const handleFilterChange = (field: string, value: string) => {
+  const handleFilterChange = (field: string, value: string | boolean) => {
     const newFilters = { ...filters, [field]: value };
     setFilters(newFilters);
     // Resetar páginas quando filtros mudarem
@@ -863,34 +845,98 @@ export default function Approvals() {
   const applyFilters = (filterValues: typeof filters) => {
     let filtered = suggestions;
 
+    // Filtro de status
     if (filterValues.status !== "all") {
       filtered = filtered.filter(s => s.status === filterValues.status);
     }
 
+    // Filtro de posto
     if (filterValues.station !== "all") {
       filtered = filtered.filter(s => s.station_id === filterValues.station);
     }
 
+    // Filtro de cliente
     if (filterValues.client !== "all") {
       filtered = filtered.filter(s => s.client_id === filterValues.client);
     }
 
+    // Filtro de pesquisa (busca em nome do posto, cliente e produto)
     if (filterValues.search) {
       const searchLower = filterValues.search.toLowerCase();
       filtered = filtered.filter(s => 
         s.stations?.name?.toLowerCase().includes(searchLower) ||
         s.clients?.name?.toLowerCase().includes(searchLower) ||
-        s.product?.toLowerCase().includes(searchLower)
+        s.product?.toLowerCase().includes(searchLower) ||
+        s.batch_name?.toLowerCase().includes(searchLower) ||
+        s.current_approver_name?.toLowerCase().includes(searchLower)
       );
+    }
+
+    // Filtro de data (janela de data)
+    if (filterValues.startDate) {
+      const startDate = new Date(filterValues.startDate);
+      startDate.setHours(0, 0, 0, 0);
+      filtered = filtered.filter(s => {
+        const createdDate = new Date(s.created_at);
+        createdDate.setHours(0, 0, 0, 0);
+        return createdDate >= startDate;
+      });
+    }
+
+    if (filterValues.endDate) {
+      const endDate = new Date(filterValues.endDate);
+      endDate.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(s => {
+        const createdDate = new Date(s.created_at);
+        return createdDate <= endDate;
+      });
+    }
+
+    // Filtro de aprovações que dependem de mim
+    if (filterValues.myApprovalsOnly && user?.id) {
+      console.log('🔍 Aplicando filtro "minhas aprovações":', {
+        userId: user.id,
+        totalSuggestions: filtered.length,
+        sampleSuggestion: filtered[0] ? {
+          id: filtered[0].id,
+          current_approver_id: filtered[0].current_approver_id,
+          is_current_user_turn: filtered[0].is_current_user_turn,
+          status: filtered[0].status
+        } : null
+      });
+      
+      filtered = filtered.filter(s => {
+        // Mostrar se o usuário atual é o aprovador atual da solicitação
+        // ou se é a vez do usuário aprovar (is_current_user_turn)
+        const matches = s.current_approver_id === user.id || s.is_current_user_turn === true;
+        
+        if (matches) {
+          console.log('✅ Sugestão corresponde ao filtro:', {
+            id: s.id,
+            current_approver_id: s.current_approver_id,
+            is_current_user_turn: s.is_current_user_turn,
+            userId: user.id
+          });
+        }
+        
+        return matches;
+      });
+      
+      console.log('🔍 Resultado do filtro "minhas aprovações":', {
+        totalFiltradas: filtered.length,
+        userId: user.id
+      });
     }
 
     setFilteredSuggestions(filtered);
   };
 
   const handleApprove = async (suggestionId: string, observations: string) => {
-    console.log('🔵 handleApprove chamado para:', suggestionId);
+    // Observação é opcional se o usuário não tem permissão (mas será registrada no histórico)
+    const hasPermission = permissions?.permissions?.can_approve;
     
-    if (!observations.trim()) {
+    // Se não tem permissão, observação é opcional
+    if (hasPermission && !observations.trim()) {
       toast.error("Por favor, adicione uma observação");
       return;
     }
@@ -911,20 +957,298 @@ export default function Approvals() {
       const marginCents = currentSuggestion.margin_cents || 0;
       const approvalRule = await getApprovalRuleForMargin(marginCents);
       
-      console.log('💰 Margem em centavos:', marginCents);
-      console.log('📋 Regra de aprovação encontrada:', approvalRule);
-      
       // Determinar perfis requeridos baseado na regra
       const requiredProfiles = approvalRule?.required_profiles || undefined;
       
-      // Buscar todos os aprovadores
-      const allApprovers = await loadApprovers();
+      // Buscar aprovadores apropriados baseado na regra
+      // Se há perfis requeridos, buscar apenas esses; caso contrário, buscar todos
+      const allApprovers = requiredProfiles && requiredProfiles.length > 0
+        ? await loadApprovers(requiredProfiles)
+        : await loadApprovers();
+      
+      console.log('🟢 Aprovadores carregados:', {
+        total: allApprovers.length,
+        requiredProfiles,
+        aprovadores: allApprovers.map(a => ({ email: a.email, perfil: a.perfil, userId: a.user_id }))
+      });
       
       // Verificar se o usuário atual é um aprovador válido
       const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
-      if (!currentUserProfile) {
-        toast.error("Você não possui permissão para aprovar solicitações.");
+      
+      // Se não tem permissão OU não é aprovador válido, apenas registrar observação e avançar para próximo
+      if (!hasPermission || !currentUserProfile) {
+        // Buscar nome do usuário do perfil
+        let approverName = user?.email || 'Usuário';
+        try {
+          const { data: userProfile } = await supabase
+            .from('user_profiles')
+            .select('nome, email')
+            .eq('user_id', user?.id)
+            .single();
+          if (userProfile?.nome) {
+            approverName = userProfile.nome;
+          } else if (userProfile?.email) {
+            approverName = userProfile.email;
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar nome do usuário:', err);
+        }
+        
+        // Registrar observação no histórico
+        const observationText = observations?.trim() || 'Observação adicionada sem permissão de aprovação';
+        console.log('🟢 Registrando observação no histórico:', { suggestionId, observationText });
+        
+        const { error: historyError } = await supabase
+          .from('approval_history')
+          .insert({
+            suggestion_id: suggestionId,
+            approver_id: user?.id,
+            approver_name: approverName,
+            action: 'approved',
+            observations: observationText,
+            approval_level: currentSuggestion.approval_level || 1
+          });
+        
+        if (historyError) {
+          console.error('❌ Erro ao registrar observação:', historyError);
+          toast.error("Erro ao registrar observação: " + historyError.message);
         setLoading(false);
+          return;
+        }
+        
+        // Avançar para o próximo aprovador (se houver)
+        const currentLevel = currentSuggestion.approval_level || 1;
+        
+        console.log('🟢 Buscando próximo aprovador (approve):', {
+          currentLevel,
+          allApproversCount: allApprovers.length,
+          requiredProfiles,
+          userId: user?.id,
+          allApprovers: allApprovers.map((a, idx) => ({ idx, email: a.email, perfil: a.perfil }))
+        });
+        
+        // Buscar ordem hierárquica para determinar a sequência correta
+        const { data: orderData } = await supabase
+          .from('approval_profile_order')
+          .select('perfil, order_position')
+          .eq('is_active', true)
+          .order('order_position', { ascending: true });
+        
+        let approvalOrder: string[] = [
+          'supervisor_comercial',
+          'diretor_comercial', 
+          'diretor_pricing'
+        ];
+        
+        if (orderData && orderData.length > 0) {
+          approvalOrder = orderData.map((item: any) => item.perfil);
+        }
+        
+        // Encontrar o perfil do aprovador atual
+        const currentApproverId = currentSuggestion.current_approver_id || user?.id;
+        let currentApproverProfile: string | null = null;
+        
+        if (currentApproverId) {
+          try {
+            const { data: currentApproverData } = await supabase
+              .from('user_profiles')
+              .select('perfil')
+              .eq('user_id', currentApproverId)
+              .single();
+            currentApproverProfile = currentApproverData?.perfil || null;
+          } catch (err) {
+            console.warn('Erro ao buscar perfil do aprovador atual:', err);
+          }
+        }
+        
+        console.log('🟢 Buscando próximo aprovador (approve):', {
+          currentLevel,
+          currentApproverId,
+          currentApproverProfile,
+          approvalOrder,
+          requiredProfiles,
+          allApproversCount: allApprovers.length,
+          allApprovers: allApprovers.map((a, idx) => ({ idx, email: a.email, perfil: a.perfil, userId: a.user_id }))
+        });
+        
+        // Encontrar próximo aprovador baseado na ordem hierárquica COMPLETA
+        // IMPORTANTE: Passar por TODOS os perfis na ordem, não apenas os requeridos
+        let nextApprover = null;
+        let nextLevel = currentLevel;
+        
+        console.log('🔴 Buscando próximo aprovador na ordem completa:', {
+          approvalOrder,
+          requiredProfiles,
+          currentApproverProfile,
+          currentLevel
+        });
+        
+        // Encontrar a posição do perfil atual na ordem COMPLETA (não apenas requeridos)
+        let currentProfileIndex = -1;
+        if (currentApproverProfile) {
+          currentProfileIndex = approvalOrder.indexOf(currentApproverProfile);
+          console.log('🔴 Perfil atual encontrado na ordem completa:', {
+            currentApproverProfile,
+            currentProfileIndex,
+            approvalOrder
+          });
+        }
+        
+        // Se não encontrou o perfil atual, usar currentLevel - 1 como fallback
+        if (currentProfileIndex === -1) {
+          currentProfileIndex = Math.max(0, currentLevel - 1);
+          console.log('🔴 Usando fallback para currentProfileIndex:', {
+            currentLevel,
+            currentProfileIndex,
+            approvalOrderLength: approvalOrder.length
+          });
+        }
+        
+        console.log('🔴 Tentando encontrar próximo aprovador na ordem completa:', {
+          currentProfileIndex,
+          approvalOrderLength: approvalOrder.length,
+          approvalOrder,
+          allApproversPerfis: allApprovers.map(a => a.perfil)
+        });
+        
+        // Buscar o próximo perfil na ordem hierárquica COMPLETA
+        if (currentProfileIndex + 1 < approvalOrder.length) {
+          const nextProfile = approvalOrder[currentProfileIndex + 1];
+          console.log('🔴 Próximo perfil na ordem completa:', nextProfile);
+          
+          // Encontrar o primeiro aprovador com esse perfil na lista
+          // Se não encontrar na lista filtrada (allApprovers), buscar na lista completa
+          nextApprover = allApprovers.find(a => a.perfil === nextProfile);
+          
+          // Se não encontrou na lista filtrada, buscar na lista completa de aprovadores
+          if (!nextApprover) {
+            const allApproversFull = await loadApprovers();
+            nextApprover = allApproversFull.find(a => a.perfil === nextProfile);
+            console.log('🔴 Buscando na lista completa de aprovadores:', {
+              nextProfile,
+              encontrado: !!nextApprover,
+              allApproversFullPerfis: allApproversFull.map(a => a.perfil)
+            });
+          }
+          
+          if (nextApprover) {
+            // Calcular o próximo nível baseado na posição do perfil na ordem completa
+            const nextProfileIndexInFullOrder = approvalOrder.indexOf(nextProfile);
+            nextLevel = nextProfileIndexInFullOrder + 1; // approval_level é 1-indexed
+            
+            console.log('✅ Próximo aprovador encontrado pela ordem hierárquica:', { 
+              email: nextApprover.email, 
+              perfil: nextApprover.perfil,
+              nextLevel,
+              nextProfileIndexInFullOrder,
+              userId: nextApprover.user_id
+            });
+          } else {
+            console.warn('⚠️ Não encontrou aprovador com perfil', nextProfile, 'em nenhuma lista');
+            console.warn('⚠️ Aprovadores disponíveis (filtrados):', allApprovers.map(a => ({ email: a.email, perfil: a.perfil })));
+          }
+        } else {
+          console.warn('⚠️ Não há próximo perfil na ordem hierárquica:', {
+            currentProfileIndex,
+            approvalOrderLength: approvalOrder.length,
+            approvalOrder
+          });
+        }
+        
+        if (!nextApprover) {
+          console.warn('⚠️ Nenhum próximo aprovador encontrado');
+        }
+        
+        if (nextApprover) {
+          // Buscar nome completo do próximo aprovador
+          let nextApproverName = nextApprover.email || 'Aprovador';
+          try {
+            const { data: nextUserProfile } = await supabase
+              .from('user_profiles')
+              .select('nome, email')
+              .eq('user_id', nextApprover.user_id)
+              .single();
+            if (nextUserProfile?.nome) {
+              nextApproverName = nextUserProfile.nome;
+            } else if (nextUserProfile?.email) {
+              nextApproverName = nextUserProfile.email;
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do próximo aprovador:', err);
+          }
+          
+          console.log('🟢 Avançando para próximo aprovador (approve):', {
+            nextApprover: nextApproverName,
+            nextLevel,
+            userId: nextApprover.user_id,
+            suggestionId
+          });
+          
+          // Atualizar approval_level para o próximo aprovador
+          const { error: updateError } = await supabase
+            .from('price_suggestions')
+            .update({
+              approval_level: nextLevel,
+              current_approver_id: nextApprover.user_id,
+              current_approver_name: nextApproverName
+            })
+            .eq('id', suggestionId);
+          
+          if (updateError) {
+            console.error('❌ Erro ao atualizar approval_level:', updateError);
+            toast.error("Erro ao passar para próximo aprovador: " + updateError.message);
+            setLoading(false);
+            return;
+          }
+          
+          console.log('✅ Approval level atualizado com sucesso:', { nextLevel, suggestionId });
+          
+          // Criar notificação para o próximo aprovador
+          try {
+            const { error: notifError } = await supabase.from('notifications').insert({
+              user_id: nextApprover.user_id,
+              suggestion_id: suggestionId,
+              type: 'pending',
+              title: 'Nova Observação Adicionada',
+              message: `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`
+            });
+            if (notifError) {
+              console.error('Erro ao criar notificação:', notifError);
+            } else {
+              console.log('✅ Notificação criada para:', nextApproverName);
+            }
+          } catch (notifErr) {
+            console.error('Erro ao criar notificação:', notifErr);
+          }
+          
+          toast.success(`Observação registrada. Passando para próximo aprovador: ${nextApproverName} (nível ${nextLevel})`);
+        } else {
+          // Não há mais aprovadores
+          toast.success("Observação registrada. Você não possui permissão para aprovar esta solicitação.");
+        }
+        
+        setLoading(false);
+        
+        // Fechar modal se estiver aberto
+        setShowObservationModal(prev => {
+          const newState = { ...prev };
+          if (newState[suggestionId]) {
+            newState[suggestionId] = { open: false, action: 'approve' };
+          }
+          return newState;
+        });
+        
+        // Limpar observações
+        setBatchObservations(prev => {
+          const newObs = { ...prev };
+          delete newObs[suggestionId];
+          return newObs;
+        });
+        
+        // Invalidar cache e recarregar
+        localStorage.removeItem('approvals_suggestions_cache');
+        localStorage.removeItem('approvals_suggestions_cache_timestamp');
+        await loadSuggestions(false);
         return;
       }
       
@@ -942,16 +1266,8 @@ export default function Approvals() {
       const approvers = allApprovers;
       const totalApprovers = approvers.length > 0 ? approvers.length : 1;
       
-      console.log('📝 IDs dos aprovadores:', approvers.map(a => ({ id: a.user_id, email: a.email, perfil: a.perfil })));
-      
       // Obter o nível atual de aprovação
       let currentLevel = currentSuggestion.approval_level || 1;
-      
-      console.log('🔍 Approval level atual:', currentLevel);
-      console.log('👤 Usuário atual:', user?.email);
-      console.log('👤 Perfil do usuário:', currentUserProfile.perfil);
-      console.log('📋 Perfis requeridos:', requiredProfiles);
-      console.log('✅ Usuário tem perfil requerido:', userHasRequiredProfile);
       
       const approvalsCount = (currentSuggestion.approvals_count || 0) + 1;
       
@@ -1141,13 +1457,8 @@ export default function Approvals() {
 
       if (updateError) throw updateError;
 
-      console.log('✅ Aprovação concluída, criando notificação...');
-
       // Criar notificação manualmente
       try {
-        console.log('📧 Criando notificação para:', currentSuggestion.requested_by);
-        console.log('📧 Sugestão status:', currentSuggestion.status);
-        
         const notificationData = {
           user_id: currentSuggestion.requested_by,
           suggestion_id: suggestionId,
@@ -1156,17 +1467,13 @@ export default function Approvals() {
           message: newStatus === 'approved' ? 'Sua solicitação de preço foi aprovada!' : 'Sua solicitação de preço foi rejeitada.'
         };
         
-        console.log('📧 Dados da notificação:', notificationData);
-        
-        const { data: notifData, error: notifError } = await supabase
+        const { error: notifError } = await supabase
           .from('notifications')
           .insert([notificationData])
           .select();
         
         if (notifError) {
           console.error('❌ Erro ao criar notificação:', notifError);
-        } else {
-          console.log('✅ Notificação criada com sucesso:', notifData);
         }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
@@ -1215,7 +1522,13 @@ export default function Approvals() {
   };
 
   const handleReject = async (suggestionId: string, observations: string) => {
-    if (!observations.trim()) {
+    // Observação é opcional se o usuário não tem permissão (mas será registrada no histórico)
+    const hasPermission = permissions?.permissions?.can_approve;
+    
+    console.log('🔴 handleReject chamado:', { suggestionId, hasPermission, observationsLength: observations?.length });
+    
+    // Se não tem permissão, observação é opcional
+    if (hasPermission && !observations.trim()) {
       toast.error("Por favor, adicione uma observação");
       return;
     }
@@ -1239,7 +1552,303 @@ export default function Approvals() {
       const requiredProfiles = approvalRule?.required_profiles || undefined;
       
       // Buscar aprovadores apropriados baseado na regra
-      const allApprovers = await loadApprovers();
+      // Se há perfis requeridos, buscar apenas esses; caso contrário, buscar todos
+      const allApprovers = requiredProfiles && requiredProfiles.length > 0
+        ? await loadApprovers(requiredProfiles)
+        : await loadApprovers();
+      
+      console.log('🔴 Aprovadores carregados:', {
+        total: allApprovers.length,
+        requiredProfiles,
+        aprovadores: allApprovers.map(a => ({ email: a.email, perfil: a.perfil, userId: a.user_id }))
+      });
+      
+      // Verificar se o usuário atual é um aprovador válido
+      const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
+      
+      // Declarar variáveis que serão usadas em múltiplos blocos
+      let currentLevel = currentSuggestion.approval_level || 1;
+      const currentApproverId = currentSuggestion.current_approver_id || user?.id;
+      
+      console.log('🔴 Verificação de permissão:', { hasPermission, currentUserProfile: !!currentUserProfile, userId: user?.id });
+      
+      // Se não tem permissão OU não é aprovador válido, apenas registrar observação e avançar para próximo
+      if (!hasPermission || !currentUserProfile) {
+        console.log('🔴 Usuário sem permissão - registrando apenas observação');
+        // Buscar nome do usuário do perfil
+        let approverName = user?.email || 'Usuário';
+        try {
+          const { data: userProfile } = await supabase
+            .from('user_profiles')
+            .select('nome, email')
+            .eq('user_id', user?.id)
+            .single();
+          if (userProfile?.nome) {
+            approverName = userProfile.nome;
+          } else if (userProfile?.email) {
+            approverName = userProfile.email;
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar nome do usuário:', err);
+        }
+        
+        // Registrar observação no histórico
+        const observationText = observations?.trim() || 'Observação adicionada sem permissão de rejeição';
+        console.log('🔴 Registrando observação no histórico:', { suggestionId, observationText });
+        
+        const { error: historyError } = await supabase
+          .from('approval_history')
+          .insert({
+            suggestion_id: suggestionId,
+            approver_id: user?.id,
+            approver_name: approverName,
+            action: 'rejected',
+            observations: observationText,
+            approval_level: currentSuggestion.approval_level || 1
+          });
+        
+        if (historyError) {
+          console.error('❌ Erro ao registrar observação:', historyError);
+          toast.error("Erro ao registrar observação: " + historyError.message);
+          setLoading(false);
+          return;
+        }
+        
+        // Avançar para próximo aprovador com perfil requerido
+        
+        console.log('🔴 Buscando próximo aprovador:', {
+          currentLevel,
+          currentApproverId,
+          allApproversCount: allApprovers.length,
+          requiredProfiles,
+          userId: user?.id,
+          allApprovers: allApprovers.map((a, idx) => ({ idx, email: a.email, perfil: a.perfil, userId: a.user_id }))
+        });
+        
+        // Buscar ordem hierárquica para determinar a sequência correta
+        const { data: orderData } = await supabase
+          .from('approval_profile_order')
+          .select('perfil, order_position')
+          .eq('is_active', true)
+          .order('order_position', { ascending: true });
+        
+        let approvalOrder: string[] = [
+          'supervisor_comercial',
+          'diretor_comercial', 
+          'diretor_pricing'
+        ];
+        
+        if (orderData && orderData.length > 0) {
+          approvalOrder = orderData.map((item: any) => item.perfil);
+        }
+        
+        // Encontrar o perfil do aprovador atual
+        // currentApproverId já foi declarado acima na linha 1509
+        let currentApproverProfile: string | null = null;
+        
+        if (currentApproverId) {
+          try {
+            const { data: currentApproverData } = await supabase
+              .from('user_profiles')
+              .select('perfil')
+              .eq('user_id', currentApproverId)
+              .single();
+            currentApproverProfile = currentApproverData?.perfil || null;
+          } catch (err) {
+            console.warn('Erro ao buscar perfil do aprovador atual:', err);
+          }
+        }
+        
+        console.log('🔴 Buscando próximo aprovador:', {
+          currentLevel,
+          currentApproverId,
+          currentApproverProfile,
+          approvalOrder,
+          requiredProfiles,
+          allApproversCount: allApprovers.length,
+          allApprovers: allApprovers.map((a, idx) => ({ idx, email: a.email, perfil: a.perfil, userId: a.user_id }))
+        });
+        
+        // Encontrar próximo aprovador baseado na ordem hierárquica COMPLETA
+        // IMPORTANTE: Passar por TODOS os perfis na ordem, não apenas os requeridos
+        let nextApprover = null;
+        let nextLevel = currentLevel;
+        
+        console.log('🔴 Buscando próximo aprovador na ordem completa (reject):', {
+          approvalOrder,
+          requiredProfiles,
+          currentApproverProfile,
+          currentLevel
+        });
+        
+        // Encontrar a posição do perfil atual na ordem COMPLETA (não apenas requeridos)
+        let currentProfileIndex = -1;
+        if (currentApproverProfile) {
+          currentProfileIndex = approvalOrder.indexOf(currentApproverProfile);
+          console.log('🔴 Perfil atual encontrado na ordem completa:', {
+            currentApproverProfile,
+            currentProfileIndex,
+            approvalOrder
+          });
+        }
+        
+        // Se não encontrou o perfil atual, usar currentLevel - 1 como fallback
+        if (currentProfileIndex === -1) {
+          currentProfileIndex = Math.max(0, currentLevel - 1);
+          console.log('🔴 Usando fallback para currentProfileIndex:', {
+            currentLevel,
+            currentProfileIndex,
+            approvalOrderLength: approvalOrder.length
+          });
+        }
+        
+        console.log('🔴 Tentando encontrar próximo aprovador na ordem completa:', {
+          currentProfileIndex,
+          approvalOrderLength: approvalOrder.length,
+          approvalOrder,
+          allApproversPerfis: allApprovers.map(a => a.perfil)
+        });
+        
+        // Buscar o próximo perfil na ordem hierárquica COMPLETA
+        if (currentProfileIndex + 1 < approvalOrder.length) {
+          const nextProfile = approvalOrder[currentProfileIndex + 1];
+          console.log('🔴 Próximo perfil na ordem completa:', nextProfile);
+          
+          // Encontrar o primeiro aprovador com esse perfil na lista
+          // Se não encontrar na lista filtrada (allApprovers), buscar na lista completa
+          nextApprover = allApprovers.find(a => a.perfil === nextProfile);
+          
+          // Se não encontrou na lista filtrada, buscar na lista completa de aprovadores
+          if (!nextApprover) {
+            const allApproversFull = await loadApprovers();
+            nextApprover = allApproversFull.find(a => a.perfil === nextProfile);
+            console.log('🔴 Buscando na lista completa de aprovadores:', {
+              nextProfile,
+              encontrado: !!nextApprover,
+              allApproversFullPerfis: allApproversFull.map(a => a.perfil)
+            });
+          }
+          
+          if (nextApprover) {
+            // Calcular o próximo nível baseado na posição do perfil na ordem completa
+            const nextProfileIndexInFullOrder = approvalOrder.indexOf(nextProfile);
+            nextLevel = nextProfileIndexInFullOrder + 1; // approval_level é 1-indexed
+            
+            console.log('✅ Próximo aprovador encontrado pela ordem hierárquica:', { 
+              email: nextApprover.email, 
+              perfil: nextApprover.perfil,
+              nextLevel,
+              nextProfileIndexInFullOrder,
+              userId: nextApprover.user_id
+            });
+          } else {
+            console.warn('⚠️ Não encontrou aprovador com perfil', nextProfile, 'em nenhuma lista');
+            console.warn('⚠️ Aprovadores disponíveis (filtrados):', allApprovers.map(a => ({ email: a.email, perfil: a.perfil })));
+          }
+        } else {
+          console.warn('⚠️ Não há próximo perfil na ordem hierárquica:', {
+            currentProfileIndex,
+            approvalOrderLength: approvalOrder.length,
+            approvalOrder
+          });
+        }
+        
+        if (nextApprover) {
+          // Buscar nome completo do próximo aprovador
+          let nextApproverName = nextApprover.email || 'Aprovador';
+          try {
+            const { data: nextUserProfile } = await supabase
+              .from('user_profiles')
+              .select('nome, email')
+              .eq('user_id', nextApprover.user_id)
+              .single();
+            if (nextUserProfile?.nome) {
+              nextApproverName = nextUserProfile.nome;
+            } else if (nextUserProfile?.email) {
+              nextApproverName = nextUserProfile.email;
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do próximo aprovador:', err);
+          }
+          
+          console.log('🔴 Avançando para próximo aprovador:', {
+            nextApprover: nextApproverName,
+            nextLevel,
+            userId: nextApprover.user_id,
+            suggestionId
+          });
+          
+          // Atualizar approval_level para o próximo aprovador
+          const { error: updateError } = await supabase
+            .from('price_suggestions')
+            .update({
+              approval_level: nextLevel,
+              current_approver_id: nextApprover.user_id,
+              current_approver_name: nextApproverName
+            })
+            .eq('id', suggestionId);
+          
+          if (updateError) {
+            console.error('❌ Erro ao atualizar approval_level:', updateError);
+            toast.error("Erro ao passar para próximo aprovador: " + updateError.message);
+            setLoading(false);
+            return;
+          }
+          
+          console.log('✅ Approval level atualizado com sucesso:', { nextLevel, suggestionId });
+          
+          // Criar notificação para o próximo aprovador
+          try {
+            const { error: notifError } = await supabase.from('notifications').insert({
+              user_id: nextApprover.user_id,
+              suggestion_id: suggestionId,
+              type: 'pending',
+              title: 'Nova Observação Adicionada',
+              message: `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`
+            });
+            if (notifError) {
+              console.error('Erro ao criar notificação:', notifError);
+            } else {
+              console.log('✅ Notificação criada para:', nextApproverName);
+            }
+          } catch (notifErr) {
+            console.error('Erro ao criar notificação:', notifErr);
+          }
+          
+          toast.success(`Observação registrada. Passando para próximo aprovador: ${nextApproverName} (nível ${nextLevel})`);
+        } else {
+          // Não há mais aprovadores com perfil requerido
+          const profilesList = requiredProfiles.map(p => p.replace('_', ' ')).join(', ');
+          toast.success(`Observação registrada. Esta solicitação requer aprovação de perfis específicos: ${profilesList}`);
+        }
+        
+        setLoading(false);
+        
+        // Fechar modal se estiver aberto
+        setShowObservationModal(prev => {
+          const newState = { ...prev };
+          if (newState[suggestionId]) {
+            newState[suggestionId] = { open: false, action: 'reject' };
+          }
+          return newState;
+        });
+        
+        // Limpar observações
+        setBatchObservations(prev => {
+          const newObs = { ...prev };
+          delete newObs[suggestionId];
+          return newObs;
+        });
+        
+        // Invalidar cache e recarregar
+        localStorage.removeItem('approvals_suggestions_cache');
+        localStorage.removeItem('approvals_suggestions_cache_timestamp');
+        await loadSuggestions(false);
+        return;
+      }
+      
+      console.log('🔴 Usuário tem permissão - processando rejeição completa');
+      
       let approvers: any[] = [];
       let totalApprovers = 1;
       
@@ -1247,11 +1856,198 @@ export default function Approvals() {
         approvers = await loadApprovers(requiredProfiles);
         
         // Verificar se o usuário atual tem um dos perfis requeridos
-        const currentUserProfile = allApprovers.find(a => a.user_id === user?.id);
-        if (!currentUserProfile || !requiredProfiles.includes(currentUserProfile.perfil)) {
+        // Se não tiver, apenas registrar observação e avançar (não bloquear)
+        if (!requiredProfiles.includes(currentUserProfile.perfil)) {
+          // Buscar nome do usuário do perfil
+          let approverName = user?.email || 'Usuário';
+          try {
+            const { data: userProfile } = await supabase
+              .from('user_profiles')
+              .select('nome, email')
+              .eq('user_id', user?.id)
+              .single();
+            if (userProfile?.nome) {
+              approverName = userProfile.nome;
+            } else if (userProfile?.email) {
+              approverName = userProfile.email;
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do usuário:', err);
+          }
+          
+          // Registrar observação no histórico
+          const observationText = observations?.trim() || 'Observação adicionada - perfil específico requerido';
+          const { error: historyError } = await supabase
+            .from('approval_history')
+            .insert({
+              suggestion_id: suggestionId,
+              approver_id: user?.id,
+              approver_name: approverName,
+              action: 'rejected',
+              observations: observationText,
+              approval_level: currentSuggestion.approval_level || 1
+            });
+          
+          if (historyError) {
+            toast.error("Erro ao registrar observação: " + historyError.message);
+            setLoading(false);
+            return;
+          }
+          
+          // Avançar para próximo aprovador com perfil requerido
+          // currentLevel e currentApproverId já foram declarados acima
+          
+          console.log('🔴 Buscando próximo aprovador:', {
+            currentLevel,
+            currentApproverId,
+            allApproversCount: allApprovers.length,
+            approversCount: approvers.length,
+            requiredProfiles,
+            userId: user?.id,
+            allApprovers: allApprovers.map((a, idx) => ({ idx, email: a.email, perfil: a.perfil, userId: a.user_id }))
+          });
+          
+          // Encontrar o índice do aprovador atual na lista
+          let currentApproverIndex = -1;
+          if (currentApproverId) {
+            currentApproverIndex = allApprovers.findIndex(a => a.user_id === currentApproverId);
+          }
+          
+          // Se não encontrou pelo current_approver_id, tentar pelo user?.id
+          if (currentApproverIndex === -1 && user?.id) {
+            currentApproverIndex = allApprovers.findIndex(a => a.user_id === user?.id);
+          }
+          
+          // Se ainda não encontrou, usar currentLevel - 1 como fallback
+          if (currentApproverIndex === -1) {
+            currentApproverIndex = currentLevel - 1;
+          }
+          
+          console.log('🔴 Índice do aprovador atual:', {
+            currentApproverIndex,
+            currentApproverEmail: currentApproverIndex >= 0 ? allApprovers[currentApproverIndex]?.email : 'não encontrado',
+            totalAprovadores: allApprovers.length,
+            requiredProfiles,
+            aprovadoresComPerfilRequerido: allApprovers.filter(a => requiredProfiles.includes(a.perfil)).map((a, idx) => ({ idx, email: a.email, perfil: a.perfil }))
+          });
+          
+          // Encontrar próximo aprovador com perfil requerido APÓS o aprovador atual
+          let nextApprover = null;
+          let nextLevel = currentLevel;
+          
+          // Começar a busca a partir do próximo índice após o aprovador atual
+          for (let i = currentApproverIndex + 1; i < allApprovers.length; i++) {
+            const approver = allApprovers[i];
+            const hasRequiredProfile = requiredProfiles.includes(approver.perfil);
+            console.log(`🔴 Verificando aprovador ${i} (nível ${i + 1}):`, { 
+              email: approver.email, 
+              perfil: approver.perfil, 
+              matches: hasRequiredProfile,
+              requiredProfiles 
+            });
+            
+            if (hasRequiredProfile) {
+              nextApprover = approver;
+              nextLevel = i + 1; // approval_level é 1-indexed
+              console.log('✅ Próximo aprovador encontrado:', { 
+                email: approver.email, 
+                perfil: approver.perfil,
+                nextLevel,
+                userId: approver.user_id
+              });
+              break;
+            }
+          }
+          
+          if (!nextApprover) {
+            console.warn('⚠️ Nenhum próximo aprovador encontrado com perfil requerido após o índice', currentApproverIndex);
+          }
+          
+          if (nextApprover) {
+            // Buscar nome completo do próximo aprovador
+            let nextApproverName = nextApprover.email || 'Aprovador';
+            try {
+              const { data: nextUserProfile } = await supabase
+                .from('user_profiles')
+                .select('nome, email')
+                .eq('user_id', nextApprover.user_id)
+                .single();
+              if (nextUserProfile?.nome) {
+                nextApproverName = nextUserProfile.nome;
+              } else if (nextUserProfile?.email) {
+                nextApproverName = nextUserProfile.email;
+              }
+            } catch (err) {
+              console.warn('Erro ao buscar nome do próximo aprovador:', err);
+            }
+            
+            console.log('🔴 Avançando para próximo aprovador:', {
+              nextApprover: nextApproverName,
+              nextLevel,
+              userId: nextApprover.user_id,
+              suggestionId
+            });
+            
+            // Atualizar approval_level para o próximo aprovador
+            const { error: updateError } = await supabase
+              .from('price_suggestions')
+              .update({
+                approval_level: nextLevel,
+                current_approver_id: nextApprover.user_id,
+                current_approver_name: nextApproverName
+              })
+              .eq('id', suggestionId);
+            
+            if (updateError) {
+              console.error('❌ Erro ao atualizar approval_level:', updateError);
+              toast.error("Erro ao passar para próximo aprovador: " + updateError.message);
+              setLoading(false);
+              return;
+            }
+            
+            console.log('✅ Approval level atualizado com sucesso:', { nextLevel, suggestionId });
+            
+            // Criar notificação para o próximo aprovador
+            try {
+              const { error: notifError } = await supabase.from('notifications').insert({
+                user_id: nextApprover.user_id,
+                suggestion_id: suggestionId,
+                type: 'pending',
+                title: 'Nova Observação Adicionada',
+                message: `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`
+              });
+              if (notifError) {
+                console.error('Erro ao criar notificação:', notifError);
+              } else {
+                console.log('✅ Notificação criada para:', nextApproverName);
+              }
+            } catch (notifErr) {
+              console.error('Erro ao criar notificação:', notifErr);
+            }
+            
+            toast.success(`Observação registrada. Passando para próximo aprovador: ${nextApproverName} (nível ${nextLevel})`);
+          } else {
+            // Não há mais aprovadores com perfil requerido
           const profilesList = requiredProfiles.map(p => p.replace('_', ' ')).join(', ');
-          toast.error(`Esta solicitação requer aprovação de perfis específicos: ${profilesList}. Você não possui permissão para rejeitar.`);
+            toast.success(`Observação registrada. Esta solicitação requer aprovação de perfis específicos: ${profilesList}`);
+          }
+          
           setLoading(false);
+          setShowObservationModal(prev => {
+            const newState = { ...prev };
+            if (newState[suggestionId]) {
+              newState[suggestionId] = { open: false, action: 'reject' };
+            }
+            return newState;
+          });
+          setBatchObservations(prev => {
+            const newObs = { ...prev };
+            delete newObs[suggestionId];
+            return newObs;
+          });
+          localStorage.removeItem('approvals_suggestions_cache');
+          localStorage.removeItem('approvals_suggestions_cache_timestamp');
+          await loadSuggestions(false);
           return;
         }
         
@@ -1262,7 +2058,7 @@ export default function Approvals() {
       }
       
       // Ajustar approval_level inicial se necessário
-      let currentLevel = currentSuggestion.approval_level || 1;
+      // currentLevel já foi declarado acima na linha 1464
       
       if (approvalRule && requiredProfiles && currentLevel === 1) {
         const firstRequiredProfileIndex = allApprovers.findIndex(a => requiredProfiles.includes(a.perfil));
@@ -1385,8 +2181,6 @@ export default function Approvals() {
 
       // Criar notificação manualmente
       try {
-        console.log('📧 Criando notificação de rejeição para:', currentSuggestion.requested_by);
-        
         const notificationData = {
           user_id: currentSuggestion.requested_by,
           suggestion_id: suggestionId,
@@ -1395,17 +2189,13 @@ export default function Approvals() {
           message: 'Sua solicitação de preço foi rejeitada.'
         };
         
-        console.log('📧 Dados da notificação:', notificationData);
-        
-        const { data: notifData, error: notifError } = await supabase
+        const { error: notifError } = await supabase
           .from('notifications')
           .insert([notificationData])
           .select();
         
         if (notifError) {
           console.error('❌ Erro ao criar notificação:', notifError);
-        } else {
-          console.log('✅ Notificação criada com sucesso:', notifData);
         }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
@@ -1446,8 +2236,6 @@ export default function Approvals() {
   };
 
   const handleSuggestPrice = async (suggestionId: string, observations: string, suggestedPrice: number) => {
-    console.log('🔵 handleSuggestPrice chamado para:', suggestionId);
-    
     // Observação é opcional ao sugerir preço
     // if (!observations.trim()) {
     //   toast.error("Por favor, adicione uma observação");
@@ -1867,7 +2655,7 @@ export default function Approvals() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 sm:p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
@@ -1902,6 +2690,70 @@ export default function Approvals() {
                 />
               </div>
             </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                Data Início
+              </label>
+              <Input
+                type="date"
+                value={filters.startDate}
+                onChange={(e) => handleFilterChange("startDate", e.target.value)}
+                className="w-full"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                Data Fim
+              </label>
+              <Input
+                type="date"
+                value={filters.endDate}
+                onChange={(e) => handleFilterChange("endDate", e.target.value)}
+                className="w-full"
+                min={filters.startDate || undefined}
+              />
+            </div>
+
+            <div className="space-y-2 flex flex-col justify-end">
+              <label className="text-sm font-medium flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filters.myApprovalsOnly}
+                  onChange={(e) => handleFilterChange("myApprovalsOnly", e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm">Apenas minhas aprovações</span>
+              </label>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Mostrar apenas aprovações que dependem de mim
+              </p>
+            </div>
+
+            {(filters.startDate || filters.endDate || filters.myApprovalsOnly) && (
+              <div className="space-y-2 flex flex-col justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const resetFilters = {
+                      ...filters,
+                      startDate: "",
+                      endDate: "",
+                      myApprovalsOnly: false
+                    };
+                    setFilters(resetFilters);
+                    applyFilters(resetFilters);
+                  }}
+                  className="w-full"
+                >
+                  Limpar Filtros
+                </Button>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -1913,30 +2765,33 @@ export default function Approvals() {
             <CardTitle className="text-base sm:text-lg">Aprovações em Lote ({batchApprovals.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-6">
-            {/* Paginação de lotes */}
+            {/* Paginação de lotes - Melhorada */}
             {batchApprovals.length > ITEMS_PER_PAGE && (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4">
-                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-                  Mostrando {batchPage * ITEMS_PER_PAGE + 1} - {Math.min((batchPage + 1) * ITEMS_PER_PAGE, batchApprovals.length)} de {batchApprovals.length} lotes
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Página {batchPage + 1} de {Math.ceil(batchApprovals.length / ITEMS_PER_PAGE)}
+                  <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
+                    ({batchPage * ITEMS_PER_PAGE + 1} - {Math.min((batchPage + 1) * ITEMS_PER_PAGE, batchApprovals.length)} de {batchApprovals.length})
+                  </span>
                 </p>
-                <div className="flex gap-2 w-full sm:w-auto">
+                <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setBatchPage(p => Math.max(0, p - 1))}
                     disabled={batchPage === 0}
-                    className="flex-1 sm:flex-none text-xs sm:text-sm"
+                    className="min-w-[100px]"
                   >
-                    Anterior
+                    ← Anterior
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setBatchPage(p => Math.min(Math.ceil(batchApprovals.length / ITEMS_PER_PAGE) - 1, p + 1))}
                     disabled={batchPage >= Math.ceil(batchApprovals.length / ITEMS_PER_PAGE) - 1}
-                    className="flex-1 sm:flex-none text-xs sm:text-sm"
+                    className="min-w-[100px]"
                   >
-                    Próximo
+                    Próximo →
                   </Button>
                 </div>
               </div>
@@ -2038,7 +2893,7 @@ export default function Approvals() {
                         )}
                         {/* Versão Mobile: Cards */}
                         <div className="block sm:hidden space-y-3 p-3">
-                          {batch.requests.slice(0, 20).map((req: any) => {
+                          {batch.requests.slice(0, 20).map((req: any, index: number) => {
                             const currentPrice = req.current_price || req.cost_price || 0;
                             const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
                             const finalPrice = req.final_price || req.suggested_price || 0;
@@ -2050,7 +2905,7 @@ export default function Approvals() {
                             const station = req.stations || { name: req.station_id || 'N/A', code: '' };
                             
                             return (
-                              <div key={req.id} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                              <div key={`mobile-${batch.id}-${req.id}-${index}`} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
                                 <div className="flex items-start justify-between">
                                   <div className="flex-1 min-w-0">
                                     <p className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">{station.name}</p>
@@ -2141,7 +2996,7 @@ export default function Approvals() {
                             </tr>
                           </thead>
                           <tbody>
-                            {batch.requests.slice(0, 20).map((req: any) => {
+                            {batch.requests.slice(0, 20).map((req: any, index: number) => {
                               const currentPrice = req.current_price || req.cost_price || 0;
                               const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
                               const finalPrice = req.final_price || req.suggested_price || 0;
@@ -2154,7 +3009,7 @@ export default function Approvals() {
                               const suggestedPrice = batchSuggestedPrices[req.id] || finalPriceReais;
                               
                               return (
-                                <tr key={req.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                <tr key={`desktop-${batch.id}-${req.id}-${index}`} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
                                   <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                                     <div className="font-medium">{station.name}</div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 lg:hidden">{req.clients?.name || batch.client?.name || 'N/A'}</div>
@@ -2338,7 +3193,13 @@ export default function Approvals() {
                                                 </>
                                               )}
                                               <Label className="text-xs mb-1 block">
-                                                Observação {showObservationModal[req.id].action === 'suggest' ? '(opcional)' : '(obrigatório)'}:
+                                                Observação {
+                                                  showObservationModal[req.id].action === 'suggest' 
+                                                    ? '(opcional)' 
+                                                    : permissions?.permissions?.can_approve 
+                                                      ? '(obrigatório)' 
+                                                      : '(opcional - você não possui permissão para aprovar/rejeitar)'
+                                                }:
                                               </Label>
                                               <Textarea
                                                 placeholder="Adicione uma observação para esta solicitação..."
@@ -2358,9 +3219,10 @@ export default function Approvals() {
                                                 onClick={async () => {
                                                   const obs = batchObservations[req.id] || '';
                                                   const action = showObservationModal[req.id].action;
+                                                  const hasPermission = permissions?.permissions?.can_approve;
                                                   
-                                                  // Observação obrigatória apenas para aprovar/rejeitar
-                                                  if ((action === 'approve' || action === 'reject') && !obs.trim()) {
+                                                  // Observação obrigatória apenas para aprovar/rejeitar quando tem permissão
+                                                  if (hasPermission && (action === 'approve' || action === 'reject') && !obs.trim()) {
                                                     toast.error("Por favor, adicione uma observação");
                                                     return;
                                                   }
@@ -2630,244 +3492,43 @@ export default function Approvals() {
         </Card>
       )}
 
-      {/* Suggestions List */}
+      {/* Suggestions List - Apenas Cards */}
       <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Sugestões de Preço ({individualApprovals.length})</CardTitle>
-            <div className="flex gap-2">
-              <Button
-                variant={viewMode === 'cards' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('cards')}
-              >
-                Cards
-              </Button>
-              <Button
-                variant={viewMode === 'table' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setViewMode('table')}
-              >
-                Tabela
-              </Button>
-            </div>
-          </div>
+          <CardTitle>Sugestões de Preço ({individualApprovals.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          {viewMode === 'table' ? (
-            <div className="overflow-x-auto -mx-4 sm:mx-0">
-              {/* Versão Mobile: Cards para tabela */}
-              <div className="block sm:hidden space-y-3 p-3">
-                {individualApprovals.slice(individualPage * ITEMS_PER_PAGE, (individualPage + 1) * ITEMS_PER_PAGE).map((suggestion) => {
-                  const currentPrice = suggestion.current_price || suggestion.cost_price || 0;
-                  const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
-                  const finalPrice = suggestion.final_price || suggestion.suggested_price || 0;
-                  const finalPriceReais = finalPrice >= 100 ? finalPrice / 100 : finalPrice;
-                  const margin = finalPriceReais - currentPriceReais;
-                  const volumeProjected = suggestion.volume_projected || 0;
-                  
-                  return (
-                    <div key={suggestion.id} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">
-                            {suggestion.stations?.name || suggestion.station_id || 'N/A'}
-                          </p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            {suggestion.stations?.code ? suggestion.stations.code.split('/')[0] : '-'} / {suggestion.stations?.code ? suggestion.stations.code.split('/')[1] : '-'}
-                          </p>
-                        </div>
-                        {getStatusBadge(suggestion.status)}
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div>
-                          <span className="text-slate-500 dark:text-slate-400">Preço Atual:</span>
-                          <p className="font-medium text-slate-700 dark:text-slate-300">{currentPriceReais > 0 ? formatPrice(currentPriceReais) : '-'}</p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 dark:text-slate-400">Preço Sugerido:</span>
-                          <p className="font-medium text-green-600 dark:text-green-400">{finalPriceReais > 0 ? formatPrice(finalPriceReais) : '-'}</p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 dark:text-slate-400">Volume:</span>
-                          <p className="font-medium text-slate-700 dark:text-slate-300">{volumeProjected || '-'}</p>
-                        </div>
-                        <div>
-                          <span className="text-slate-500 dark:text-slate-400">Margem:</span>
-                          <p className="font-medium text-slate-700 dark:text-slate-300">{margin !== 0 ? formatPrice(margin) : '-'}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 pt-2 border-t border-slate-200 dark:border-slate-700">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedSuggestion(suggestion);
-                            setShowDetails(true);
-                          }}
-                          className="h-7 w-7 p-0 flex-shrink-0"
-                          title="Ver detalhes"
-                        >
-                          <Eye className="h-3.5 w-3.5 text-slate-600 dark:text-slate-400" />
-                        </Button>
-                        {suggestion.status === 'pending' && permissions?.permissions?.can_approve && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedSuggestion(suggestion);
-                                setShowDetails(true);
-                              }}
-                              className="text-green-600 hover:text-green-700 hover:bg-green-50 h-7 px-2 text-xs flex-1"
-                            >
-                              Aprovar
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedSuggestion(suggestion);
-                                setShowDetails(true);
-                              }}
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50 h-7 px-2 text-xs flex-1"
-                            >
-                              Negar
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* Paginação de aprovações individuais - Melhorada */}
+          {individualApprovals.length > ITEMS_PER_PAGE && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                Página {individualPage + 1} de {Math.ceil(individualApprovals.length / ITEMS_PER_PAGE)} 
+                <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
+                  ({individualPage * ITEMS_PER_PAGE + 1} - {Math.min((individualPage + 1) * ITEMS_PER_PAGE, individualApprovals.length)} de {individualApprovals.length})
+                </span>
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIndividualPage(p => Math.max(0, p - 1))}
+                  disabled={individualPage === 0}
+                  className="min-w-[100px]"
+                >
+                  ← Anterior
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIndividualPage(p => Math.min(Math.ceil(individualApprovals.length / ITEMS_PER_PAGE) - 1, p + 1))}
+                  disabled={individualPage >= Math.ceil(individualApprovals.length / ITEMS_PER_PAGE) - 1}
+                  className="min-w-[100px]"
+                >
+                  Próximo →
+                </Button>
               </div>
-              {/* Versão Desktop: Tabela */}
-              <table className="w-full hidden sm:table">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-700">
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden lg:table-cell">CIDADE/UF</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO VEND.</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden lg:table-cell">VOLUME</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden xl:table-cell">MARGEM</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">PREÇO SUG.</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">STATUS</th>
-                    <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">AÇÕES</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {individualApprovals.slice(individualPage * ITEMS_PER_PAGE, (individualPage + 1) * ITEMS_PER_PAGE).map((suggestion) => {
-                    const currentPrice = suggestion.current_price || suggestion.cost_price || 0;
-                    const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
-                    const finalPrice = suggestion.final_price || suggestion.suggested_price || 0;
-                    const finalPriceReais = finalPrice >= 100 ? finalPrice / 100 : finalPrice;
-                    const margin = finalPriceReais - currentPriceReais;
-                    const volumeProjected = suggestion.volume_projected || 0;
-                    
-                    return (
-                      <tr key={suggestion.id} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-                          <div className="font-medium">{suggestion.stations?.name || suggestion.station_id || 'N/A'}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 lg:hidden">
-                            {suggestion.stations?.code ? suggestion.stations.code.split('/')[0] : '-'} / {suggestion.stations?.code ? suggestion.stations.code.split('/')[1] : '-'}
-                          </div>
-                        </td>
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-600 dark:text-slate-400 hidden lg:table-cell">
-                          {suggestion.stations?.code ? suggestion.stations.code.split('/')[0] : '-'} / {suggestion.stations?.code ? suggestion.stations.code.split('/')[1] : '-'}
-                        </td>
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-                          {currentPriceReais > 0 ? formatPrice(currentPriceReais) : '-'}
-                        </td>
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300 hidden lg:table-cell">
-                          {volumeProjected || '-'}
-                        </td>
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300 hidden xl:table-cell">
-                          {margin !== 0 ? formatPrice(margin) : '-'}
-                        </td>
-                        <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
-                          {finalPriceReais > 0 ? formatPrice(finalPriceReais) : '-'}
-                        </td>
-                        <td className="p-2 sm:p-3">
-                          {getStatusBadge(suggestion.status)}
-                        </td>
-                        <td className="p-2 sm:p-3">
-                          <div className="flex items-center gap-1 sm:gap-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedSuggestion(suggestion);
-                                setShowDetails(true);
-                              }}
-                              className="h-8 w-8 p-0"
-                              title="Ver detalhes"
-                            >
-                              <Eye className="h-4 w-4 text-slate-600 dark:text-slate-400" />
-                            </Button>
-                            {suggestion.status === 'pending' && permissions?.permissions?.can_approve && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedSuggestion(suggestion);
-                                    setShowDetails(true);
-                                  }}
-                                  className="text-green-600 hover:text-green-700 hover:bg-green-50 h-8 px-3"
-                                >
-                                  Aprovar
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setSelectedSuggestion(suggestion);
-                                    setShowDetails(true);
-                                  }}
-                                  className="text-red-600 hover:text-red-700 hover:bg-red-50 h-8 px-3"
-                                >
-                                  Negar
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
             </div>
-          ) : (
-          <>
-            {/* Paginação de aprovações individuais */}
-            {individualApprovals.length > ITEMS_PER_PAGE && (
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-4">
-                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
-                  Mostrando {individualPage * ITEMS_PER_PAGE + 1} - {Math.min((individualPage + 1) * ITEMS_PER_PAGE, individualApprovals.length)} de {individualApprovals.length} aprovações
-                </p>
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIndividualPage(p => Math.max(0, p - 1))}
-                    disabled={individualPage === 0}
-                    className="flex-1 sm:flex-none text-xs sm:text-sm"
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIndividualPage(p => Math.min(Math.ceil(individualApprovals.length / ITEMS_PER_PAGE) - 1, p + 1))}
-                    disabled={individualPage >= Math.ceil(individualApprovals.length / ITEMS_PER_PAGE) - 1}
-                    className="flex-1 sm:flex-none text-xs sm:text-sm"
-                  >
-                    Próximo
-                  </Button>
-                </div>
-              </div>
-            )}
+          )}
           <div className="space-y-4">
             {individualApprovals.slice(individualPage * ITEMS_PER_PAGE, (individualPage + 1) * ITEMS_PER_PAGE).map((suggestion) => (
               <div key={suggestion.id} className="p-3 sm:p-4 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:shadow-lg transition-all duration-300">
@@ -3004,8 +3665,6 @@ export default function Approvals() {
               </div>
             )}
           </div>
-          </>
-          )}
         </CardContent>
       </Card>
       </div>
@@ -3045,10 +3704,10 @@ export default function Approvals() {
               </TabsList>
               
               <TabsContent value="observations" className="space-y-4">
-                {selectedBatch.requests.map((req: any) => {
+                {selectedBatch.requests.map((req: any, index: number) => {
                   const station = req.stations || { name: req.station_id || 'N/A' };
                   return (
-                    <div key={req.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+                    <div key={`obs-${selectedBatch.id}-${req.id}-${index}`} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
                       <Label className="text-sm font-semibold mb-2 block">
                         {station.name} - {getProductName(req.product)}
                       </Label>
@@ -3069,14 +3728,14 @@ export default function Approvals() {
               </TabsContent>
               
               <TabsContent value="prices" className="space-y-4">
-                {selectedBatch.requests.map((req: any) => {
+                {selectedBatch.requests.map((req: any, index: number) => {
                   const station = req.stations || { name: req.station_id || 'N/A' };
                   const currentPrice = req.current_price || req.cost_price || 0;
                   const currentPriceReais = currentPrice >= 100 ? currentPrice / 100 : currentPrice;
                   const suggestedPrice = batchSuggestedPrices[req.id] || 0;
                   
                   return (
-                    <div key={req.id} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+                    <div key={`price-${selectedBatch.id}-${req.id}-${index}`} className="p-4 border border-slate-200 dark:border-slate-700 rounded-lg">
                       <Label className="text-sm font-semibold mb-2 block">
                         {station.name} - {getProductName(req.product)}
                       </Label>
@@ -3271,7 +3930,6 @@ export default function Approvals() {
                     }
                     
                     // Validar todas as solicitações em PARALELO (muito mais rápido)
-                    console.log(`🔍 Validando ${pendingRequests.length} solicitação(ões) em paralelo...`);
                     const validationPromises = pendingRequests.map(req => 
                       canUserApproveSuggestion(req).then(validation => ({ req, validation }))
                     );
@@ -3305,7 +3963,6 @@ export default function Approvals() {
                     }
                     
                     // Aprovar todas as solicitações em PARALELO (muito mais rápido)
-                    console.log(`✅ Aprovando ${validRequests.length} solicitação(ões) em paralelo...`);
                     const approvePromises = validRequests.map(req => 
                       handleApprove(req.id, observation).then(() => ({ success: true, id: req.id }))
                         .catch((error) => {
