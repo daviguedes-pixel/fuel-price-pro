@@ -403,6 +403,7 @@ export default function PriceRequest() {
     base_nome: string;
     base_bandeira: string;
     forma_entrega: string;
+    base_codigo?: string;
   } | null>(null);
 
   const [fetchStatus, setFetchStatus] = useState<{
@@ -514,17 +515,32 @@ export default function PriceRequest() {
       for (const s of (stationsRes.data || [])) {
         if (s.cnpj_cpf || s.id_empresa) {
           try {
-            const { data: fullStation } = await supabase
+            // Construir filtro corretamente, evitando null
+            let query = supabase
               .from('sis_empresa' as any)
-              .select('municipio, uf')
-              .or(`cnpj_cpf.eq.${s.cnpj_cpf},id_empresa.eq.${s.id_empresa}`)
-              .maybeSingle();
+              .select('municipio, uf');
+            
+            // Construir filtro OR apenas com valores válidos
+            const conditions: string[] = [];
+            if (s.cnpj_cpf) {
+              conditions.push(`cnpj_cpf.eq.${s.cnpj_cpf}`);
+            }
+            if (s.id_empresa) {
+              conditions.push(`id_empresa.eq.${s.id_empresa}`);
+            }
+            
+            if (conditions.length > 0) {
+              query = query.or(conditions.join(','));
+            }
+            
+            const { data: fullStation } = await query.maybeSingle();
             stationsWithLocation.push({ 
               ...s, 
               municipio: (fullStation as any)?.municipio, 
               uf: (fullStation as any)?.uf 
             });
           } catch (e) {
+            console.warn('Erro ao buscar município/UF:', e);
             stationsWithLocation.push(s);
           }
         } else {
@@ -1003,6 +1019,101 @@ export default function PriceRequest() {
           
           if (!e && d && Array.isArray(d) && d.length > 0) {
             resultData = d;
+            // Buscar bandeira da base_fornecedor se tiver base_id
+            if (resultData[0]?.base_id) {
+              try {
+                const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
+                if (cot) {
+                  const { data: baseInfo } = await cot
+                    .from('base_fornecedor')
+                    .select('bandeira,nome')
+                    .eq('id_base_fornecedor', resultData[0].base_id)
+                    .maybeSingle();
+                  
+                  if (baseInfo) {
+                    // Função auxiliar para extrair bandeira
+                    const extractBandeiraFromName = (nome: string, bandeira?: string | null): string => {
+                      if (bandeira && bandeira.trim() !== '') {
+                        const bandeiraUpper = bandeira.trim().toUpperCase();
+                        if (bandeiraUpper.includes('IPIRANGA') || bandeiraUpper.includes('IPP')) return 'IPIRANGA';
+                        if (bandeiraUpper.includes('RAIZEN') || bandeiraUpper.includes('RAÍZEN')) return 'RAÍZEN';
+                        if (bandeiraUpper.includes('PETROBRAS') || bandeiraUpper.includes('BR ')) return 'PETROBRAS';
+                        return bandeiraUpper;
+                      }
+                      
+                      const nomeUpper = nome.toUpperCase();
+                      const bandeiras = [
+                        { nome: 'VIBRA', patterns: ['VIBRA'] },
+                        { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                        { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                        { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
+                        { nome: 'SHELL', patterns: ['SHELL'] },
+                        { nome: 'COOP', patterns: ['COOP'] },
+                        { nome: 'UNO', patterns: ['UNO'] },
+                        { nome: 'ATEM', patterns: ['ATEM'] },
+                        { nome: 'ALE', patterns: ['ALE'] }
+                      ];
+                      
+                      for (const bandeiraItem of bandeiras) {
+                        for (const pattern of bandeiraItem.patterns) {
+                          if (nomeUpper.includes(pattern)) {
+                            return bandeiraItem.nome;
+                          }
+                        }
+                      }
+                      return 'N/A';
+                    };
+                    
+                    resultData[0].base_bandeira = extractBandeiraFromName(baseInfo.nome || resultData[0].base_nome || '', baseInfo.bandeira);
+                  } else if (resultData[0]?.base_nome) {
+                    // Se não encontrou na tabela, tentar extrair do nome
+                    const nomeUpper = (resultData[0].base_nome || '').toUpperCase();
+                    const bandeiras = [
+                      { nome: 'VIBRA', patterns: ['VIBRA'] },
+                      { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                      { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                      { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
+                      { nome: 'SHELL', patterns: ['SHELL'] },
+                      { nome: 'COOP', patterns: ['COOP'] },
+                      { nome: 'UNO', patterns: ['UNO'] },
+                      { nome: 'ATEM', patterns: ['ATEM'] },
+                      { nome: 'ALE', patterns: ['ALE'] }
+                    ];
+                    
+                    for (const bandeiraItem of bandeiras) {
+                      for (const pattern of bandeiraItem.patterns) {
+                        if (nomeUpper.includes(pattern)) {
+                          resultData[0].base_bandeira = bandeiraItem.nome;
+                          break;
+                        }
+                      }
+                      if (resultData[0].base_bandeira) break;
+                    }
+                    
+                    if (!resultData[0].base_bandeira) {
+                      resultData[0].base_bandeira = 'N/A';
+                    }
+                  }
+                }
+              } catch (err) {
+                console.log('⚠️ Erro ao buscar bandeira:', err);
+                // Tentar extrair do nome como fallback
+                if (resultData[0]?.base_nome) {
+                  const nomeUpper = (resultData[0].base_nome || '').toUpperCase();
+                  if (nomeUpper.includes('IPIRANGA') || nomeUpper.includes('IPP')) {
+                    resultData[0].base_bandeira = 'IPIRANGA';
+                  } else if (nomeUpper.includes('RAIZEN') || nomeUpper.includes('RAÍZEN')) {
+                    resultData[0].base_bandeira = 'RAÍZEN';
+                  } else if (nomeUpper.includes('PETROBRAS') || nomeUpper.includes('BR ') || nomeUpper.includes('PETRO')) {
+                    resultData[0].base_bandeira = 'PETROBRAS';
+                  } else if (nomeUpper.includes('VIBRA')) {
+                    resultData[0].base_bandeira = 'VIBRA';
+                  } else {
+                    resultData[0].base_bandeira = 'N/A';
+                  }
+                }
+              }
+            }
             break;
           }
         }
@@ -1094,18 +1205,29 @@ export default function PriceRequest() {
                   
                   // Função para extrair bandeira do nome se não vier da tabela
                   const extractBandeira = (nome: string, bandeira?: string | null): string => {
-                    // Se vier bandeira da tabela, usar direto
+                    // Se vier bandeira da tabela, usar direto (normalizar para maiúsculas)
                     if (bandeira && bandeira.trim() !== '') {
-                      return bandeira.trim().toUpperCase();
+                      const bandeiraUpper = bandeira.trim().toUpperCase();
+                      // Normalizar variações comuns
+                      if (bandeiraUpper.includes('IPIRANGA') || bandeiraUpper.includes('IPP')) {
+                        return 'IPIRANGA';
+                      }
+                      if (bandeiraUpper.includes('RAIZEN') || bandeiraUpper.includes('RAÍZEN')) {
+                        return 'RAÍZEN';
+                      }
+                      if (bandeiraUpper.includes('PETROBRAS') || bandeiraUpper.includes('BR ')) {
+                        return 'PETROBRAS';
+                      }
+                      return bandeiraUpper;
                     }
                     
                     // Tentar extrair do nome da base
                     const nomeUpper = nome.toUpperCase();
                     const bandeiras = [
                       { nome: 'VIBRA', patterns: ['VIBRA'] },
-                      { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                      { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP', 'IPIRANGA'] },
                       { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
-                      { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-'] },
+                      { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
                       { nome: 'SHELL', patterns: ['SHELL'] },
                       { nome: 'COOP', patterns: ['COOP'] },
                       { nome: 'UNO', patterns: ['UNO'] },
@@ -1113,10 +1235,10 @@ export default function PriceRequest() {
                       { nome: 'ALE', patterns: ['ALE'] }
                     ];
                     
-                    for (const bandeira of bandeiras) {
-                      for (const pattern of bandeira.patterns) {
+                    for (const bandeiraItem of bandeiras) {
+                      for (const pattern of bandeiraItem.patterns) {
                         if (nomeUpper.includes(pattern)) {
-                          return bandeira.nome;
+                          return bandeiraItem.nome;
                         }
                       }
                     }
@@ -2121,7 +2243,9 @@ export default function PriceRequest() {
                 net_result: netResult,
                 margin_cents: Math.round((suggestedPrice - finalCost) * 100),
                 volume_projected: volumeProjected,
-                suggested_price: suggestedPrice
+                suggested_price: suggestedPrice,
+                feePercentage: feePercentage,
+                base_cost: baseCost
               }
             };
             
@@ -2340,7 +2464,9 @@ export default function PriceRequest() {
             net_result: netResult,
             margin_cents: Math.round((suggestedPrice - finalCost) * 100),
             volume_projected: volumeProjected,
-            suggested_price: suggestedPrice
+            suggested_price: suggestedPrice,
+            feePercentage: feePercentage,
+            base_cost: baseCost
           }
         };
         
@@ -2845,7 +2971,7 @@ export default function PriceRequest() {
                       <svg className="h-6 w-6 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                       </svg>
-                      Preço Atual <span className="text-red-500">*</span>
+                      Preço Atual
                     </Label>
                     <Input
                       id="current_price"
@@ -3268,6 +3394,17 @@ export default function PriceRequest() {
                                       {formatPrice4Decimals(card.costAnalysis.final_cost)}
                                     </span>
                                   </div>
+                                  {/* Origem do Custo - pequeno abaixo do custo */}
+                                  {priceOrigin && (
+                                    <div className="mt-1.5 pt-1.5 border-t border-slate-200 dark:border-slate-700">
+                                      <p className="text-[10px] leading-tight text-slate-500 dark:text-slate-400">
+                                        📍 {priceOrigin.base_bandeira} - {priceOrigin.base_nome} ({priceOrigin.base_codigo}) | {priceOrigin.forma_entrega}
+                                        {card.costAnalysis.feePercentage > 0 && (
+                                          <span className="ml-1">• Taxa: {card.costAnalysis.feePercentage.toFixed(2)}%</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
 
                                 {/* Receita Total */}
@@ -3706,39 +3843,6 @@ export default function PriceRequest() {
             </Card>
           )}
 
-          {/* Card: Origem do Custo */}
-          {priceOrigin && (
-            <Card className="shadow-sm border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800">
-              <CardHeader className="pb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
-                    <MapPin className="h-5 w-5 text-slate-600 dark:text-slate-300" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                      Origem do Custo
-                    </CardTitle>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="space-y-2.5">
-                  <div className="flex justify-between items-center py-1.5">
-                    <Label className="text-xs font-medium text-muted-foreground">Bandeira:</Label>
-                    <p className="text-xs font-semibold text-foreground">🚩 {priceOrigin.base_bandeira}</p>
-                  </div>
-                  <div className="flex justify-between items-center py-1.5 border-t border-border pt-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Base:</Label>
-                    <p className="text-xs font-semibold text-foreground">{priceOrigin.base_nome}</p>
-                  </div>
-                  <div className="flex justify-between items-center py-1.5 border-t border-border pt-2">
-                    <Label className="text-xs font-medium text-muted-foreground">Tipo de Entrega:</Label>
-                    <p className="text-xs font-semibold text-foreground">{priceOrigin.forma_entrega}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
         )}

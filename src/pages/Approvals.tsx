@@ -399,14 +399,16 @@ export default function Approvals() {
           // Processar batches em um único loop
     const batches: any[] = [];
     const individuals: any[] = [];
+    const individualIdsSet = new Set<string>(); // Para evitar duplicatas
     
           for (const [batchKey, batch] of groupedBatches) {
       if (batchKey.startsWith('individual_')) {
               // Individual - adicionar se estiver filtrado
               for (const req of batch) {
-                if (filteredIdsSet.has(req.id)) {
-            individuals.push(req);
-          }
+                if (filteredIdsSet.has(req.id) && !individualIdsSet.has(req.id)) {
+                  individuals.push(req);
+                  individualIdsSet.add(req.id);
+                }
               }
       } else {
               // Batch - verificar se tem solicitações visíveis ou pendentes
@@ -472,18 +474,20 @@ export default function Approvals() {
         } else {
                 // Adicionar às individuais se filtrado
                 for (const req of batch) {
-                  if (filteredIdsSet.has(req.id)) {
-              individuals.push(req);
-            }
+                  if (filteredIdsSet.has(req.id) && !individualIdsSet.has(req.id)) {
+                    individuals.push(req);
+                    individualIdsSet.add(req.id);
+                  }
                 }
               }
             }
           }
           
-          // Adicionar não-pendentes às individuais
+          // Adicionar não-pendentes às individuais (evitando duplicatas)
           for (const s of filteredForUser) {
-            if (s.status !== 'pending') {
+            if (s.status !== 'pending' && !individualIdsSet.has(s.id)) {
               individuals.push(s);
+              individualIdsSet.add(s.id);
             }
           }
           

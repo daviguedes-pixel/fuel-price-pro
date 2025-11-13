@@ -258,23 +258,9 @@ export default function Gestao() {
       return;
     }
     
-    console.log('🔍 Adicionando tipo de pagamento:', {
-      applyToAllStations,
-      newPaymentPostoId,
-      newPaymentCard,
-      newPaymentTaxa
-    });
-    
-    // Validação: se não está marcado "aplicar para todos", deve ter um posto selecionado
     if (!applyToAllStations && !newPaymentPostoId) {
       toast.error('Selecione um posto ou marque "Aplicar para todos os postos"');
       return;
-    }
-    
-    // Validação adicional: garantir que não está tentando aplicar para todos quando há um posto selecionado
-    if (applyToAllStations && newPaymentPostoId) {
-      console.warn('⚠️ Aviso: "Aplicar para todos" está marcado mas há um posto selecionado. Desmarcando seleção de posto.');
-      setNewPaymentPostoId('');
     }
     
     try {
@@ -330,34 +316,14 @@ export default function Gestao() {
         }
       } else {
         // Inserir para um posto específico
-        // Garantir que "aplicar para todos" está desmarcado
-        if (applyToAllStations) {
-          console.error('❌ Erro: Tentando inserir para posto específico mas "aplicar para todos" está marcado');
-          toast.error('Erro: Desmarque "Aplicar para todos os postos" para selecionar um posto específico');
-          return;
-        }
-        
-        if (!newPaymentPostoId) {
-          toast.error('Selecione um posto');
-          return;
-        }
-        
         const selectedStation = stations.find(s => s.id.toString() === newPaymentPostoId);
+        const idPosto = selectedStation?.id_empresa || newPaymentPostoId;
         
-        if (!selectedStation) {
-          console.error('❌ Posto não encontrado:', newPaymentPostoId);
-          toast.error('Posto selecionado não encontrado');
-          return;
-        }
-        
-        const idPosto = selectedStation.id_empresa || newPaymentPostoId;
-        
-        console.log('✅ Inserindo para posto específico:', {
-          postoSelecionado: selectedStation.nome_empresa,
-          idPosto,
+        console.log('Inserindo dados:', {
           CARTAO: newPaymentCard,
           TAXA: parseFloat(newPaymentTaxa) || 0,
-          PRAZO: newPaymentPrazo || ''
+          PRAZO: newPaymentPrazo || '',
+          ID_POSTO: String(idPosto)
         });
         
         // Verificar se já existe
@@ -807,13 +773,7 @@ export default function Gestao() {
                 <Checkbox 
                   id="apply-all" 
                   checked={applyToAllStations}
-                  onCheckedChange={(checked) => {
-                    setApplyToAllStations(checked);
-                    // Se marcar "aplicar para todos", limpar seleção de posto específico
-                    if (checked) {
-                      setNewPaymentPostoId('');
-                    }
-                  }}
+                  onCheckedChange={setApplyToAllStations}
                 />
                 <Label 
                   htmlFor="apply-all" 
@@ -826,16 +786,7 @@ export default function Gestao() {
               {!applyToAllStations && (
                 <div>
                   <Label htmlFor="payment-posto">Selecione o Posto</Label>
-                  <Select 
-                    value={newPaymentPostoId} 
-                    onValueChange={(value) => {
-                      // Garantir que "aplicar para todos" está desmarcado quando seleciona um posto
-                      if (applyToAllStations) {
-                        setApplyToAllStations(false);
-                      }
-                      setNewPaymentPostoId(value);
-                    }}
-                  >
+                  <Select value={newPaymentPostoId} onValueChange={setNewPaymentPostoId}>
                     <SelectTrigger id="payment-posto">
                       <SelectValue placeholder="Selecione um posto" />
                     </SelectTrigger>

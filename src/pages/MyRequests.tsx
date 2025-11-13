@@ -10,12 +10,14 @@ import {
   Filter, 
   Search, 
   Eye,
-  MessageSquare
+  MessageSquare,
+  Edit
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
+import { EditRequestModal } from "@/components/EditRequestModal";
 import { formatBrazilianCurrency } from "@/lib/utils";
 
 export default function MyRequests() {
@@ -25,6 +27,9 @@ export default function MyRequests() {
   const [filteredRequests, setFilteredRequests] = useState<any[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<any>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [editingRequest, setEditingRequest] = useState<any>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [requestsWithHistory, setRequestsWithHistory] = useState<Set<string>>(new Set());
   
   const [filters, setFilters] = useState({
     status: "all",
@@ -42,6 +47,36 @@ export default function MyRequests() {
   useEffect(() => {
     loadMyRequests();
   }, [user]);
+
+  // Verificar histórico de aprovações para múltiplas solicitações
+  const checkApprovalHistoryForRequests = async (requests: any[]) => {
+    const pendingOrDraft = requests.filter(r => r.status === 'pending' || r.status === 'draft');
+    if (pendingOrDraft.length === 0) {
+      setRequestsWithHistory(new Set());
+      return;
+    }
+
+    try {
+      const requestIds = pendingOrDraft.map(r => r.id).filter(Boolean);
+      if (requestIds.length === 0) return;
+
+      const { data, error } = await supabase
+        .from('approval_history')
+        .select('suggestion_id')
+        .in('suggestion_id', requestIds);
+
+      if (error) {
+        console.error('Erro ao verificar histórico de aprovações:', error);
+        return;
+      }
+
+      // Criar Set com IDs que têm histórico
+      const idsWithHistory = new Set((data || []).map((item: any) => item.suggestion_id));
+      setRequestsWithHistory(idsWithHistory);
+    } catch (error) {
+      console.error('Erro ao verificar histórico:', error);
+    }
+  };
 
   const loadMyRequests = async () => {
     if (!user) {
@@ -119,6 +154,9 @@ export default function MyRequests() {
       
       setMyRequests(enrichedData);
       setFilteredRequests(enrichedData);
+
+      // Verificar histórico de aprovações para solicitações pendentes/draft
+      checkApprovalHistoryForRequests(enrichedData);
       
       // Calcular stats
       const total = enrichedData.length;
@@ -364,6 +402,19 @@ export default function MyRequests() {
                   </div>
                   
                   <div className="flex items-center gap-2">
+                    {(request.status === 'draft' || request.status === 'pending') && !requestsWithHistory.has(request.id) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setEditingRequest(request);
+                          setShowEditModal(true);
+                        }}
+                      >
+                        <Edit className="h-4 w-4 mr-2" />
+                        Editar
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -407,6 +458,19 @@ export default function MyRequests() {
         onReject={() => {}}
         loading={false}
         readOnly={true}
+      />
+
+      {/* Modal de Edição */}
+      <EditRequestModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setEditingRequest(null);
+        }}
+        request={editingRequest}
+        onSuccess={() => {
+          loadMyRequests(); // Recarregar lista após edição
+        }}
       />
       </div>
     </div>
