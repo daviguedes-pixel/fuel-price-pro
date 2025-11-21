@@ -7,6 +7,7 @@ import {
   TrendingUp, 
   TrendingDown, 
   Users, 
+  User,
   DollarSign, 
   BarChart3, 
   PieChart, 
