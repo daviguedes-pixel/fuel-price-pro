@@ -84,6 +84,13 @@ export default function Approvals() {
     loadSuggestions(true); // Usar cache por padrão
   }, []);
   
+  // Aplicar filtros sempre que suggestions ou filters mudarem
+  useEffect(() => {
+    if (suggestions.length > 0) {
+      applyFilters(filters);
+    }
+  }, [suggestions, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  
   // Tempo real para atualizar quando houver mudanças
   useEffect(() => {
     if (!user) return;
@@ -120,9 +127,19 @@ export default function Approvals() {
           table: 'price_suggestions'
         },
         (payload) => {
+          console.log('🔄 Mudança detectada em price_suggestions (Approvals):', payload.eventType, payload.new, payload.old);
           setIsRefreshing(true);
           // Invalidar cache imediatamente e recarregar após delay maior para garantir que a transação completou
           debouncedReload(1500); // Aumentado para 1.5s para garantir que a transação completou
+        }
+      )
+      .on(
+        'broadcast',
+        { event: 'request_deleted' },
+        (payload) => {
+          console.log('🔄 Evento de exclusão recebido (Approvals):', payload);
+          setIsRefreshing(true);
+          debouncedReload(500);
         }
       )
       .on(
@@ -492,8 +509,9 @@ export default function Approvals() {
           }
           
           // Atualizar estados de uma vez
+          // IMPORTANTE: Não definir filteredSuggestions aqui, deixar para applyFilters aplicar os filtros
           setSuggestions(enrichedWithCurrentApprover);
-          setFilteredSuggestions(filteredForUser);
+          // setFilteredSuggestions será definido por applyFilters após processSuggestionsData
     setBatchApprovals(batches);
     setIndividualApprovals(individuals);
           setStats({ 
@@ -814,11 +832,14 @@ export default function Approvals() {
             return false;
           });
       
-      // Processar dados finais (isso atualiza todos os estados: suggestions, filteredSuggestions, batches, individuals, stats)
+      // Processar dados finais (isso atualiza todos os estados: suggestions, batches, individuals, stats)
       await processSuggestionsData(enrichedWithCurrentApprover);
       
-      // Aplicar filtros após carregar os dados
-      applyFilters(filters);
+      // Aplicar filtros após carregar os dados (isso vai definir filteredSuggestions)
+      // Usar setTimeout para garantir que setSuggestions foi executado
+      setTimeout(() => {
+        applyFilters(filters);
+      }, 0);
       
       // Salvar no cache
       const cacheKey = 'approvals_suggestions_cache';
@@ -847,7 +868,13 @@ export default function Approvals() {
   };
 
   const applyFilters = (filterValues: typeof filters) => {
-    let filtered = suggestions;
+    // Usar suggestions atualizado, criar cópia para não modificar o original
+    let filtered = [...suggestions];
+    
+    console.log('🔍 Aplicando filtros:', {
+      totalSuggestions: suggestions.length,
+      filters: filterValues
+    });
 
     // Filtro de status
     if (filterValues.status !== "all") {
@@ -933,6 +960,105 @@ export default function Approvals() {
     }
 
     setFilteredSuggestions(filtered);
+    
+    // Recriar batchApprovals e individualApprovals a partir dos dados filtrados
+    const filteredIdsSet = new Set(filtered.map(s => s.id));
+    const groupedBatches = new Map<string, any[]>();
+    
+    // Agrupar por batch_id apenas os itens filtrados
+    for (const s of filtered) {
+      const batchKey = s.batch_id || `individual_${s.id}`;
+      if (!groupedBatches.has(batchKey)) {
+        groupedBatches.set(batchKey, []);
+      }
+      groupedBatches.get(batchKey)!.push(s);
+    }
+    
+    // Processar batches e individuals filtrados
+    const filteredBatches: any[] = [];
+    const filteredIndividuals: any[] = [];
+    const individualIdsSet = new Set<string>();
+    
+    for (const [batchKey, batch] of groupedBatches) {
+      if (batchKey.startsWith('individual_')) {
+        // Individual - adicionar se estiver filtrado
+        for (const req of batch) {
+          if (filteredIdsSet.has(req.id) && !individualIdsSet.has(req.id)) {
+            filteredIndividuals.push(req);
+            individualIdsSet.add(req.id);
+          }
+        }
+      } else {
+        // Batch - verificar se tem solicitações visíveis ou pendentes
+        let visibleCount = 0;
+        let pendingCount = 0;
+        const visibleRequests: any[] = [];
+        const pendingRequests: any[] = [];
+        
+        // Calcular clientes únicos
+        const clientIds = new Set<string>();
+        let firstClient: any = null;
+        
+        for (const req of batch) {
+          const cid = req.client_id || req.clients?.id || 'unknown';
+          if (!clientIds.has(cid)) {
+            clientIds.add(cid);
+            if (!firstClient) firstClient = req.clients || { name: 'N/A' };
+          }
+          
+          if (req.status === 'pending') {
+            pendingCount++;
+            pendingRequests.push(req);
+            if (req.is_current_user_turn || req.user_already_approved) {
+              visibleCount++;
+              visibleRequests.push(req);
+            }
+          } else if (req.status === 'price_suggested' || req.status === 'approved' || req.status === 'rejected') {
+            visibleCount++;
+            visibleRequests.push(req);
+          }
+        }
+        
+        if (visibleCount > 0 || pendingCount > 0) {
+          const requestsToShow = visibleRequests.length > 0 ? visibleRequests : pendingRequests;
+          
+          filteredBatches.push({
+            batchKey,
+            requests: requestsToShow,
+            allRequests: batch,
+            client: firstClient,
+            clients: clientIds.size > 1 
+              ? (() => {
+                  const clientsList: any[] = [];
+                  const added = new Set<string>();
+                  for (const req of batch) {
+                    const cid = req.client_id || req.clients?.id || 'unknown';
+                    if (!added.has(cid) && clientsList.length < 3) {
+                      clientsList.push(req.clients || { name: 'N/A' });
+                      added.add(cid);
+                    }
+                  }
+                  return clientsList;
+                })()
+              : [firstClient],
+            hasMultipleClients: clientIds.size > 1,
+            created_at: batch[0].created_at,
+            created_by: batch[0].created_by || batch[0].requested_by
+          });
+        }
+      }
+    }
+    
+    // Adicionar não-pendentes às individuais (evitando duplicatas)
+    for (const s of filtered) {
+      if (s.status !== 'pending' && !individualIdsSet.has(s.id)) {
+        filteredIndividuals.push(s);
+        individualIdsSet.add(s.id);
+      }
+    }
+    
+    setBatchApprovals(filteredBatches);
+    setIndividualApprovals(filteredIndividuals);
   };
 
   const handleApprove = async (suggestionId: string, observations: string) => {
@@ -1349,51 +1475,46 @@ export default function Approvals() {
         }
       } else {
         // Usuário TEM perfil requerido OU não há regra específica - pode aprovar normalmente
-        // Encontrar próximo aprovador na sequência
-        const nextApproverIndex = approvers.findIndex((a, idx) => idx > approverIndex);
         
-        if (nextApproverIndex >= 0) {
-          // Há próximo aprovador - verificar se precisa passar para ele ou aprovar
-        if (requiredProfiles && requiredProfiles.length > 0) {
-            // Há regra de margem - verificar se o próximo tem perfil requerido
-          const nextApprover = approvers[nextApproverIndex];
-          const nextHasRequiredProfile = requiredProfiles.includes(nextApprover.perfil);
+        // IMPORTANTE: Se não há regra configurada, aprovar final imediatamente
+        if (!requiredProfiles || requiredProfiles.length === 0) {
+          console.log('✅ Sem regra configurada - aprovando final imediatamente');
+          newStatus = 'approved';
+          finalLevel = currentLevel;
+        } else {
+          // Há regra de margem - seguir fluxo normal de aprovação
+          // Encontrar próximo aprovador na sequência
+          const nextApproverIndex = approvers.findIndex((a, idx) => idx > approverIndex);
           
+          if (nextApproverIndex >= 0) {
+            // Há próximo aprovador - verificar se precisa passar para ele ou aprovar
+            const nextApprover = approvers[nextApproverIndex];
+            const nextHasRequiredProfile = requiredProfiles.includes(nextApprover.perfil);
+            
             if (nextHasRequiredProfile) {
               // Próximo tem perfil requerido - passar para ele
               newStatus = 'pending';
               finalLevel = nextApproverIndex + 1;
             } else {
-            // Próximo não tem perfil requerido - procurar próximo com perfil requerido
-            const nextRequiredApproverIndex = approvers.findIndex((a, idx) => 
-              idx > approverIndex && requiredProfiles.includes(a.perfil)
-            );
-            
-            if (nextRequiredApproverIndex >= 0) {
+              // Próximo não tem perfil requerido - procurar próximo com perfil requerido
+              const nextRequiredApproverIndex = approvers.findIndex((a, idx) => 
+                idx > approverIndex && requiredProfiles.includes(a.perfil)
+              );
+              
+              if (nextRequiredApproverIndex >= 0) {
                 // Há próximo com perfil requerido - passar para ele
                 newStatus = 'pending';
-              finalLevel = nextRequiredApproverIndex + 1;
-            } else {
+                finalLevel = nextRequiredApproverIndex + 1;
+              } else {
                 // Não há mais aprovadores com perfil requerido - aprovar (usuário tem perfil requerido)
                 newStatus = 'approved';
                 finalLevel = currentLevel;
               }
             }
-              } else {
-            // Não há regra específica - passar para o próximo
-            newStatus = 'pending';
-                finalLevel = nextApproverIndex + 1;
-        }
-      } else {
-        // Não há mais aprovadores na sequência
-        // Se usuário tem perfil requerido ou não há regra específica, aprovar completamente
-        if (userHasRequiredProfile || !requiredProfiles || requiredProfiles.length === 0) {
-          newStatus = 'approved';
-          finalLevel = currentLevel;
-        } else {
-            // Não deveria chegar aqui, mas por segurança manter como pending
-            newStatus = 'pending';
-          finalLevel = currentLevel;
+          } else {
+            // Não há mais aprovadores na sequência - aprovar completamente
+            newStatus = 'approved';
+            finalLevel = currentLevel;
           }
         }
       }
@@ -1484,7 +1605,92 @@ export default function Approvals() {
         // Não bloquear a aprovação se a notificação falhar
       }
 
+      // Se aprovado, inserir no histórico de preços
       if (newStatus === 'approved') {
+        try {
+          // Buscar último preço aprovado para essa combinação (station, client, product)
+          let oldPrice: number | null = null;
+          if (currentSuggestion.station_id && currentSuggestion.client_id && currentSuggestion.product) {
+            const { data: lastPriceData } = await supabase
+              .from('price_history')
+              .select('new_price')
+              .eq('station_id', currentSuggestion.station_id)
+              .eq('client_id', currentSuggestion.client_id)
+              .eq('product', currentSuggestion.product)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            
+            if (lastPriceData?.new_price) {
+              oldPrice = parseFloat(String(lastPriceData.new_price));
+            }
+          }
+          
+          // Se não encontrou no histórico, buscar na tabela de sugestões
+          if (oldPrice === null && currentSuggestion.station_id && currentSuggestion.client_id && currentSuggestion.product) {
+            const { data: lastSuggestionData } = await supabase
+              .from('price_suggestions')
+              .select('final_price')
+              .eq('station_id', currentSuggestion.station_id)
+              .eq('client_id', currentSuggestion.client_id)
+              .eq('product', currentSuggestion.product)
+              .eq('status', 'approved')
+              .neq('id', suggestionId) // Excluir a sugestão atual
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            
+            if (lastSuggestionData?.final_price) {
+              // Converter de centavos para reais se necessário
+              const priceValue = parseFloat(String(lastSuggestionData.final_price));
+              oldPrice = priceValue >= 100 ? priceValue / 100 : priceValue;
+            }
+          }
+          
+          // Calcular new_price (final_price da sugestão atual)
+          const newPrice = currentSuggestion.final_price 
+            ? (parseFloat(String(currentSuggestion.final_price)) >= 100 
+                ? parseFloat(String(currentSuggestion.final_price)) / 100 
+                : parseFloat(String(currentSuggestion.final_price)))
+            : 0;
+          
+          // Determinar change_type
+          let changeType: string | null = null;
+          if (oldPrice !== null && newPrice > 0) {
+            changeType = newPrice > oldPrice ? 'up' : newPrice < oldPrice ? 'down' : null;
+          }
+          
+          // Inserir no histórico
+          const { error: historyInsertError } = await supabase
+            .from('price_history')
+            .insert({
+              suggestion_id: suggestionId,
+              station_id: currentSuggestion.station_id || null,
+              client_id: currentSuggestion.client_id || null,
+              product: currentSuggestion.product,
+              old_price: oldPrice,
+              new_price: newPrice,
+              margin_cents: currentSuggestion.margin_cents || 0,
+              approved_by: approverName,
+              change_type: changeType
+            });
+          
+          if (historyInsertError) {
+            console.error('❌ Erro ao inserir no histórico de preços:', historyInsertError);
+            // Não bloquear a aprovação se o histórico falhar
+          } else {
+            console.log('✅ Registro inserido no histórico de preços:', {
+              suggestion_id: suggestionId,
+              old_price: oldPrice,
+              new_price: newPrice,
+              change_type: changeType
+            });
+          }
+        } catch (historyError) {
+          console.error('❌ Erro ao processar histórico de preços:', historyError);
+          // Não bloquear a aprovação se o histórico falhar
+        }
+        
         toast.success("Sugestão aprovada com sucesso!");
       } else {
         if (userHasRequiredProfile) {
@@ -2485,10 +2691,26 @@ export default function Approvals() {
 
       if (error) throw error;
 
-      if (error) throw error;
+      // Invalidar cache para forçar atualização
+      localStorage.removeItem('approvals_suggestions_cache');
+      localStorage.removeItem('approvals_suggestions_cache_timestamp');
+      
+      // Invalidar cache de outras páginas também
+      if (user?.id) {
+        const cacheKey = `price_request_my_requests_cache_${user.id}`;
+        const cacheTimestampKey = `price_request_my_requests_cache_timestamp_${user.id}`;
+        localStorage.removeItem(cacheKey);
+        localStorage.removeItem(cacheTimestampKey);
+      }
 
       toast.success("Aprovação excluída com sucesso!");
       loadSuggestions();
+      
+      // O listener de tempo real já vai atualizar automaticamente
+      // Mas forçar uma atualização imediata também
+      setTimeout(() => {
+        loadSuggestions();
+      }, 500);
     } catch (error) {
       console.error('Erro ao excluir aprovação:', error);
       toast.error("Erro ao excluir aprovação: " + (error as Error).message);
@@ -2593,7 +2815,7 @@ export default function Approvals() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2607,7 +2829,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2621,7 +2843,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2635,7 +2857,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2764,14 +2986,14 @@ export default function Approvals() {
 
       {/* Batch Approvals Section - Only for batch requests */}
       {batchApprovals.length > 0 && (
-        <Card className="shadow-lg border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+        <Card className="shadow-lg border-0 bg-white/80 dark:bg-card/90 backdrop-blur-sm">
           <CardHeader className="p-3 sm:p-6">
             <CardTitle className="text-base sm:text-lg">Aprovações em Lote ({batchApprovals.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-6">
             {/* Paginação de lotes - Melhorada */}
             {batchApprovals.length > ITEMS_PER_PAGE && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-secondary/50 rounded-lg">
                 <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                   Página {batchPage + 1} de {Math.ceil(batchApprovals.length / ITEMS_PER_PAGE)}
                   <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
@@ -2807,9 +3029,9 @@ export default function Approvals() {
                 return (
                   <div key={batch.batchKey} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                     {/* Header do Lote - Colapsável */}
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-slate-800/50">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-secondary/50">
                       <div 
-                        className="flex items-center gap-2 sm:gap-3 flex-1 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors rounded-lg p-2 -m-2 w-full sm:w-auto"
+                        className="flex items-center gap-2 sm:gap-3 flex-1 cursor-pointer hover:bg-slate-100 dark:hover:bg-secondary transition-colors rounded-lg p-2 -m-2 w-full sm:w-auto"
                         onClick={() => {
                           const newExpanded = new Set(expandedBatches);
                           if (isExpanded) {
@@ -2909,7 +3131,7 @@ export default function Approvals() {
                             const station = req.stations || { name: req.station_id || 'N/A', code: '' };
                             
                             return (
-                              <div key={`mobile-${batch.id}-${req.id}-${index}`} className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                              <div key={`mobile-${batch.id}-${req.id}-${index}`} className="bg-white dark:bg-card rounded-lg border border-slate-200 dark:border-border p-3 space-y-2">
                                 <div className="flex items-start justify-between">
                                   <div className="flex-1 min-w-0">
                                     <p className="font-semibold text-sm text-slate-800 dark:text-slate-200 truncate">{station.name}</p>
@@ -2986,7 +3208,7 @@ export default function Approvals() {
                         {/* Versão Desktop: Tabela */}
                         <table className="w-full hidden sm:table">
                           <thead>
-                            <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+                            <tr className="border-b border-slate-200 dark:border-border bg-slate-50 dark:bg-secondary/50">
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden lg:table-cell">CLIENTE</th>
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden xl:table-cell">ENVIADO POR</th>
@@ -3013,7 +3235,7 @@ export default function Approvals() {
                               const suggestedPrice = batchSuggestedPrices[req.id] || finalPriceReais;
                               
                               return (
-                                <tr key={`desktop-${batch.id}-${req.id}-${index}`} className="border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                                <tr key={`desktop-${batch.id}-${req.id}-${index}`} className="border-b border-slate-100 dark:border-border hover:bg-slate-50 dark:hover:bg-secondary/50">
                                   <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                                     <div className="font-medium">{station.name}</div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 lg:hidden">{req.clients?.name || batch.client?.name || 'N/A'}</div>
@@ -3497,14 +3719,14 @@ export default function Approvals() {
       )}
 
       {/* Suggestions List - Apenas Cards */}
-      <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+      <Card className="shadow-xl border-0 bg-white/80 dark:bg-card/90 backdrop-blur-sm">
         <CardHeader>
           <CardTitle>Sugestões de Preço ({individualApprovals.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {/* Paginação de aprovações individuais - Melhorada */}
           {individualApprovals.length > ITEMS_PER_PAGE && (
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-secondary/50 rounded-lg">
               <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                 Página {individualPage + 1} de {Math.ceil(individualApprovals.length / ITEMS_PER_PAGE)} 
                 <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
@@ -3535,7 +3757,7 @@ export default function Approvals() {
           )}
           <div className="space-y-4">
             {individualApprovals.slice(individualPage * ITEMS_PER_PAGE, (individualPage + 1) * ITEMS_PER_PAGE).map((suggestion) => (
-              <div key={suggestion.id} className="p-3 sm:p-4 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:shadow-lg transition-all duration-300">
+              <div key={suggestion.id} className="p-3 sm:p-4 bg-gradient-to-r from-white to-slate-50 dark:from-card dark:to-secondary rounded-xl border border-slate-200 dark:border-border hover:shadow-lg transition-all duration-300">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 sm:gap-4">
                   <div className="flex-1 min-w-0 w-full">
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-2">
@@ -3563,7 +3785,7 @@ export default function Approvals() {
                       </div>
                       
                       {/* Análise de Preço */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-600">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-white dark:bg-card rounded-lg border border-slate-200 dark:border-border">
                         <div>
                           <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">Preço Atual</p>
                           <p className="text-lg font-bold text-slate-800 dark:text-slate-200">

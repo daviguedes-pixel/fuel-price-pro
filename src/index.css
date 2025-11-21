@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Righteous Font */
+@import url('https://fonts.googleapis.com/css2?family=Righteous&display=swap');
+
+.font-righteous {
+  font-family: 'Righteous', sans-serif;
+}
+
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.
 */
@@ -113,51 +120,51 @@ All colors MUST be HSL.
   }
 
   .dark {
-    /* Professional Dark Theme */
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
+    /* Modern Dark Theme - Clean and Professional */
+    --background: 222 15% 13%;
+    --foreground: 0 0% 95%;
 
-    --card: 221 39% 11%;
-    --card-foreground: 210 40% 98%;
+    --card: 222 15% 16%;
+    --card-foreground: 0 0% 95%;
 
-    --popover: 221 39% 11%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 222 15% 16%;
+    --popover-foreground: 0 0% 95%;
 
-    /* Primary: Lighter navy for dark mode */
-    --primary: 217 91% 60%;
-    --primary-foreground: 222 47% 11%;
-    --primary-hover: 217 91% 65%;
+    /* Primary: Balanced blue */
+    --primary: 217 91% 62%;
+    --primary-foreground: 0 0% 98%;
+    --primary-hover: 217 91% 67%;
 
-    --secondary: 217 19% 27%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 222 15% 20%;
+    --secondary-foreground: 0 0% 95%;
 
-    --muted: 217 19% 27%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 222 15% 18%;
+    --muted-foreground: 222 10% 65%;
 
-    /* Accent: Vibrant blue for dark mode */
-    --accent: 217 91% 60%;
-    --accent-foreground: 222 47% 11%;
-    --accent-hover: 217 91% 65%;
+    /* Accent: Pleasant blue */
+    --accent: 217 91% 62%;
+    --accent-foreground: 0 0% 98%;
+    --accent-hover: 217 91% 67%;
 
-    --success: 142 71% 45%;
+    --success: 142 71% 52%;
     --success-foreground: 0 0% 98%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 0 84% 62%;
     --destructive-foreground: 0 0% 98%;
 
-    --border: 217 19% 27%;
-    --input: 217 19% 27%;
-    --ring: 217 91% 60%;
+    --border: 222 15% 25%;
+    --input: 222 15% 20%;
+    --ring: 217 91% 62%;
 
-    /* Sidebar: Even darker in dark mode */
-    --sidebar-background: 221 39% 11%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-primary: 217 91% 60%;
-    --sidebar-primary-foreground: 222 47% 11%;
-    --sidebar-accent: 217 19% 27%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 215 27% 17%;
-    --sidebar-ring: 217 91% 60%;
+    /* Sidebar: Subtle dark */
+    --sidebar-background: 222 15% 11%;
+    --sidebar-foreground: 0 0% 95%;
+    --sidebar-primary: 217 91% 62%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 222 15% 20%;
+    --sidebar-accent-foreground: 0 0% 95%;
+    --sidebar-border: 222 15% 18%;
+    --sidebar-ring: 217 91% 62%;
   }
 }
 
@@ -250,4 +257,29 @@ All colors MUST be HSL.
     page-break-inside: avoid !important;
     break-inside: avoid !important;
   }
+}
+
+/* Leaflet Map Styles */
+.leaflet-container {
+  font-family: inherit;
+}
+
+.custom-leaflet-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.leaflet-popup-content {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.leaflet-popup-tip {
+  background: white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

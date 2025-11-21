@@ -8,3 +8,10 @@ CREATE INDEX IF NOT EXISTS idx_price_suggestions_batch_name ON public.price_sugg
 -- Comentário na coluna
 COMMENT ON COLUMN public.price_suggestions.batch_name IS 'Nome do lote - opcional, para identificar facilmente um grupo de solicitações';
 
+
+
+
+
+
+
+

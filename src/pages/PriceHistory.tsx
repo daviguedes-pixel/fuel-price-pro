@@ -144,9 +144,11 @@ export default function PriceHistory() {
       product: getProductName(item.product),
       oldPrice: item.old_price,
       newPrice: item.new_price,
-      status: item.price_suggestions?.status || 'pending',
+      status: 'approved' as 'approved', // price_history só contém aprovações
       approvedBy: item.approved_by,
-      changeType: (item.old_price && item.new_price > item.old_price ? 'up' : 'down') as 'up' | 'down'
+      changeType: (item.old_price && item.new_price && item.old_price > 0 
+        ? (item.new_price > item.old_price ? 'up' : 'down') 
+        : item.change_type || 'up') as 'up' | 'down'
     }));
   };
 

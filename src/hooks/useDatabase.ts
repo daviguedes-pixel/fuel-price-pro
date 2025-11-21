@@ -230,15 +230,117 @@ export const useDatabase = () => {
           *,
           stations(name),
           clients(name),
-          price_suggestions(status)
+          price_suggestions(status, station_id, client_id)
         `)
         .order('created_at', { ascending: false })
         .limit(100);
       
       if (error) throw error;
-      setPriceHistory(data || []);
+      
+      // Enriquecer dados com nomes de postos e clientes se não vieram das foreign keys
+      const enrichedData = await Promise.all((data || []).map(async (item: any) => {
+        // Se não tem nome do posto, buscar na price_suggestions ou sis_empresa
+        if (!item.stations?.name && item.station_id) {
+          try {
+            // Tentar buscar na price_suggestions primeiro
+            if (item.price_suggestions?.station_id) {
+              const { data: suggestionData } = await supabase
+                .from('price_suggestions')
+                .select('station_id')
+                .eq('id', item.suggestion_id)
+                .single();
+              
+              if (suggestionData?.station_id) {
+                // Tentar buscar na tabela stations
+                const { data: stationData } = await supabase
+                  .from('stations')
+                  .select('name')
+                  .eq('id', suggestionData.station_id)
+                  .single();
+                
+                if (stationData?.name) {
+                  item.stations = { name: stationData.name };
+                }
+              }
+            }
+            
+            // Se ainda não tem, tentar buscar diretamente pelo station_id
+            if (!item.stations?.name) {
+              const { data: stationData } = await supabase
+                .from('stations')
+                .select('name')
+                .eq('id', item.station_id)
+                .single();
+              
+              if (stationData?.name) {
+                item.stations = { name: stationData.name };
+              }
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do posto:', err);
+          }
+        }
+        
+        // Se não tem nome do cliente, buscar na price_suggestions ou clientes
+        if (!item.clients?.name && item.client_id) {
+          try {
+            // Tentar buscar na price_suggestions primeiro
+            if (item.price_suggestions?.client_id) {
+              const { data: suggestionData } = await supabase
+                .from('price_suggestions')
+                .select('client_id')
+                .eq('id', item.suggestion_id)
+                .single();
+              
+              if (suggestionData?.client_id) {
+                // Tentar buscar na tabela clients
+                const { data: clientData } = await supabase
+                  .from('clients')
+                  .select('name')
+                  .eq('id', suggestionData.client_id)
+                  .single();
+                
+                if (clientData?.name) {
+                  item.clients = { name: clientData.name };
+                }
+              }
+            }
+            
+            // Se ainda não tem, tentar buscar diretamente pelo client_id
+            if (!item.clients?.name) {
+              const { data: clientData } = await supabase
+                .from('clients')
+                .select('name')
+                .eq('id', item.client_id)
+                .single();
+              
+              if (clientData?.name) {
+                item.clients = { name: clientData.name };
+              } else {
+                // Tentar buscar na tabela clientes (formato antigo)
+                const { data: clientesData } = await supabase
+                  .from('clientes' as any)
+                  .select('nome')
+                  .eq('id_cliente', item.client_id)
+                  .single();
+                
+                if (clientesData?.nome) {
+                  item.clients = { name: clientesData.nome };
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do cliente:', err);
+          }
+        }
+        
+        return item;
+      }));
+      
+      setPriceHistory(enrichedData);
     } catch (error) {
       console.error('Error loading price history:', error);
+      setPriceHistory([]);
     }
   };
 
@@ -333,7 +435,7 @@ export const useDatabase = () => {
         *,
         stations(name),
         clients(name),
-        price_suggestions(status)
+        price_suggestions(status, station_id, client_id)
       `)
       .order('created_at', { ascending: false });
 
@@ -349,7 +451,58 @@ export const useDatabase = () => {
 
     const { data, error } = await query;
     if (error) throw error;
-    return data || [];
+    
+    // Enriquecer dados com nomes de postos e clientes se não vieram das foreign keys
+    const enrichedData = await Promise.all((data || []).map(async (item: any) => {
+      // Se não tem nome do posto, buscar
+      if (!item.stations?.name && item.station_id) {
+        try {
+          const { data: stationData } = await supabase
+            .from('stations')
+            .select('name')
+            .eq('id', item.station_id)
+            .single();
+          
+          if (stationData?.name) {
+            item.stations = { name: stationData.name };
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar nome do posto:', err);
+        }
+      }
+      
+      // Se não tem nome do cliente, buscar
+      if (!item.clients?.name && item.client_id) {
+        try {
+          const { data: clientData } = await supabase
+            .from('clients')
+            .select('name')
+            .eq('id', item.client_id)
+            .single();
+          
+          if (clientData?.name) {
+            item.clients = { name: clientData.name };
+          } else {
+            // Tentar buscar na tabela clientes (formato antigo)
+            const { data: clientesData } = await supabase
+              .from('clientes' as any)
+              .select('nome')
+              .eq('id_cliente', item.client_id)
+              .single();
+            
+            if (clientesData?.nome) {
+              item.clients = { name: clientesData.nome };
+            }
+          }
+        } catch (err) {
+          console.warn('Erro ao buscar nome do cliente:', err);
+        }
+      }
+      
+      return item;
+    }));
+    
+    return enrichedData;
   };
 
   // Refresh functions

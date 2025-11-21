@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SaoRoqueLogo } from "@/components/SaoRoqueLogo";
+import { IntegraLogo } from "@/components/IntegraLogo";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
@@ -71,21 +71,27 @@ export default function Login() {
       <div className="w-full max-w-md relative z-10">
         {/* Logo Section */}
         <div className="text-center mb-8 animate-in fade-in duration-500">
-          <div className="mb-6 flex justify-center relative">
+          <div className="mb-2 flex flex-col items-center justify-center relative">
             {/* Decorative background behind logo */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="w-32 h-32 bg-gradient-to-br from-primary/20 to-primary/5 rounded-full blur-2xl" />
             </div>
-            <div className="relative">
-              <SaoRoqueLogo className="h-20 drop-shadow-2xl" />
+            <div className="relative flex justify-center">
+              <img 
+                src="/lovable-uploads/ChatGPT Image 20 de nov. de 2025, 19_12_37.png"
+                alt="Integra Logo"
+                className="h-[160px] drop-shadow-2xl"
+                onError={(e) => {
+                  console.error('Erro ao carregar logo:', e);
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                }}
+              />
             </div>
+            <h1 className="text-4xl font-bold text-white drop-shadow-lg mt-2 font-righteous">
+              Integra
+            </h1>
           </div>
-          <h1 className="text-2xl font-bold text-white drop-shadow-lg mb-2">
-            Portal Comercial
-          </h1>
-          <p className="text-white/80 text-sm drop-shadow-md">
-            Acesse sua conta para continuar
-          </p>
         </div>
 
         <Card className="shadow-2xl border-0 bg-white backdrop-blur-sm animate-in slide-in-from-bottom-4 duration-500">

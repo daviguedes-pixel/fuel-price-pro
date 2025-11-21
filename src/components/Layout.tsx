@@ -3,7 +3,6 @@ import { Button } from "./ui/button";
 import { 
   BarChart3, 
   DollarSign, 
-  Search, 
   Settings, 
   Bell,
   Menu,
@@ -20,7 +19,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useNavigate, useLocation } from "react-router-dom";
-import { SaoRoqueLogo } from "./SaoRoqueLogo";
+import { IntegraLogo } from "./IntegraLogo";
 import { ThemeToggle } from "./ThemeToggle";
 import { NotificationCenter } from "./NotificationCenter";
 import RealtimeNotifications from "./RealtimeNotifications";
@@ -45,9 +44,9 @@ const allMenuItems = [
   { icon: Home, label: "Início", href: "/dashboard", permission: "dashboard" },
   { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
   { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
-  { icon: Search, label: "Pesquisa de Preços", href: "/competitor-research", permission: "research" },
   { icon: Map, label: "Mapa", href: "/map", permission: "map" },
   { icon: History, label: "Histórico", href: "/price-history", permission: "price_history" },
+  { icon: BarChart3, label: "Gestor de Carteiras", href: "/portfolio-manager", permission: "price_history" },
   { icon: FileText, label: "Referências", href: "/reference-registration", permission: "reference_registration" },
   { icon: Users, label: "Gestão", href: "/gestao", permission: "gestao" },
   { icon: Settings, label: "Configurações", href: "/settings", permission: "settings" },
@@ -95,9 +94,9 @@ function Layout({ children }: LayoutProps) {
         <div className="h-12 flex items-center justify-between px-3 border-b border-sidebar-border">
           <button 
             onClick={handleLogoClick}
-            className="flex items-center hover:opacity-80 transition-opacity cursor-pointer"
+            className="flex items-center hover:opacity-80 transition-opacity cursor-pointer -ml-4"
           >
-            <SaoRoqueLogo className="h-6" />
+            <IntegraLogo className="h-6" />
           </button>
           <Button
             variant="ghost"

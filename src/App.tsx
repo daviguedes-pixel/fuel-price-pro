@@ -14,6 +14,7 @@ import Approvals from "./pages/Approvals";
 import Admin from "./pages/Admin";
 import MapView from "./pages/MapView";
 import PriceHistory from "./pages/PriceHistory";
+import PortfolioManager from "./pages/PortfolioManager";
 import ReferenceRegistration from "./pages/ReferenceRegistration";
 import RateManagement from "./pages/RateManagement";
 import TaxManagement from "./pages/TaxManagement";
@@ -21,7 +22,6 @@ import StationManagement from "./pages/StationManagement";
 import ClientManagement from "./pages/ClientManagement";
 import PasswordChange from "./pages/PasswordChange";
 import AuditLogs from "./pages/AuditLogs";
-import PublicPriceResearch from "./pages/CompetitorResearch";
 import Settings from "./pages/Settings";
 import Gestao from "./pages/Gestao";
 import ApprovalMarginConfig from "./pages/ApprovalMarginConfig";
@@ -92,10 +92,10 @@ const App = () => {
                   <Route path="/pricing-suggestion" element={<Navigate to="/solicitacao-preco" replace />} />
                   <Route path="/solicitacao-preco" element={<ProtectedRoute><PriceRequest /></ProtectedRoute>} />
                   <Route path="/approvals" element={<ProtectedRoute><Approvals /></ProtectedRoute>} />
-                  <Route path="/competitor-research" element={<ProtectedRoute><PublicPriceResearch /></ProtectedRoute>} />
-                  <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
                   <Route path="/map" element={<ProtectedRoute><MapView /></ProtectedRoute>} />
+                  <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
                 <Route path="/price-history" element={<ProtectedRoute><PriceHistory /></ProtectedRoute>} />
+                <Route path="/portfolio-manager" element={<ProtectedRoute><PortfolioManager /></ProtectedRoute>} />
                 <Route path="/reference-registration" element={<ProtectedRoute><ReferenceRegistration /></ProtectedRoute>} />
                 <Route path="/tax-management" element={<ProtectedRoute><TaxManagement /></ProtectedRoute>} />
                   <Route path="/station-management" element={<ProtectedRoute><StationManagement /></ProtectedRoute>} />

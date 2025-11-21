@@ -26,8 +26,17 @@ export const FileUploader = ({
   const { toast } = useToast();
 
   // Sincronizar uploadedFiles com currentFiles quando mudar
+  // Usar useRef para rastrear o valor anterior e evitar loops infinitos
+  const prevCurrentFilesRef = useRef<string>(JSON.stringify(currentFiles));
+  
   useEffect(() => {
-    setUploadedFiles(currentFiles);
+    const currentFilesStr = JSON.stringify(currentFiles);
+    
+    // Só atualizar se realmente mudou (comparação de string)
+    if (prevCurrentFilesRef.current !== currentFilesStr) {
+      prevCurrentFilesRef.current = currentFilesStr;
+      setUploadedFiles(currentFiles);
+    }
   }, [currentFiles]);
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -99,21 +108,89 @@ export const FileUploader = ({
     setViewingFile({ url, name: fileName });
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    if (uploadedFiles.length + files.length > maxFiles) {
+      toast({
+        title: "Limite excedido",
+        description: `Máximo de ${maxFiles} arquivos permitidos.`,
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setUploading(true);
+    const newFileUrls: string[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Math.random()}.${fileExt}`;
+        const filePath = `uploads/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('attachments')
+          .upload(filePath, file);
+
+        if (uploadError) {
+          throw uploadError;
+        }
+
+        const { data: publicUrl } = supabase.storage
+          .from('attachments')
+          .getPublicUrl(filePath);
+
+        newFileUrls.push(publicUrl.publicUrl);
+      }
+
+      const allFiles = [...uploadedFiles, ...newFileUrls];
+      setUploadedFiles(allFiles);
+      onFilesUploaded(allFiles);
+
+      toast({
+        title: "Upload concluído",
+        description: `${files.length} arquivo(s) enviado(s) com sucesso.`
+      });
+    } catch (error) {
+      console.error('Error uploading files:', error);
+      toast({
+        title: "Erro no upload",
+        description: "Erro ao enviar arquivos. Tente novamente.",
+        variant: "destructive"
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       <div 
-        className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:bg-secondary/20 transition-colors"
+        className="border-2 border-dashed border-border rounded-lg p-2.5 text-center cursor-pointer hover:bg-secondary/20 transition-colors flex flex-col justify-center min-h-[72px]"
         onClick={() => fileInputRef.current?.click()}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       >
-        <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground mb-2">
-          Arraste arquivos aqui ou clique para selecionar
+        <Upload className="h-5 w-5 mx-auto mb-1 text-muted-foreground" />
+        <p className="text-xs text-muted-foreground mb-0.5">
+          Arraste arquivos aqui ou clique
         </p>
-        <p className="text-xs text-muted-foreground mb-2">
-          Máximo {maxFiles} arquivos • Imagens e PDFs
+        <p className="text-xs text-muted-foreground mb-1">
+          Máx. {maxFiles} arquivos • Imagens e PDFs
         </p>
-        <Button type="button" variant="outline" size="sm" disabled={uploading}>
-          {uploading ? "Enviando..." : "Selecionar Arquivos"}
+        <Button type="button" variant="outline" size="sm" disabled={uploading} className="h-7 text-xs px-3">
+          {uploading ? "Enviando..." : "Selecionar"}
         </Button>
         <Input
           ref={fileInputRef}

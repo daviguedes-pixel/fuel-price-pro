@@ -55,8 +55,8 @@ export const ApprovalDetailsModal = ({
     if (suggestion?.id && isOpen) {
       loadApprovalHistory();
       
-      // Buscar dados faltantes (stations, clients, payment_methods)
-      if (!suggestion.stations || !suggestion.clients || !suggestion.payment_methods) {
+      // Buscar dados faltantes (stations, clients, payment_methods, observations)
+      if (!suggestion.stations || !suggestion.clients || !suggestion.payment_methods || !suggestion.observations) {
         loadMissingData();
       }
     }
@@ -193,6 +193,26 @@ export const ApprovalDetailsModal = ({
           console.log('❌ Método de pagamento NÃO encontrado para:', suggestion.payment_method_id);
         }
       }
+      
+      // Buscar observações se não estiverem presentes
+      if (!suggestion.observations && suggestion.id) {
+        console.log('🔍 Buscando observações para suggestion:', suggestion.id);
+        const { data: suggestionData } = await supabase
+          .from('price_suggestions')
+          .select('observations')
+          .eq('id', suggestion.id)
+          .maybeSingle();
+        
+        if (suggestionData && suggestionData.observations) {
+          console.log('✅ Observações encontradas:', suggestionData.observations);
+          setEnrichedSuggestion(prev => ({
+            ...prev!,
+            observations: suggestionData.observations
+          }));
+        } else {
+          console.log('⚠️ Nenhuma observação encontrada para suggestion:', suggestion.id);
+        }
+      }
     } catch (err) {
       console.error('Erro ao buscar dados faltantes:', err);
     }
@@ -233,6 +253,9 @@ export const ApprovalDetailsModal = ({
   console.log('🎯 clients:', dataToShow.clients);
   console.log('🎯 payment_method_id:', dataToShow.payment_method_id);
   console.log('🎯 payment_methods:', dataToShow.payment_methods);
+  console.log('🎯 observations:', dataToShow.observations);
+  console.log('🎯 observations type:', typeof dataToShow.observations);
+  console.log('🎯 observations length:', dataToShow.observations?.length);
   console.log('🎯 price_origin_base:', dataToShow.price_origin_base);
   console.log('🎯 price_origin_bandeira:', dataToShow.price_origin_bandeira);
   console.log('🎯 price_origin_delivery:', dataToShow.price_origin_delivery);
@@ -833,16 +856,18 @@ export const ApprovalDetailsModal = ({
           )}
 
           {/* Observações do Solicitante */}
-          {dataToShow.observations && (
-            <Card>
-              <CardContent className="pt-6">
-                <h4 className="font-medium text-sm text-muted-foreground mb-2">Observações do Solicitante</h4>
-                <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 max-h-32 overflow-y-auto">
+          <Card>
+            <CardContent className="pt-6">
+              <h4 className="font-medium text-sm text-muted-foreground mb-2">Observações do Solicitante</h4>
+              <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 max-h-32 overflow-y-auto">
+                {dataToShow.observations ? (
                   <p className="text-sm whitespace-pre-wrap break-words">{dataToShow.observations}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
+                ) : (
+                  <p className="text-sm text-muted-foreground italic">Nenhuma observação registrada</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Histórico de Aprovações */}
           {approvalHistory.length > 0 && (

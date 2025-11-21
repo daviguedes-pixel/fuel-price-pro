@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useCompetitorResearch } from "@/hooks/useCompetitorResearch";
-import { RealMap } from "@/components/RealMap";
+import { LeafletMap } from "@/components/LeafletMap";
 import { SearchWithPreview } from "@/components/SearchWithPreview";
 import { Input } from "@/components/ui/input";
 import { StationBoard } from "@/components/StationBoard";
@@ -33,6 +33,10 @@ export default function MapView() {
   // Buscar referências
   const [references, setReferences] = useState<any[]>([]);
   const [referencesLoading, setReferencesLoading] = useState(true);
+  
+  // Buscar estações da tabela sis_empresa
+  const [sisEmpresaStations, setSisEmpresaStations] = useState<any[]>([]);
+  const [sisEmpresaLoading, setSisEmpresaLoading] = useState(true);
 
   const fetchReferences = async () => {
     try {
@@ -147,13 +151,52 @@ export default function MapView() {
     }
   };
 
+  const fetchSisEmpresaStations = async () => {
+    try {
+      console.log('🔍 Buscando estações da tabela sis_empresa...');
+      
+      // Buscar diretamente da tabela para ter acesso ao campo UF (mais confiável)
+      const { data: directData, error: directError } = await supabase
+        .from('sis_empresa' as any)
+        .select('nome_empresa, cnpj_cpf, latitude, longitude, bandeira, rede, municipio, uf, registro_ativo')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null);
+      
+      if (!directError && directData && directData.length > 0) {
+        console.log('✅ Estações encontradas diretamente:', directData.length);
+        setSisEmpresaStations(directData || []);
+      } else {
+        if (directError) {
+          console.error('❌ Erro ao buscar estações diretamente:', directError);
+          // Fallback: tentar RPC se busca direta falhar
+          const { data: rpcData, error: rpcError } = await supabase.rpc('get_sis_empresa_stations');
+          if (!rpcError && rpcData && rpcData.length > 0) {
+            console.log('✅ Estações encontradas via RPC (fallback):', rpcData.length);
+            setSisEmpresaStations(rpcData || []);
+          } else {
+            setSisEmpresaStations([]);
+          }
+        } else {
+          console.warn('⚠️ Nenhuma estação encontrada na tabela sis_empresa');
+          setSisEmpresaStations([]);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Erro ao buscar estações de sis_empresa:', err);
+      setSisEmpresaStations([]);
+    } finally {
+      setSisEmpresaLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchReferences();
+    fetchSisEmpresaStations();
   }, []);
   
   const [selectedFilter, setSelectedFilter] = useState<string>("all");
   const [selectedRegion, setSelectedRegion] = useState<string>("all");
-  const [activeTab, setActiveTab] = useState<"pesquisas" | "referencias">("pesquisas");
+  const [activeTab, setActiveTab] = useState<"pesquisas" | "referencias">("referencias");
   const [imageModalOpen, setImageModalOpen] = useState(false);
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -174,8 +217,43 @@ export default function MapView() {
     return () => clearInterval(interval);
   }, []);
   
-  // Função para determinar região baseada nas coordenadas
-  const getRegionFromCoordinates = (lat: number, lng: number): string => {
+  // Função para determinar região baseada nas coordenadas ou UF
+  const getRegionFromCoordinates = (lat: number, lng: number, uf?: string): string => {
+    // Se temos UF, usar diretamente (mais confiável)
+    if (uf) {
+      const ufLower = uf.toLowerCase().trim();
+      const ufMap: { [key: string]: string } = {
+        'mg': 'mg', 'minas gerais': 'mg',
+        'go': 'go', 'goiás': 'go', 'goias': 'go',
+        'df': 'df', 'distrito federal': 'df',
+        'sp': 'sp', 'são paulo': 'sp', 'sao paulo': 'sp',
+        'ba': 'ba', 'bahia': 'ba',
+        'rj': 'rj', 'rio de janeiro': 'rj',
+        'pr': 'pr', 'paraná': 'pr', 'parana': 'pr',
+        'sc': 'sc', 'santa catarina': 'sc',
+        'rs': 'rs', 'rio grande do sul': 'rs',
+        'es': 'es', 'espírito santo': 'es', 'espirito santo': 'es',
+        'ms': 'ms', 'mato grosso do sul': 'ms',
+        'mt': 'mt', 'mato grosso': 'mt',
+        'to': 'to', 'tocantins': 'to',
+        'ac': 'ac', 'acre': 'ac',
+        'al': 'al', 'alagoas': 'al',
+        'ap': 'ap', 'amapá': 'ap', 'amapa': 'ap',
+        'am': 'am', 'amazonas': 'am',
+        'ce': 'ce', 'ceará': 'ce', 'ceara': 'ce',
+        'ma': 'ma', 'maranhão': 'ma', 'maranhao': 'ma',
+        'pb': 'pb', 'paraíba': 'pb', 'paraiba': 'pb',
+        'pe': 'pe', 'pernambuco': 'pe',
+        'pi': 'pi', 'piauí': 'pi', 'piaui': 'pi',
+        'rn': 'rn', 'rio grande do norte': 'rn',
+        'ro': 'ro', 'rondônia': 'ro', 'rondonia': 'ro',
+        'rr': 'rr', 'roraima': 'rr',
+        'se': 'se', 'sergipe': 'se'
+      };
+      return ufMap[ufLower] || ufLower;
+    }
+    
+    // Fallback: calcular por coordenadas (menos preciso)
     // Minas Gerais: aproximadamente -14 a -22 lat, -39 a -51 lng
     if (lat >= -22 && lat <= -14 && lng >= -51 && lng <= -39) return "mg";
     
@@ -187,6 +265,9 @@ export default function MapView() {
     
     // São Paulo: aproximadamente -20 a -25 lat, -48 a -44 lng
     if (lat >= -25 && lat <= -20 && lng >= -48 && lng <= -44) return "sp";
+    
+    // Bahia: aproximadamente -9 a -18 lat, -39 a -46 lng
+    if (lat >= -18 && lat <= -9 && lng >= -46 && lng <= -39) return "ba";
     
     return "other";
   };
@@ -257,7 +338,7 @@ export default function MapView() {
         date: latestResearch?.date_observed || latestSuggestion?.created_at || latestHistory?.created_at,
         source: latestResearch ? 'pesquisa' : 'sistema',
         researchCount: stationStat?.total_research || 0,
-        region: getRegionFromCoordinates(station.latitude || -23.5505, station.longitude || -46.6333),
+        region: getRegionFromCoordinates(station.latitude || -23.5505, station.longitude || -46.6333, station.uf),
         researchData: researchData.filter(r => r.station_id === station.id || r.station_name === station.name)
       };
     });
@@ -286,8 +367,39 @@ export default function MapView() {
       product: research.product,
       date: research.date_observed,
       source: 'pesquisa',
-      region: getRegionFromCoordinates(research.latitude || -23.5505, research.longitude || -46.6333),
+      region: getRegionFromCoordinates(research.latitude || -23.5505, research.longitude || -46.6333, research.uf || research.state),
       researchData: [research]
+    }));
+
+  // Convert sis_empresa stations to markers
+  const sisEmpresaMarkers: MarkerStation[] = sisEmpresaStations
+    .filter(station => {
+      // Filtrar estações sem coordenadas válidas
+      const lat = station.latitude;
+      const lng = station.longitude;
+      
+      if (!lat || !lng || isNaN(Number(lat)) || isNaN(Number(lng))) {
+        return false;
+      }
+      
+      // Remover postos com coordenadas de São Paulo (ponto bugado)
+      if (Number(lat) === -23.5505 && Number(lng) === -46.6333) {
+        return false;
+      }
+      
+      return true;
+    })
+    .map(station => ({
+      id: `sis_empresa-${station.cnpj_cpf || station.nome_empresa}`,
+      name: station.nome_empresa || 'Posto sem nome',
+      lat: Number(station.latitude),
+      lng: Number(station.longitude),
+      price: 'R$ 0,00', // Não temos preço direto da sis_empresa
+      type: 'nossa' as const,
+      product: 'Gasolina Comum',
+      source: 'sis_empresa',
+      region: getRegionFromCoordinates(Number(station.latitude), Number(station.longitude), station.uf),
+      researchData: []
     }));
 
   // Convert references to markers - tentar múltiplos campos de coordenadas
@@ -322,31 +434,41 @@ export default function MapView() {
       if (isNaN(lat) || isNaN(lng)) return false;
       return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
     })
-    .map(({ reference, lat, lng }) => ({
-      id: `reference-${reference.id}`,
-      name: reference.concorrente?.razao_social || reference.stations?.name || reference.nome || 'Posto',
-      lat,
-      lng,
-      price: formatBrazilianCurrency(Number(reference.preco_referencia)),
-      type: 'cliente',
-      product: reference.produto,
-      date: reference.created_at,
-      source: 'referencia',
-      clientName: reference.clients?.name || 'Cliente',
-      region: getRegionFromCoordinates(lat, lng),
-      researchData: []
-    }));
+    .map(({ reference, lat, lng }) => {
+      // Tentar obter UF de várias fontes possíveis
+      const uf = reference.uf || 
+                 reference.concorrente?.uf || 
+                 reference.stations?.uf || 
+                 reference.estado ||
+                 reference.concorrente?.estado ||
+                 reference.stations?.estado;
+      
+      return {
+        id: `reference-${reference.id}`,
+        name: reference.concorrente?.razao_social || reference.stations?.name || reference.nome || 'Posto',
+        lat,
+        lng,
+        price: formatBrazilianCurrency(Number(reference.preco_referencia)),
+        type: 'cliente',
+        product: reference.produto,
+        date: reference.created_at,
+        source: 'referencia',
+        clientName: reference.clients?.name || 'Cliente',
+        region: getRegionFromCoordinates(lat, lng, uf),
+        researchData: []
+      };
+    });
 
   // Combine markers based on active tab and apply region filter
-  const allStations = (activeTab === "pesquisas"
-    ? [...mapStations, ...researchMarkers]
-    : [...referenceMarkers])
+  // Mostrar estações de sis_empresa e referências
+  const allStations = [...sisEmpresaMarkers, ...referenceMarkers]
     .filter(station => {
       if (selectedRegion === "all") return true;
       return station.region === selectedRegion;
     });
 
   console.log('🗺️ Total de estações para o mapa:', allStations.length);
+  console.log('🗺️ Estações de sis_empresa:', sisEmpresaMarkers.length);
   console.log('🗺️ Estações próprias:', mapStations.length);
   console.log('🗺️ Estações de pesquisa:', researchMarkers.length);
   console.log('🗺️ Estações de referência:', referenceMarkers.length);
@@ -380,17 +502,17 @@ export default function MapView() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-background dark:to-card">
       <div className="container mx-auto px-4 py-8 space-y-6">
       {/* Header padrão com gradiente */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-6 text-white shadow-2xl">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold">
-              {activeTab === 'pesquisas' ? 'Mapa de Preços' : 'Mapa de Referências'}
+              Mapa de Referências
             </h1>
             <p className="text-white/80">
-              {activeTab === 'pesquisas' ? 'Visualize pesquisas e concorrentes' : 'Visualize referências de clientes'}
+              Visualize referências de clientes
             </p>
             <div className="text-sm text-white/60 mt-1">
               {currentDateTime.toLocaleString('pt-BR', {
@@ -406,7 +528,7 @@ export default function MapView() {
             <div className="relative flex-1 sm:flex-none">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-white/70" />
               <Input
-                placeholder="Buscar postos, pesquisas..."
+                placeholder="Buscar postos, referências..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10 pr-4 bg-white/10 border-white/20 text-white placeholder:text-white/70"
@@ -423,19 +545,11 @@ export default function MapView() {
             </Button>
           </div>
         </div>
-        <div className="mt-4">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-            <TabsList className="bg-white/10">
-              <TabsTrigger value="pesquisas" className="text-white data-[state=active]:bg-white/20">Pesquisas</TabsTrigger>
-              <TabsTrigger value="referencias" className="text-white data-[state=active]:bg-white/20">Referências</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6">
         {/* Map Area */}
-        <div className="lg:col-span-2">
+        <div>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -443,8 +557,27 @@ export default function MapView() {
                 Mapa Interativo
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <RealMap
+            <CardContent className="space-y-4">
+              {/* Legenda acima do mapa */}
+              <div className="flex items-center gap-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+                <div className="text-sm font-semibold text-slate-700 dark:text-slate-300">Legenda:</div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-blue-600"></div>
+                    <span className="text-sm text-slate-600 dark:text-slate-400">Nossa Rede</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-600"></div>
+                    <span className="text-sm text-slate-600 dark:text-slate-400">Concorrentes</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-green-600"></div>
+                    <span className="text-sm text-slate-600 dark:text-slate-400">Clientes (NF)</span>
+                  </div>
+                </div>
+              </div>
+              
+              <LeafletMap
                   stations={allStations.map(station => {
                     console.log('🗺️ Enviando estação para o mapa:', station);
                     return {
@@ -489,137 +622,6 @@ export default function MapView() {
           </Card>
         </div>
 
-        {/* Sidebar */}
-        <div className="space-y-4">
-          {/* Legend */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Legenda</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-blue-600"></div>
-                <span className="text-sm">Nossa Rede</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-red-600"></div>
-                <span className="text-sm">Concorrentes</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-green-600"></div>
-                <span className="text-sm">Clientes (NF)</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Station Details */}
-          {selectedStation && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Detalhes</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div>
-                  <h4 className="font-medium">{selectedStation.name}</h4>
-                  <Badge 
-                    variant="secondary" 
-                    className="mt-1"
-                    style={{ backgroundColor: `${getStationColor(selectedStation.type)}20`, color: getStationColor(selectedStation.type) }}
-                  >
-                    {selectedStation.type === 'nossa' ? 'Nossa Rede' : 
-                     selectedStation.type === 'concorrente' ? 'Concorrente' : 
-                     selectedStation.type === 'cliente' ? 'Cliente (NF)' : 'Pesquisa de Preços'}
-                  </Badge>
-                  
-                  {/* Mostrar nome do cliente se for referência */}
-                  {selectedStation.source === 'referencia' && selectedStation.clientName && (
-                    <div className="mt-2">
-                      <span className="text-sm text-muted-foreground">Cliente: </span>
-                      <span className="text-sm font-medium">{selectedStation.clientName}</span>
-                    </div>
-                  )}
-                </div>
-                
-                {/* Visualização de preços */}
-                {selectedStation.source === 'referencia' ? (
-                  <div className="mt-4 flex justify-center">
-                    <StationBoard
-                      prices={(() => {
-                        // Montar preços por produto a partir das referências do mesmo posto (pelo nome)
-                        const pricesMap: Record<string, number> = {};
-                        const latestByProduct = new Map<string, any>();
-                        references
-                          .filter((ref: any) => {
-                            const name = ref.concorrente?.razao_social || ref.stations?.name || ref.nome || 'Posto';
-                            return name === selectedStation.name;
-                          })
-                          .forEach((ref: any) => {
-                            const product = ref.produto as string;
-                            const price = Number(ref.preco_referencia);
-                            const ts = new Date(ref.created_at).getTime();
-                            const curr = latestByProduct.get(product);
-                            if (!curr || ts > curr.ts) {
-                              latestByProduct.set(product, { price, ts });
-                            }
-                          });
-                        Array.from(latestByProduct.entries()).forEach(([product, obj]) => {
-                          pricesMap[product] = obj.price;
-                        });
-                        return pricesMap as any;
-                      })()}
-                    />
-                  </div>
-                ) : (
-                  <div className="mt-4 flex justify-center">
-                    <StationBoard
-                      prices={(() => {
-                        // Buscar preços reais das pesquisas para este posto
-                        const stationResearch = researchData.filter(r => 
-                          r.station_name === selectedStation.name || 
-                          r.station_id === (selectedStation as any).id
-                        );
-                        
-                        const prices: any = {};
-                        stationResearch.forEach(research => {
-                          const price = parseFloat(research.price.toString().replace(',', '.'));
-                          prices[research.product] = price;
-                        });
-                        
-                        return prices;
-                      })()}
-                    />
-                  </div>
-                )}
-
-                {/* Anexos da pesquisa - apenas para pesquisas */}
-                {selectedStation.source === 'pesquisa' && (
-                  <div className="mt-2">
-                    <div className="text-sm font-medium mb-1">Anexos</div>
-                    {(() => {
-                      const latest = researchData
-                        .filter(r => r.station_name === selectedStation.name)
-                        .sort((a, b) => new Date(b.date_observed).getTime() - new Date(a.date_observed).getTime())[0];
-                      const attachments = latest?.attachments || [];
-                      if (!attachments || attachments.length === 0) {
-                        return <div className="text-sm text-muted-foreground">Sem anexos</div>;
-                      }
-                      return (
-                        <div className="flex flex-wrap gap-2">
-                          {attachments.map((url, idx) => (
-                            <Button key={idx} variant="outline" size="sm" onClick={() => { setImageModalUrl(url); setImageModalOpen(true); }}>
-                              Ver anexo {idx + 1}
-                            </Button>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-        </div>
       </div>
 
       {/* Tabela de Cotação */}

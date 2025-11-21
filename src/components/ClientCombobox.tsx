@@ -42,11 +42,28 @@ export const ClientCombobox = ({
       // Se value for vazio, limpar seleção
       setSelectedClient(null);
     } else if (value && clients.length > 0) {
-      const client = clients.find(c => c.id === value);
+      // Normalizar value para string para comparação
+      const normalizedValue = String(value);
+      
+      // Tentar encontrar por id (que é id_cliente no useDatabase)
+      let client = clients.find(c => String(c.id) === normalizedValue);
+      
+      // Se não encontrou por id, tentar por code (que também é id_cliente)
+      if (!client) {
+        client = clients.find(c => String(c.code) === normalizedValue);
+      }
+      
+      console.log('🔍 ClientCombobox buscando cliente:', {
+        value: normalizedValue,
+        clientsCount: clients.length,
+        found: !!client,
+        clientIds: clients.slice(0, 3).map(c => ({ id: c.id, code: c.code, name: c.name }))
+      });
+      
       if (client) {
         // Atualizar o nome exibido para qualquer cliente com o mesmo nome
         const clientsWithSameName = clients.filter(c => 
-          c.name.toLowerCase() === client.name.toLowerCase()
+          c.name.toLowerCase() === client!.name.toLowerCase()
         );
         if (clientsWithSameName.length > 0) {
           // Manter o primeiro selecionado mas mostrar que pode haver múltiplos
@@ -57,6 +74,7 @@ export const ClientCombobox = ({
         }
       } else {
         // Se não encontrou o cliente, limpar seleção
+        console.warn('⚠️ Cliente não encontrado no ClientCombobox:', normalizedValue);
         setSelectedClient(null);
       }
     }
@@ -133,24 +151,24 @@ export const ClientCombobox = ({
   };
 
   return (
-    <div className="space-y-2">
-      <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-        <Users className="w-4 h-4 text-green-600 dark:text-green-400" />
+    <div className="space-y-1">
+      <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+        <Users className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
         {label} {required && <span className="text-red-500">*</span>}
       </Label>
 
       {/* Selected Client Display */}
       {selectedClient ? (
         <Card className="bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 border-green-200 dark:border-green-800">
-          <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3 flex-1">
-                <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400 mt-1 flex-shrink-0" />
-                <div className="space-y-2 flex-1 min-w-0">
-                  <div className="font-semibold text-green-900 dark:text-green-100">
+          <CardContent className="p-2">
+            <div className="flex items-start justify-between gap-1.5">
+              <div className="flex items-start gap-1.5 flex-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-600 dark:text-green-400 mt-0.5 flex-shrink-0" />
+                <div className="space-y-0.5 flex-1 min-w-0">
+                  <div className="text-xs font-semibold text-green-900 dark:text-green-100">
                     {selectedClient.name}
                   </div>
-                  <div className="flex flex-wrap gap-2 text-xs">
+                  <div className="flex flex-wrap gap-1 text-xs">
                     <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-200">
                       {selectedClient.code}
                     </Badge>
@@ -162,13 +180,13 @@ export const ClientCombobox = ({
                   </div>
                   {selectedClient.contact_email && (
                     <p className="text-xs text-green-700 dark:text-green-300 flex items-center gap-1">
-                      <Mail className="h-3 w-3" />
+                      <Mail className="h-2.5 w-2.5" />
                       {selectedClient.contact_email}
                     </p>
                   )}
                   {selectedClient.contact_phone && (
                     <p className="text-xs text-green-700 dark:text-green-300 flex items-center gap-1">
-                      <Phone className="h-3 w-3" />
+                      <Phone className="h-2.5 w-2.5" />
                       {selectedClient.contact_phone}
                     </p>
                   )}
@@ -178,9 +196,9 @@ export const ClientCombobox = ({
                 variant="ghost"
                 size="sm"
                 onClick={handleClear}
-                className="text-green-600 hover:text-green-800 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-200"
+                className="h-6 w-6 p-0 text-green-600 hover:text-green-800 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-200"
               >
-                <X className="h-4 w-4" />
+                <X className="h-3 w-3" />
               </Button>
             </div>
           </CardContent>
@@ -189,13 +207,13 @@ export const ClientCombobox = ({
         /* Search Input */
         <div className="relative">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-muted-foreground h-3.5 w-3.5" />
             <Input
               placeholder="Buscar por nome, código ou email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="h-11 pl-10 pr-10"
+              className="h-8 pl-9 pr-9 text-sm"
               onFocus={() => setIsOpen(filteredClients.length > 0)}
             />
             {searchTerm && (

@@ -11,7 +11,8 @@ import {
   Search, 
   Eye,
   MessageSquare,
-  Edit
+  Edit,
+  Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
@@ -31,6 +32,14 @@ export default function MyRequests() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [requestsWithHistory, setRequestsWithHistory] = useState<Set<string>>(new Set());
   
+  // Log inicial do componente
+  console.log('🚀 MyRequests Component RENDERIZADO:', {
+    user: user?.id,
+    myRequestsCount: myRequests.length,
+    filteredRequestsCount: filteredRequests.length,
+    timestamp: new Date().toISOString()
+  });
+  
   const [filters, setFilters] = useState({
     status: "all",
     search: ""
@@ -46,6 +55,44 @@ export default function MyRequests() {
   // Load my requests when component mounts
   useEffect(() => {
     loadMyRequests();
+    
+    // Listener de tempo real para atualizar quando houver mudanças
+    if (user) {
+      const channel = supabase
+        .channel('my_requests_realtime')
+        .on(
+          'postgres_changes',
+          {
+            event: '*', // INSERT, UPDATE, DELETE
+            schema: 'public',
+            table: 'price_suggestions'
+          },
+          (payload) => {
+            console.log('🔄 Mudança detectada em price_suggestions:', payload.eventType);
+            // Recarregar após um pequeno delay para garantir que a transação completou
+            setTimeout(() => {
+              loadMyRequests();
+            }, 500);
+          }
+        )
+        .on(
+          'broadcast',
+          { event: 'request_deleted' },
+          (payload) => {
+            console.log('🔄 Evento de exclusão recebido:', payload);
+            setTimeout(() => {
+              loadMyRequests();
+            }, 500);
+          }
+        )
+        .subscribe((status) => {
+          console.log('📡 MyRequests realtime status:', status);
+        });
+      
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
   }, [user]);
 
   // Verificar histórico de aprovações para múltiplas solicitações
@@ -121,34 +168,84 @@ export default function MyRequests() {
 
       // Carregar postos e clientes
       const [stationsRes, clientsRes] = await Promise.all([
-        supabase.rpc('get_sis_empresa_stations').then(res => ({ data: res.data, error: res.error })),
-        supabase.from('clientes' as any).select('id_cliente, nome')
+        supabase.rpc('get_sis_empresa_stations').then(res => {
+          if (res.error) {
+            console.error('❌ Erro ao buscar postos:', res.error);
+            return { data: [], error: res.error };
+          }
+          return { data: res.data, error: null };
+        }).catch(err => {
+          console.error('❌ Erro ao chamar get_sis_empresa_stations:', err);
+          return { data: [], error: err };
+        }),
+        supabase.from('clientes' as any).select('id_cliente, nome').catch(err => {
+          console.error('❌ Erro ao buscar clientes:', err);
+          return { data: [], error: err };
+        })
       ]);
 
       // Enriquecer dados
       const enrichedData = (data || []).map((suggestion: any) => {
         let station = null;
         if (suggestion.station_id) {
+          const suggStationId = String(suggestion.station_id);
           station = (stationsRes.data as any)?.find((s: any) => {
             const stationId = String(s.id || s.id_empresa || s.cnpj_cpf || '');
-            const suggId = String(suggestion.station_id);
-            return stationId === suggId || s.cnpj_cpf === suggId || s.id_empresa === suggId;
+            return stationId === suggStationId || 
+                   String(s.cnpj_cpf || '') === suggStationId || 
+                   String(s.id_empresa || '') === suggStationId;
           });
+          
+          if (!station) {
+            console.log('⚠️ Posto não encontrado:', { 
+              suggestion_id: suggStationId, 
+              available_stations: (stationsRes.data as any)?.slice(0, 3).map((s: any) => ({
+                id: s.id,
+                id_empresa: s.id_empresa,
+                cnpj_cpf: s.cnpj_cpf,
+                nome: s.nome_empresa || s.name
+              }))
+            });
+          }
         }
         
         let client = null;
         if (suggestion.client_id) {
+          const suggClientId = String(suggestion.client_id);
           client = (clientsRes.data as any)?.find((c: any) => {
             const clientId = String(c.id_cliente || c.id || '');
-            const suggId = String(suggestion.client_id);
-            return clientId === suggId;
+            return clientId === suggClientId;
           });
+          
+          if (!client) {
+            console.log('⚠️ Cliente não encontrado:', { 
+              suggestion_id: suggClientId,
+              available_clients: (clientsRes.data as any)?.slice(0, 3).map((c: any) => ({
+                id_cliente: c.id_cliente,
+                id: c.id,
+                nome: c.nome || c.name
+              }))
+            });
+          }
         }
 
+        // Garantir que status sempre existe com fallback
+        const finalStatus = suggestion.status || 'pending';
+        
+        // Log para debug - verificar status sendo atribuído
+        if (!suggestion.status) {
+          console.log('⚠️ Status ausente, usando fallback "pending":', {
+            id: suggestion.id,
+            originalStatus: suggestion.status,
+            finalStatus: finalStatus
+          });
+        }
+        
         return {
           ...suggestion,
-          stations: station ? { name: station.nome_empresa || station.name, code: station.cnpj_cpf || station.id || station.id_empresa } : null,
-          clients: client ? { name: client.nome || client.name, code: String(client.id_cliente || client.id) } : null
+          status: finalStatus, // Garantir que sempre tenha status
+          stations: station ? { name: station.nome_empresa || station.name || 'Posto sem nome', code: station.cnpj_cpf || station.id || station.id_empresa } : null,
+          clients: client ? { name: client.nome || client.name || 'Cliente sem nome', code: String(client.id_cliente || client.id) } : null
         };
       });
       
@@ -228,6 +325,114 @@ export default function MyRequests() {
       'arla32_granel': 'ARLA 32 Granel'
     };
     return names[product] || product;
+  };
+
+  // Função helper para verificar se botões Editar/Excluir devem aparecer
+  const shouldShowEditDeleteButtons = (request: any): boolean => {
+    // Log inicial para garantir que função está sendo chamada
+    console.log('🚀 shouldShowEditDeleteButtons CHAMADA:', {
+      hasRequest: !!request,
+      requestId: request?.id,
+      requestStatus: request?.status
+    });
+    
+    if (!request) {
+      console.log('❌ shouldShowEditDeleteButtons: request é null/undefined');
+      return false;
+    }
+    
+    // Garantir que status existe - fallback para 'pending' se não houver
+    const rawStatus = request.status || 'pending';
+    const status = String(rawStatus).toLowerCase().trim();
+    
+    // Verificar se deve mostrar botões - incluir variações de 'in approval'
+    // Normalizar removendo espaços e underscores para comparação
+    const normalizedStatus = status.replace(/\s+/g, '_').replace(/_+/g, '_');
+    
+    const editableStatuses = [
+      'draft', 
+      'pending', 
+      'in_approval', 
+      'inapproval',
+      'awaiting_approval',
+      'awaitingapproval'
+    ];
+    
+    // Verificar se status normalizado está na lista OU se contém "approval" e não é "approved"
+    // IMPORTANTE: Qualquer status que contenha "approval" (exceto "approved") deve mostrar botões
+    const containsApproval = normalizedStatus.includes('approval');
+    const isApproved = normalizedStatus === 'approved';
+    const isEditableStatus = editableStatuses.includes(normalizedStatus) || 
+                            (containsApproval && !isApproved);
+    
+    const shouldShow = isEditableStatus || !rawStatus;
+    
+    // Log CRÍTICO - sempre executar
+    if (shouldShow) {
+      console.warn('✅ BOTÕES DEVEM APARECER!', {
+        id: request.id,
+        rawStatus,
+        normalizedStatus,
+        shouldShow,
+        containsApproval,
+        isApproved
+      });
+    }
+    
+    // Log detalhado para debug - sempre logar para ver o que está acontecendo
+    console.log('🔍 shouldShowEditDeleteButtons DETALHADO:', {
+      id: request.id,
+      rawStatus: rawStatus,
+      normalized: status,
+      normalizedStatus: normalizedStatus,
+      isPending: status === 'pending',
+      isDraft: status === 'draft',
+      isInApproval: normalizedStatus.includes('approval'),
+      isEmpty: !rawStatus,
+      shouldShow: shouldShow,
+      requestStatus: request.status,
+      editableStatuses: editableStatuses,
+      matchesEditable: isEditableStatus,
+      containsApproval: normalizedStatus.includes('approval'),
+      isNotApproved: normalizedStatus !== 'approved'
+    });
+    
+    // Mostrar botões se for status editável ou se status não existir
+    return shouldShow;
+  };
+
+  const handleDelete = async (requestId: string) => {
+    if (!confirm('Tem certeza que deseja excluir esta solicitação? Esta ação não pode ser desfeita.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('price_suggestions')
+        .delete()
+        .eq('id', requestId);
+
+      if (error) throw error;
+
+      // Invalidar cache de outras páginas também
+      localStorage.removeItem('approvals_suggestions_cache');
+      localStorage.removeItem('approvals_suggestions_cache_timestamp');
+
+      toast.success("Solicitação excluída com sucesso!");
+      loadMyRequests(); // Recarregar lista
+      
+      // O listener de tempo real já vai atualizar automaticamente
+      // Mas forçar uma atualização imediata também
+      setTimeout(() => {
+        loadMyRequests();
+      }, 500);
+    } catch (error: any) {
+      console.error('Erro ao excluir solicitação:', error);
+      toast.error("Erro ao excluir solicitação: " + (error?.message || 'Erro desconhecido'));
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading && myRequests.length === 0) {
@@ -367,13 +572,35 @@ export default function MyRequests() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {filteredRequests.map((request) => (
-              <div key={request.id} className="p-4 bg-gradient-to-r from-white to-slate-50 dark:from-slate-800 dark:to-slate-700 rounded-xl border border-slate-200 dark:border-slate-600 hover:shadow-lg transition-all duration-300">
+            {(() => {
+              console.log('📋 RENDERIZANDO LISTA DE REQUESTS:', {
+                totalRequests: filteredRequests.length,
+                requests: filteredRequests.map(r => ({
+                  id: r.id,
+                  status: r.status,
+                  station: r.stations?.name,
+                  client: r.clients?.name
+                }))
+              });
+              return null;
+            })()}
+            {filteredRequests.map((request) => {
+              // Log para cada request sendo renderizado
+              console.log('🔄 Renderizando request:', {
+                id: request.id,
+                status: request.status,
+                hasStatus: !!request.status,
+                statusType: typeof request.status,
+                statusValue: request.status
+              });
+              
+              return (
+              <div key={request.id} className="p-4 bg-gradient-to-r from-white to-slate-50 dark:from-card dark:to-secondary rounded-xl border border-slate-200 dark:border-border hover:shadow-lg transition-all duration-300">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <span className="font-semibold text-slate-800 dark:text-slate-200">
-                        {request.stations?.name || request.station_id || 'Posto'} - {request.clients?.name || request.client_id || 'Cliente'}
+                        {request.stations?.name || (request.station_id ? `Posto (${String(request.station_id).substring(0, 8)}...)` : 'Posto não informado')} - {request.clients?.name || (request.client_id ? `Cliente (${String(request.client_id).substring(0, 8)}...)` : 'Cliente não informado')}
                       </span>
                       {getStatusBadge(request.status)}
                     </div>
@@ -402,19 +629,31 @@ export default function MyRequests() {
                   </div>
                   
                   <div className="flex items-center gap-2">
-                    {(request.status === 'draft' || request.status === 'pending') && !requestsWithHistory.has(request.id) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setEditingRequest(request);
-                          setShowEditModal(true);
-                        }}
-                      >
-                        <Edit className="h-4 w-4 mr-2" />
-                        Editar
-                      </Button>
-                    )}
+                    {/* FORÇAR BOTÕES A APARECEREM - REMOVER CONDIÇÕES TEMPORARIAMENTE */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        console.log('✏️ Clicou em Editar:', request.id);
+                        setEditingRequest(request);
+                        setShowEditModal(true);
+                      }}
+                    >
+                      <Edit className="h-4 w-4 mr-2" />
+                      Editar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        console.log('🗑️ Clicou em Excluir:', request.id);
+                        handleDelete(request.id);
+                      }}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300"
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Excluir
+                    </Button>
                     <Button
                       variant="outline"
                       size="sm"

@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { 
   DollarSign, 
   BarChart3, 
-  Search, 
   Map,
   TrendingUp,
   Activity,
@@ -38,16 +37,9 @@ const Dashboard = () => {
       permission: "approvals",
     },
     {
-      icon: Search,
-      title: "Pesquisa",
-      description: "Preços de mercado",
-      href: "/competitor-research",
-      permission: "research",
-    },
-    {
       icon: Map,
       title: "Mapa",
-      description: "Visão geográfica",
+      description: "Referências",
       href: "/map",
       permission: "map",
     },

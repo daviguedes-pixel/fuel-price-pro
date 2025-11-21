@@ -22,7 +22,14 @@ export const PriceHistoryFilters = ({ onFilter }: PriceHistoryFiltersProps) => {
   const { stations, clients } = useDatabase();
 
   const handleApplyFilters = () => {
-    onFilter(filters);
+    // Mapear os filtros para o formato esperado pela função de busca
+    onFilter({
+      product: filters.product,
+      station: filters.stationId !== 'all' ? filters.stationId : undefined,
+      client: filters.clientId !== 'all' ? filters.clientId : undefined,
+      searchTerm: filters.searchTerm || undefined,
+      sortBy: filters.sortBy
+    });
   };
 
   return (
