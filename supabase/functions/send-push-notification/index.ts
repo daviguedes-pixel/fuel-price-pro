@@ -203,19 +203,44 @@ serve(async (req) => {
 
   try {
     // Obter dados da requisição
+    console.log('📥 Recebendo requisição...');
     const body: PushRequest = await req.json();
+    console.log('📋 Body recebido:', {
+      hasToken: !!body.token,
+      tokenLength: body.token?.length || 0,
+      tokenPreview: body.token ? body.token.substring(0, 30) + '...' : 'N/A',
+      hasNotification: !!body.notification,
+      notificationTitle: body.notification?.title || 'N/A'
+    });
+    
     const { token, notification, data } = body;
 
     // Validações
-    if (!token) {
+    if (!token || token.trim() === '') {
+      console.error('❌ Token FCM não fornecido ou vazio');
+      console.error('   Token recebido:', token);
+      console.error('   Tipo:', typeof token);
+      console.error('   É string vazia?', token === '');
+      console.error('   Após trim:', token?.trim() === '');
+      
       return new Response(
-        JSON.stringify({ error: 'Token FCM é obrigatório' }),
+        JSON.stringify({ 
+          error: 'Token FCM é obrigatório',
+          received: {
+            hasToken: !!token,
+            tokenType: typeof token,
+            tokenLength: token?.length || 0,
+            tokenValue: token ? token.substring(0, 50) + '...' : null
+          }
+        }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
         }
       );
     }
+    
+    console.log('✅ Token FCM validado:', token.substring(0, 30) + '...');
 
     if (!notification || !notification.title || !notification.body) {
       return new Response(
