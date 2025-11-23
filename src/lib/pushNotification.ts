@@ -93,7 +93,8 @@ async function sendPushToToken(
     console.log('Payload:', payload);
 
     // Opção 1: Usar Edge Function do Supabase (recomendado)
-    console.log('🔗 URL da Edge Function:', `${supabase.supabaseUrl}/functions/v1/send-push-notification`);
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://ijygsxwfmribbjymxhaf.supabase.co';
+    console.log('🔗 Tentando chamar Edge Function:', `${supabaseUrl}/functions/v1/send-push-notification`);
     
     const { data, error } = await supabase.functions.invoke('send-push-notification', {
       body: {
@@ -124,9 +125,23 @@ async function sendPushToToken(
         status: error.status
       });
 
-      // Se a Edge Function não existe, tentar método alternativo
-      if (error.message?.includes('Function not found') || error.message?.includes('not found')) {
-        console.warn('⚠️ Edge Function não encontrada. Verifique se foi deployada.');
+      // Se for 404, pode ser problema de autenticação ou função não encontrada
+      if (error.status === 404 || error.message?.includes('404') || error.message?.includes('not found') || error.message?.includes('Function not found')) {
+        console.error('');
+        console.error('🔴 ERRO 404 - Edge Function existe mas retorna 404');
+        console.error('');
+        console.error('💡 Possíveis causas:');
+        console.error('   1. Problema de autenticação (anon key pode estar incorreta)');
+        console.error('   2. Edge Function precisa ser redeployada');
+        console.error('   3. Verifique os logs da função no Dashboard');
+        console.error('');
+        console.error('🔍 Verificações:');
+        console.error('   - Acesse: https://supabase.com/dashboard');
+        console.error('   - Vá em Edge Functions > send-push-notification > Logs');
+        console.error('   - Veja se há erros nos logs');
+        console.error('   - Tente fazer um novo deploy da função');
+        console.error('   - Verifique se a função está ativa');
+        console.error('');
         return false;
       }
       
@@ -136,7 +151,9 @@ async function sendPushToToken(
         return false;
       }
 
-      throw error;
+      // Não lançar erro, apenas retornar false para não quebrar o fluxo
+      console.error('⚠️ Erro desconhecido ao chamar Edge Function, continuando sem push...');
+      return false;
     }
 
     console.log('✅ Resposta da Edge Function:', data);
