@@ -22,7 +22,7 @@ export function RealtimeNotifications() {
           table: 'notifications',
           filter: `user_id=eq.${user.id}`
         },
-        (payload) => {
+        async (payload) => {
           const notification = payload.new;
           
           // Mostrar toast para notificações não lidas
@@ -65,6 +65,22 @@ export function RealtimeNotifications() {
                 }
               }
             });
+
+            // Enviar notificação push (apenas se não foi enviada pela função createNotification)
+            // Notificações criadas via triggers do banco não têm push automático, então enviamos aqui
+            try {
+              const { sendPushNotification } = await import('@/lib/pushNotification');
+              await sendPushNotification(notification.user_id, {
+                title: notification.title || 'Nova notificação',
+                body: notification.message,
+                data: notification.data || {},
+                url: notification.data?.url || '/approvals',
+                tag: notification.type || 'notification'
+              });
+            } catch (pushError) {
+              // Não falhar se push não funcionar
+              console.warn('Aviso: Não foi possível enviar push notification:', pushError);
+            }
           }
 
           // Recarregar notificações

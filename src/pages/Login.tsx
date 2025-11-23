@@ -13,6 +13,9 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [logoSrc, setLogoSrc] = useState<string>(
+    "/lovable-uploads/integra-logo-login.png"
+  );
   const { signIn, user } = useAuth();
   const navigate = useNavigate();
 
@@ -78,13 +81,25 @@ export default function Login() {
             </div>
             <div className="relative flex justify-center">
               <img 
-                src="/lovable-uploads/ChatGPT Image 20 de nov. de 2025, 19_12_37.png"
+                src={logoSrc}
                 alt="Integra Logo"
                 className="h-[160px] drop-shadow-2xl"
                 onError={(e) => {
-                  console.error('Erro ao carregar logo:', e);
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
+                  console.error('Erro ao carregar logo do login:', logoSrc);
+                  // Tenta diferentes caminhos como fallback
+                  if (logoSrc.includes('integra-logo-login')) {
+                    // Primeiro fallback: símbolo
+                    setLogoSrc('/lovable-uploads/integra-logo-symbol.png');
+                  } else if (logoSrc.includes('integra-logo-symbol')) {
+                    // Segundo fallback: logo completo
+                    setLogoSrc('/lovable-uploads/integra-logo.png');
+                  } else {
+                    // Último fallback: qualquer imagem disponível
+                    console.warn('Todas as tentativas de carregar a logo falharam');
+                  }
+                }}
+                onLoad={() => {
+                  console.log('Logo do login carregada com sucesso:', logoSrc);
                 }}
               />
             </div>

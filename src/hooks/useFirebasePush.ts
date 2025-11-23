@@ -1,0 +1,225 @@
+import { useState, useEffect } from 'react';
+import { requestNotificationPermission, onMessageListener, initFirebase } from '@/lib/firebase';
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+
+interface PushSubscription {
+  id?: string;
+  user_id: string;
+  fcm_token: string;
+  device_info?: any;
+  created_at?: string;
+}
+
+export const useFirebasePush = () => {
+  const { user } = useAuth();
+  const [isSupported, setIsSupported] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>('default');
+  const [fcmToken, setFcmToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Verificar suporte e permissão
+  useEffect(() => {
+    const checkSupport = async () => {
+      if (typeof window === 'undefined') return;
+      
+      console.log('🔍 Verificando suporte para notificações push...');
+      
+      // Verificar se navegador suporta notificações
+      if (!('Notification' in window)) {
+        console.warn('❌ Este navegador não suporta notificações');
+        return;
+      }
+
+      console.log('✅ Navegador suporta notificações');
+
+      // Verificar se Firebase está configurado
+      console.log('🔧 Inicializando Firebase...');
+      const { messaging, app } = await initFirebase();
+      
+      console.log('📋 Resultado da inicialização:', {
+        hasApp: !!app,
+        hasMessaging: !!messaging,
+        appInitialized: app ? '✅' : '❌',
+        messagingInitialized: messaging ? '✅' : '❌'
+      });
+      
+      if (!messaging) {
+        console.error('❌ Firebase Messaging não está disponível');
+        console.error('📋 Possíveis causas:');
+        console.error('   1. Variáveis de ambiente não configuradas (.env)');
+        console.error('   2. Servidor não foi reiniciado após criar .env');
+        console.error('   3. Service Worker não está registrado');
+        console.error('   4. Navegador não suporta Firebase Messaging');
+        console.error('');
+        console.error('💡 Verifique:');
+        console.error('   - Arquivo .env existe na raiz do projeto?');
+        console.error('   - Variáveis VITE_FIREBASE_* estão configuradas?');
+        console.error('   - Servidor foi reiniciado após criar .env?');
+        console.error('   - Está usando HTTPS ou localhost?');
+        return;
+      }
+
+      console.log('✅ Firebase Messaging disponível');
+      setIsSupported(true);
+      setPermission(Notification.permission);
+      console.log('📱 Permissão atual:', Notification.permission);
+
+      // Se já tem permissão, obter token
+      if (Notification.permission === 'granted' && user) {
+        console.log('✅ Permissão já concedida, obtendo token...');
+        requestToken();
+      }
+    };
+
+    if (user) {
+      checkSupport();
+    }
+  }, [user]);
+
+  // Escutar mensagens quando app está em primeiro plano
+  useEffect(() => {
+    if (!isSupported || !user) return;
+
+    onMessageListener().then((payload: any) => {
+      console.log('📬 Mensagem recebida:', payload);
+      
+      // Mostrar toast
+      toast.info(payload.notification?.title || 'Nova Notificação', {
+        description: payload.notification?.body || payload.data?.message,
+        duration: 5000,
+        action: {
+          label: 'Ver',
+          onClick: () => {
+            if (payload.data?.url) {
+              window.location.href = payload.data.url;
+            }
+          }
+        }
+      });
+    });
+  }, [isSupported, user]);
+
+  // Solicitar permissão e obter token
+  const requestToken = async (): Promise<string | null> => {
+    if (!user) {
+      console.warn('Usuário não autenticado');
+      return null;
+    }
+
+    setIsLoading(true);
+    try {
+      const token = await requestNotificationPermission();
+      
+      if (token) {
+        setFcmToken(token);
+        setPermission(Notification.permission);
+        
+        // Salvar token no banco de dados
+        await saveTokenToDatabase(token);
+        
+        return token;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Erro ao obter token FCM:', error);
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Salvar token no banco de dados
+  const saveTokenToDatabase = async (token: string) => {
+    if (!user) {
+      console.warn('⚠️ Usuário não autenticado, não é possível salvar token');
+      return;
+    }
+
+    console.log('💾 Salvando token FCM no banco de dados...');
+
+    try {
+      // Verificar se já existe token para este usuário
+      const { data: existing, error: checkError } = await supabase
+        .from('push_subscriptions' as any)
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('fcm_token', token)
+        .maybeSingle();
+
+      if (checkError && checkError.code !== 'PGRST205') {
+        console.warn('⚠️ Erro ao verificar token existente:', checkError);
+      }
+
+      if (!existing) {
+        // Inserir novo token
+        const deviceInfo = {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          language: navigator.language
+        };
+
+        console.log('📝 Inserindo novo token no banco...');
+        const { data, error } = await supabase
+          .from('push_subscriptions' as any)
+          .insert({
+            user_id: user.id,
+            fcm_token: token,
+            device_info: deviceInfo
+          })
+          .select();
+
+        if (error) {
+          // Se a tabela não existe, apenas logar
+          if (error.code === 'PGRST205' || error.message?.includes('not find the table')) {
+            console.error('❌ Tabela push_subscriptions não existe!');
+            console.error('Execute a migration SQL: supabase/migrations/20250122000000_create_push_subscriptions.sql');
+            return;
+          }
+          throw error;
+        }
+
+        console.log('✅ Token FCM salvo no banco de dados:', data);
+      } else {
+        console.log('ℹ️ Token já existe no banco de dados');
+      }
+    } catch (error) {
+      console.error('❌ Erro ao salvar token no banco:', error);
+      console.error('Detalhes:', error);
+    }
+  };
+
+  // Remover token (quando usuário desativa notificações)
+  const removeToken = async () => {
+    if (!user || !fcmToken) return;
+
+    try {
+      const { error } = await supabase
+        .from('push_subscriptions' as any)
+        .delete()
+        .eq('user_id', user.id)
+        .eq('fcm_token', fcmToken);
+
+      if (error && error.code !== 'PGRST205') {
+        throw error;
+      }
+
+      setFcmToken(null);
+      console.log('✅ Token FCM removido');
+    } catch (error) {
+      console.error('Erro ao remover token:', error);
+    }
+  };
+
+  return {
+    isSupported,
+    permission,
+    fcmToken,
+    isLoading,
+    requestToken,
+    removeToken
+  };
+};
+

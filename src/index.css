@@ -1,9 +1,9 @@
+/* Righteous Font - @import must be at the top */
+@import url('https://fonts.googleapis.com/css2?family=Righteous&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Righteous Font */
-@import url('https://fonts.googleapis.com/css2?family=Righteous&display=swap');
 
 .font-righteous {
   font-family: 'Righteous', sans-serif;
@@ -262,6 +262,44 @@ All colors MUST be HSL.
 /* Leaflet Map Styles */
 .leaflet-container {
   font-family: inherit;
+  z-index: 1 !important;
+  position: relative !important;
+}
+
+.leaflet-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-map-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-tile-pane {
+  z-index: 1 !important;
+}
+
+.leaflet-overlay-pane {
+  z-index: 2 !important;
+}
+
+.leaflet-shadow-pane {
+  z-index: 3 !important;
+}
+
+.leaflet-marker-pane {
+  z-index: 4 !important;
+}
+
+.leaflet-tooltip-pane {
+  z-index: 5 !important;
+}
+
+.leaflet-popup-pane {
+  z-index: 6 !important;
+}
+
+.leaflet-control-container {
+  z-index: 7 !important;
 }
 
 .custom-leaflet-marker {

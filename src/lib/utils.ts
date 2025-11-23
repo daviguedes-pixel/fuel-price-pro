@@ -63,3 +63,103 @@ export function generateUUID(): string {
     return v.toString(16);
   });
 }
+
+// Função helper para criar notificações
+export async function createNotification(
+  userId: string,
+  type: 'rate_expiry' | 'approval_pending' | 'price_approved' | 'price_rejected' | 'system' | 'competitor_update' | 'client_update',
+  title: string,
+  message: string,
+  data?: Record<string, any>,
+  expiresAt?: Date
+) {
+  const { supabase } = await import('@/integrations/supabase/client');
+  
+  const notificationData: any = {
+    user_id: userId,
+    type,
+    title,
+    message,
+    read: false
+  };
+
+  if (data) {
+    notificationData.data = data;
+  }
+
+  if (expiresAt) {
+    notificationData.expires_at = expiresAt.toISOString();
+  }
+
+  const { error } = await supabase
+    .from('notifications')
+    .insert([notificationData]);
+
+  if (error) {
+    console.error('Erro ao criar notificação:', error);
+    throw error;
+  }
+
+  // Enviar notificação push também
+  try {
+    const { sendPushNotification } = await import('@/lib/pushNotification');
+    await sendPushNotification(userId, {
+      title,
+      body: message,
+      data: data || {},
+      url: data?.url || '/dashboard',
+      tag: type
+    });
+  } catch (pushError) {
+    // Não falhar se push não funcionar
+    console.warn('Aviso: Não foi possível enviar push notification:', pushError);
+  }
+
+  return true;
+}
+
+// Função helper para criar notificações para múltiplos usuários
+export async function createNotificationForUsers(
+  userIds: string[],
+  type: 'rate_expiry' | 'approval_pending' | 'price_approved' | 'price_rejected' | 'system' | 'competitor_update' | 'client_update',
+  title: string,
+  message: string,
+  data?: Record<string, any>
+) {
+  const { supabase } = await import('@/integrations/supabase/client');
+  
+  const notifications = userIds.map(userId => ({
+    user_id: userId,
+    type,
+    title,
+    message,
+    read: false,
+    ...(data && { data })
+  }));
+
+  const { error } = await supabase
+    .from('notifications')
+    .insert(notifications);
+
+  if (error) {
+    console.error('Erro ao criar notificações:', error);
+    throw error;
+  }
+
+  // Enviar notificações push também
+  try {
+    const { sendPushNotificationToUsers } = await import('@/lib/pushNotification');
+    await sendPushNotificationToUsers(userIds, {
+      title,
+      body: message,
+      data: data || {},
+      url: data?.url || '/dashboard',
+      tag: type
+    });
+  } catch (pushError) {
+    // Não falhar se push não funcionar
+    console.warn('Aviso: Não foi possível enviar push notifications:', pushError);
+  }
+
+  return true;
+}

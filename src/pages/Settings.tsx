@@ -3,6 +3,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import { Users, UsersRound, Database, TrendingUp } from 'lucide-react';
+import { PushNotificationSetup } from '@/components/PushNotificationSetup';
+import { FirebaseDebug } from '@/components/FirebaseDebug';
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -113,6 +115,12 @@ export default function Settings() {
               </Button>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Notificações Push */}
+        <div className="mt-6 space-y-4">
+          <PushNotificationSetup />
+          <FirebaseDebug />
         </div>
       </div>
     </div>

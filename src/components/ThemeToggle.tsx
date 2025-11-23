@@ -44,7 +44,8 @@ export function ThemeToggle() {
       variant="ghost"
       size="sm"
       onClick={toggleTheme}
-      className="text-white hover:bg-white/20"
+      className="text-foreground hover:bg-accent"
+      aria-label={theme === "light" ? "Alternar para tema escuro" : "Alternar para tema claro"}
     >
       {theme === "light" ? (
         <Moon className="h-5 w-5" />

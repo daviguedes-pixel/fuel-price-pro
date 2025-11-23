@@ -153,7 +153,7 @@ export const ClientCombobox = ({
   return (
     <div className="space-y-1">
       <Label className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-        <Users className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+        <Users className="w-3.5 h-3.5 text-blue-900 dark:text-blue-900" />
         {label} {required && <span className="text-red-500">*</span>}
       </Label>
 
@@ -247,7 +247,7 @@ export const ClientCombobox = ({
                         className="flex items-start gap-3 p-3 hover:bg-secondary/80 rounded-lg cursor-pointer transition-colors border border-transparent hover:border-primary/20"
                         onClick={() => handleSelect(client)}
                       >
-                        <Users className="h-5 w-5 text-green-600 mt-1 flex-shrink-0" />
+                        <Users className="h-5 w-5 text-blue-900 dark:text-blue-900 mt-1 flex-shrink-0" />
                         <div className="flex-1 min-w-0 space-y-1">
                           <div className="font-semibold text-sm flex items-center gap-2">
                             {client.name}

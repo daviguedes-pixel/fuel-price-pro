@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import "./lib/registerServiceWorker";
 
 console.log('🚀 Main.tsx executado');
 
@@ -10,7 +11,6 @@ try {
   
   if (rootElement) {
     createRoot(rootElement).render(<App />);
-    console.log('✅ App renderizado com sucesso');
   } else {
     console.error('❌ Root element não encontrado!');
   }

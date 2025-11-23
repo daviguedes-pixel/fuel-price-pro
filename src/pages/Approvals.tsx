@@ -66,6 +66,7 @@ export default function Approvals() {
     status: "all",
     station: "all",
     client: "all",
+    product: "all",
     search: "",
     startDate: "",
     endDate: "",
@@ -891,6 +892,11 @@ export default function Approvals() {
       filtered = filtered.filter(s => s.client_id === filterValues.client);
     }
 
+    // Filtro de produto
+    if (filterValues.product !== "all") {
+      filtered = filtered.filter(s => s.product === filterValues.product);
+    }
+
     // Filtro de pesquisa (busca em nome do posto, cliente e produto)
     if (filterValues.search) {
       const searchLower = filterValues.search.toLowerCase();
@@ -1088,7 +1094,10 @@ export default function Approvals() {
       const approvalRule = await getApprovalRuleForMargin(marginCents);
       
       // Determinar perfis requeridos baseado na regra
-      const requiredProfiles = approvalRule?.required_profiles || undefined;
+      // Se não há regra ou a regra não tem perfis requeridos, qualquer aprovação aprova totalmente
+      const requiredProfiles = approvalRule?.required_profiles && approvalRule.required_profiles.length > 0
+        ? approvalRule.required_profiles
+        : undefined;
       
       // Buscar aprovadores apropriados baseado na regra
       // Se há perfis requeridos, buscar apenas esses; caso contrário, buscar todos
@@ -1333,20 +1342,21 @@ export default function Approvals() {
           
           console.log('✅ Approval level atualizado com sucesso:', { nextLevel, suggestionId });
           
-          // Criar notificação para o próximo aprovador
+          // Criar notificação para o próximo aprovador (com push)
           try {
-            const { error: notifError } = await supabase.from('notifications').insert({
-              user_id: nextApprover.user_id,
-              suggestion_id: suggestionId,
-              type: 'pending',
-              title: 'Nova Observação Adicionada',
-              message: `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`
-            });
-            if (notifError) {
-              console.error('Erro ao criar notificação:', notifError);
-            } else {
-              console.log('✅ Notificação criada para:', nextApproverName);
-            }
+            const { createNotification } = await import('@/lib/utils');
+            await createNotification(
+              nextApprover.user_id,
+              'approval_pending',
+              'Nova Observação Adicionada',
+              `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`,
+              {
+                suggestion_id: suggestionId,
+                approval_level: nextLevel,
+                url: '/approvals'
+              }
+            );
+            console.log('✅ Notificação criada para:', nextApproverName);
           } catch (notifErr) {
             console.error('Erro ao criar notificação:', notifErr);
           }
@@ -1477,8 +1487,10 @@ export default function Approvals() {
         // Usuário TEM perfil requerido OU não há regra específica - pode aprovar normalmente
         
         // IMPORTANTE: Se não há regra configurada, aprovar final imediatamente
+        // Qualquer pessoa que aprovar, aprova totalmente a solicitação
         if (!requiredProfiles || requiredProfiles.length === 0) {
-          console.log('✅ Sem regra configurada - aprovando final imediatamente');
+          console.log('✅ Sem regra de margem configurada - aprovando final imediatamente');
+          console.log('✅ Qualquer aprovação aprova totalmente a solicitação');
           newStatus = 'approved';
           finalLevel = currentLevel;
         } else {
@@ -1538,13 +1550,18 @@ export default function Approvals() {
         if (nextApprover) {
           // Criar notificação para o próximo aprovador
           try {
-            await supabase.from('notifications').insert({
-              user_id: nextApprover.user_id,
-              suggestion_id: suggestionId,
-              type: 'pending',
-              title: 'Nova Aprovação Pendente',
-              message: `Uma solicitação de preço aguarda sua aprovação (nível ${finalLevel})`
-            });
+            const { createNotification } = await import('@/lib/utils');
+            await createNotification(
+              nextApprover.user_id,
+              'approval_pending',
+              'Nova Aprovação Pendente',
+              `Uma solicitação de preço aguarda sua aprovação (nível ${finalLevel})`,
+              {
+                suggestion_id: suggestionId,
+                approval_level: finalLevel,
+                url: '/approvals'
+              }
+            );
           } catch (notifErr) {
             console.error('Erro ao criar notificação:', notifErr);
           }
@@ -1582,24 +1599,22 @@ export default function Approvals() {
 
       if (updateError) throw updateError;
 
-      // Criar notificação manualmente
+      // Criar notificação usando função helper (que também envia push)
       try {
-        const notificationData = {
-          user_id: currentSuggestion.requested_by,
-          suggestion_id: suggestionId,
-          type: newStatus,
-          title: newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
-          message: newStatus === 'approved' ? 'Sua solicitação de preço foi aprovada!' : 'Sua solicitação de preço foi rejeitada.'
-        };
-        
-        const { error: notifError } = await supabase
-          .from('notifications')
-          .insert([notificationData])
-          .select();
-        
-        if (notifError) {
-          console.error('❌ Erro ao criar notificação:', notifError);
-        }
+        const { createNotification } = await import('@/lib/utils');
+        await createNotification(
+          currentSuggestion.requested_by,
+          newStatus === 'approved' ? 'price_approved' : 'price_rejected',
+          newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
+          newStatus === 'approved' 
+            ? `Sua solicitação de preço foi aprovada por ${approverName}!` 
+            : `Sua solicitação de preço foi rejeitada por ${approverName}.`,
+          {
+            suggestion_id: suggestionId,
+            approved_by: approverName,
+            url: '/approvals'
+          }
+        );
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
         // Não bloquear a aprovação se a notificação falhar
@@ -1759,7 +1774,10 @@ export default function Approvals() {
       const approvalRule = await getApprovalRuleForMargin(marginCents);
       
       // Determinar perfis requeridos baseado na regra
-      const requiredProfiles = approvalRule?.required_profiles || undefined;
+      // Se não há regra ou a regra não tem perfis requeridos, qualquer aprovação aprova totalmente
+      const requiredProfiles = approvalRule?.required_profiles && approvalRule.required_profiles.length > 0
+        ? approvalRule.required_profiles
+        : undefined;
       
       // Buscar aprovadores apropriados baseado na regra
       // Se há perfis requeridos, buscar apenas esses; caso contrário, buscar todos
@@ -2007,20 +2025,21 @@ export default function Approvals() {
           
           console.log('✅ Approval level atualizado com sucesso:', { nextLevel, suggestionId });
           
-          // Criar notificação para o próximo aprovador
+          // Criar notificação para o próximo aprovador (com push)
           try {
-            const { error: notifError } = await supabase.from('notifications').insert({
-              user_id: nextApprover.user_id,
-              suggestion_id: suggestionId,
-              type: 'pending',
-              title: 'Nova Observação Adicionada',
-              message: `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`
-            });
-            if (notifError) {
-              console.error('Erro ao criar notificação:', notifError);
-            } else {
-              console.log('✅ Notificação criada para:', nextApproverName);
-            }
+            const { createNotification } = await import('@/lib/utils');
+            await createNotification(
+              nextApprover.user_id,
+              'approval_pending',
+              'Nova Observação Adicionada',
+              `Uma observação foi adicionada à solicitação. Aguardando sua aprovação (nível ${nextLevel})`,
+              {
+                suggestion_id: suggestionId,
+                approval_level: nextLevel,
+                url: '/approvals'
+              }
+            );
+            console.log('✅ Notificação criada para:', nextApproverName);
           } catch (notifErr) {
             console.error('Erro ao criar notificação:', notifErr);
           }
@@ -2509,16 +2528,20 @@ export default function Approvals() {
           approval_level: currentSuggestion?.approval_level || 1
         });
       
-      // Criar notificação para o solicitante
+      // Criar notificação para o solicitante (com push)
       try {
+        const { createNotification } = await import('@/lib/utils');
         const productName = currentSuggestion?.product || 'produto';
-        await supabase.from('notifications').insert({
-          user_id: currentSuggestion?.requested_by,
-          suggestion_id: suggestionId,
-          type: 'pending',
-          title: 'Preço Sugerido',
-          message: `Um preço foi sugerido para sua solicitação de ${productName}`
-        });
+        await createNotification(
+          currentSuggestion?.requested_by,
+          'approval_pending',
+          'Preço Sugerido',
+          `Um preço foi sugerido para sua solicitação de ${productName}`,
+          {
+            suggestion_id: suggestionId,
+            url: '/approvals'
+          }
+        );
       } catch (notifError) {
         console.error('Erro ao criar notificação:', notifError);
       }
@@ -2744,13 +2767,16 @@ export default function Approvals() {
 
   const getProductName = (product: string) => {
     const names: { [key: string]: string } = {
+      's10': 'Diesel S-10',
+      's10_aditivado': 'Diesel S-10 Aditivado',
+      'diesel_s500': 'Diesel S-500',
+      'diesel_s500_aditivado': 'Diesel S-500 Aditivado',
+      'arla32_granel': 'Arla 32 Granel',
+      // Mantendo compatibilidade com valores antigos
       'gasolina_comum': 'Gasolina Comum',
       'gasolina_aditivada': 'Gasolina Aditivada',
       'etanol': 'Etanol',
-      'diesel_comum': 'Diesel Comum',
-      's10': 'Diesel S-10',
-      'diesel_s500': 'Diesel S-500',
-      'arla32_granel': 'ARLA 32 Granel'
+      'diesel_comum': 'Diesel Comum'
     };
     return names[product] || product;
   };
@@ -2767,7 +2793,7 @@ export default function Approvals() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
+    <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-4 space-y-4">
         {/* Header com gradiente moderno */}
         <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-3 sm:p-4 text-white shadow-xl">
@@ -2815,7 +2841,7 @@ export default function Approvals() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2829,7 +2855,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2843,7 +2869,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2857,7 +2883,7 @@ export default function Approvals() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white/80 dark:bg-card/90 backdrop-blur-sm border-0 shadow-lg hover:shadow-xl transition-all duration-300">
+        <Card className="shadow-lg hover:shadow-xl transition-all duration-300">
           <CardContent className="p-3">
             <div className="flex items-center justify-between">
               <div>
@@ -2873,7 +2899,7 @@ export default function Approvals() {
       </div>
 
       {/* Filters */}
-      <Card className="shadow-lg border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+      <Card className="shadow-lg">
         <CardHeader className="p-3 sm:p-6">
           <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
             <Filter className="h-4 w-4 sm:h-5 sm:w-5 text-slate-600 dark:text-slate-400" />
@@ -2881,7 +2907,7 @@ export default function Approvals() {
           </CardTitle>
         </CardHeader>
         <CardContent className="p-3 sm:p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-3">
             <div className="space-y-2">
               <label className="text-sm font-medium flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-blue-500"></div>
@@ -2897,6 +2923,26 @@ export default function Approvals() {
                   <SelectItem value="approved">Aprovado</SelectItem>
                   <SelectItem value="rejected">Rejeitado</SelectItem>
                   <SelectItem value="price_suggested">Preço Sugerido</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-orange-500"></div>
+                Produto
+              </label>
+              <Select value={filters.product} onValueChange={(value) => handleFilterChange("product", value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos os produtos" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos</SelectItem>
+                  <SelectItem value="s10">Diesel S-10</SelectItem>
+                  <SelectItem value="s10_aditivado">Diesel S-10 Aditivado</SelectItem>
+                  <SelectItem value="diesel_s500">Diesel S-500</SelectItem>
+                  <SelectItem value="diesel_s500_aditivado">Diesel S-500 Aditivado</SelectItem>
+                  <SelectItem value="arla32_granel">Arla 32 Granel</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2986,14 +3032,14 @@ export default function Approvals() {
 
       {/* Batch Approvals Section - Only for batch requests */}
       {batchApprovals.length > 0 && (
-        <Card className="shadow-lg border-0 bg-white/80 dark:bg-card/90 backdrop-blur-sm">
+        <Card className="shadow-lg">
           <CardHeader className="p-3 sm:p-6">
             <CardTitle className="text-base sm:text-lg">Aprovações em Lote ({batchApprovals.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-3 sm:p-6">
             {/* Paginação de lotes - Melhorada */}
             {batchApprovals.length > ITEMS_PER_PAGE && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-slate-50 dark:bg-secondary/50 rounded-lg">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 p-3 bg-muted/50 rounded-lg">
                 <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
                   Página {batchPage + 1} de {Math.ceil(batchApprovals.length / ITEMS_PER_PAGE)}
                   <span className="text-xs text-slate-500 dark:text-slate-400 ml-2">
@@ -3029,7 +3075,7 @@ export default function Approvals() {
                 return (
                   <div key={batch.batchKey} className="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden">
                     {/* Header do Lote - Colapsável */}
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-slate-50 dark:bg-secondary/50">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-3 sm:p-4 bg-muted/50">
                       <div 
                         className="flex items-center gap-2 sm:gap-3 flex-1 cursor-pointer hover:bg-slate-100 dark:hover:bg-secondary transition-colors rounded-lg p-2 -m-2 w-full sm:w-auto"
                         onClick={() => {
@@ -3208,7 +3254,7 @@ export default function Approvals() {
                         {/* Versão Desktop: Tabela */}
                         <table className="w-full hidden sm:table">
                           <thead>
-                            <tr className="border-b border-slate-200 dark:border-border bg-slate-50 dark:bg-secondary/50">
+                            <tr className="border-b border-border bg-muted/50">
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300">POSTO</th>
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden lg:table-cell">CLIENTE</th>
                               <th className="text-left p-2 sm:p-3 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-300 hidden xl:table-cell">ENVIADO POR</th>
@@ -3235,7 +3281,7 @@ export default function Approvals() {
                               const suggestedPrice = batchSuggestedPrices[req.id] || finalPriceReais;
                               
                               return (
-                                <tr key={`desktop-${batch.id}-${req.id}-${index}`} className="border-b border-slate-100 dark:border-border hover:bg-slate-50 dark:hover:bg-secondary/50">
+                                <tr key={`desktop-${batch.id}-${req.id}-${index}`} className="border-b border-border hover:bg-muted/50">
                                   <td className="p-2 sm:p-3 text-xs sm:text-sm text-slate-700 dark:text-slate-300">
                                     <div className="font-medium">{station.name}</div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 lg:hidden">{req.clients?.name || batch.client?.name || 'N/A'}</div>
@@ -3551,13 +3597,17 @@ export default function Approvals() {
                                                         });
                                                       
                                                       try {
-                                                        await supabase.from('notifications').insert({
-                                                          user_id: req.requested_by,
-                                                          suggestion_id: req.id,
-                                                          type: 'pending',
-                                                          title: 'Preço Sugerido',
-                                                          message: `Um preço foi sugerido para sua solicitação de ${getProductName(req.product)}`
-                                                        });
+                                                        const { createNotification } = await import('@/lib/utils');
+                                                        await createNotification(
+                                                          req.requested_by,
+                                                          'approval_pending',
+                                                          'Preço Sugerido',
+                                                          `Um preço foi sugerido para sua solicitação de ${getProductName(req.product)}`,
+                                                          {
+                                                            suggestion_id: req.id,
+                                                            url: '/approvals'
+                                                          }
+                                                        );
                                                       } catch (notifError) {
                                                         console.error('Erro ao criar notificação:', notifError);
                                                       }
@@ -3719,7 +3769,7 @@ export default function Approvals() {
       )}
 
       {/* Suggestions List - Apenas Cards */}
-      <Card className="shadow-xl border-0 bg-white/80 dark:bg-card/90 backdrop-blur-sm">
+      <Card className="shadow-xl">
         <CardHeader>
           <CardTitle>Sugestões de Preço ({individualApprovals.length})</CardTitle>
         </CardHeader>
@@ -3757,7 +3807,7 @@ export default function Approvals() {
           )}
           <div className="space-y-4">
             {individualApprovals.slice(individualPage * ITEMS_PER_PAGE, (individualPage + 1) * ITEMS_PER_PAGE).map((suggestion) => (
-              <div key={suggestion.id} className="p-3 sm:p-4 bg-gradient-to-r from-white to-slate-50 dark:from-card dark:to-secondary rounded-xl border border-slate-200 dark:border-border hover:shadow-lg transition-all duration-300">
+              <div key={suggestion.id} className="p-3 sm:p-4 bg-card rounded-xl border border-border hover:shadow-lg transition-all duration-300">
                 <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 sm:gap-4">
                   <div className="flex-1 min-w-0 w-full">
                     <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 mb-2">

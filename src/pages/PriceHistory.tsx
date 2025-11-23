@@ -153,7 +153,6 @@ export default function PriceHistory() {
   };
 
   const handleFilter = async (filters: any) => {
-    console.log('Applying price history filters:', filters);
     
     try {
       const filtered = await searchPriceHistory(filters);
@@ -208,15 +207,15 @@ export default function PriceHistory() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-4 py-8 space-y-6">
-      <div className="bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 rounded-xl p-6 text-white shadow-lg">
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-4 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6">
+      <div className="bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 rounded-xl p-4 sm:p-6 text-white shadow-lg">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
-            <h1 className="text-2xl font-bold">Histórico de Preços</h1>
-            <p className="text-blue-100">Acompanhe todas as alterações de preços aprovadas</p>
+            <h1 className="text-xl sm:text-2xl font-bold">Histórico de Preços</h1>
+            <p className="text-blue-100 text-sm sm:text-base">Acompanhe todas as alterações de preços aprovadas</p>
           </div>
-          <div className="flex gap-3 w-full sm:w-auto">
+          <div className="flex gap-2 sm:gap-3 w-full sm:w-auto">
           <SearchWithPreview 
             placeholder="Buscar no histórico..."
             onSelect={(item) => {

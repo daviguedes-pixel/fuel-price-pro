@@ -32,14 +32,6 @@ export default function MyRequests() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [requestsWithHistory, setRequestsWithHistory] = useState<Set<string>>(new Set());
   
-  // Log inicial do componente
-  console.log('🚀 MyRequests Component RENDERIZADO:', {
-    user: user?.id,
-    myRequestsCount: myRequests.length,
-    filteredRequestsCount: filteredRequests.length,
-    timestamp: new Date().toISOString()
-  });
-  
   const [filters, setFilters] = useState({
     status: "all",
     search: ""
@@ -304,11 +296,11 @@ export default function MyRequests() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
-        return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Pendente</Badge>;
+        return <Badge variant="secondary" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1 text-yellow-600" />Pendente</Badge>;
       case 'approved':
-        return <Badge variant="default" className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1" />Aprovado</Badge>;
+        return <Badge variant="default" className="bg-green-100 text-green-800"><Check className="h-3 w-3 mr-1 text-green-600" />Aprovado</Badge>;
       case 'rejected':
-        return <Badge variant="destructive"><X className="h-3 w-3 mr-1" />Rejeitado</Badge>;
+        return <Badge variant="destructive"><X className="h-3 w-3 mr-1 text-red-600" />Rejeitado</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -467,10 +459,10 @@ export default function MyRequests() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Total</p>
-                <p className="text-2xl font-bold text-slate-800 dark:text-slate-200">{stats.total}</p>
+                <p className="text-2xl font-bold">{stats.total}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-slate-600 to-slate-700 flex items-center justify-center">
-                <MessageSquare className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 flex items-center justify-center">
+                <MessageSquare className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
@@ -481,10 +473,10 @@ export default function MyRequests() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Pendentes</p>
-                <p className="text-2xl font-bold text-yellow-600">{stats.pending}</p>
+                <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{stats.pending}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-yellow-500 to-yellow-600 flex items-center justify-center">
-                <Clock className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-900 to-blue-900 flex items-center justify-center">
+                <Clock className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
@@ -495,10 +487,10 @@ export default function MyRequests() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Aprovadas</p>
-                <p className="text-2xl font-bold text-green-600">{stats.approved}</p>
+                <p className="text-2xl font-bold text-green-600 dark:text-green-400">{stats.approved}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-green-500 to-green-600 flex items-center justify-center">
-                <Check className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-900 to-blue-900 flex items-center justify-center">
+                <Check className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
@@ -509,10 +501,10 @@ export default function MyRequests() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Rejeitadas</p>
-                <p className="text-2xl font-bold text-red-600">{stats.rejected}</p>
+                <p className="text-2xl font-bold text-red-600 dark:text-red-400">{stats.rejected}</p>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-red-500 to-red-600 flex items-center justify-center">
-                <X className="h-6 w-6" style={{ color: '#94a3b8' }} />
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-r from-blue-900 to-blue-900 flex items-center justify-center">
+                <X className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
@@ -523,7 +515,7 @@ export default function MyRequests() {
       <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Filter className="h-5 w-5 text-slate-600 dark:text-slate-400" />
+            <Filter className="h-5 w-5" />
             Filtros
           </CardTitle>
         </CardHeader>
@@ -552,7 +544,7 @@ export default function MyRequests() {
                 Buscar
               </label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Buscar por posto, cliente..."
                   value={filters.search}

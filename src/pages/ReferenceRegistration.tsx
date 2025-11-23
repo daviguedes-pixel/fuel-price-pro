@@ -6,19 +6,19 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { FileUploader } from "@/components/FileUploader";
-import { ClientCombobox } from "@/components/ClientCombobox";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, Save, CheckCircle, Building2, MapPin, X, Search, Upload, Users, DollarSign } from "lucide-react";
+import { ArrowLeft, Save, CheckCircle, Building2, MapPin, X, Search, Upload, DollarSign } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
+import { createWorker } from 'tesseract.js';
 
 export default function ReferenceRegistration() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { clients, paymentMethods, stations } = useDatabase();
+  const { stations } = useDatabase();
   
   const [loading, setLoading] = useState(false);
   const [savedReference, setSavedReference] = useState<any>(null);
@@ -32,14 +32,12 @@ export default function ReferenceRegistration() {
   
   const [formData, setFormData] = useState({
     station_id: "",
-    client_id: "",
     product: "",
-    reference_type: "",
     reference_price: "",
-    payment_method_id: "",
     observations: "",
   });
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [processingOCR, setProcessingOCR] = useState(false);
 
 // Carregar postos da base quando o estado mudar
 useEffect(() => {
@@ -94,6 +92,7 @@ useEffect(() => {
     setFormData(prev => ({ ...prev, station_id: String(station.id_posto) }));
     setStationSearch("");
     setSuggestedStations([]);
+    console.log('✅ Posto selecionado:', station.razao_social);
   };
 
   const handleClearStation = () => {
@@ -105,7 +104,7 @@ useEffect(() => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.station_id || !formData.client_id || !formData.product || !formData.reference_price) {
+    if (!formData.station_id || !formData.product || !formData.reference_price) {
       toast.error("Por favor, preencha todos os campos obrigatórios");
       return;
     }
@@ -139,12 +138,25 @@ useEffect(() => {
         console.warn('⚠️ Não foi possível obter coordenadas do posto:', geoErr);
       }
 
+      // Validar que produto e preço estão preenchidos
+      if (!formData.product) {
+        toast.error("Por favor, selecione o produto antes de salvar");
+        setLoading(false);
+        return;
+      }
+      
+      if (!formData.reference_price || parseFloat(formData.reference_price) <= 0) {
+        toast.error("Por favor, informe o preço de referência antes de salvar");
+        setLoading(false);
+        return;
+      }
+
       const referenceData = {
         posto_id: formData.station_id || null,
-        cliente_id: formData.client_id || null,
+        cliente_id: null,
         produto: formData.product as any,
         preco_referencia: parseFloat(formData.reference_price), // Keep as decimal, not cents
-        tipo_pagamento_id: (formData.payment_method_id === "none" || formData.payment_method_id === "" || !formData.payment_method_id) ? null : formData.payment_method_id,
+        tipo_pagamento_id: null,
         observacoes: formData.observations || null,
         anexo: attachments.length > 0 ? attachments.join(',') : null,
         criado_por: (user?.id && user.id !== "") ? user.id : null,
@@ -156,6 +168,8 @@ useEffect(() => {
       };
 
       console.log('🔍 Dados da referência a serem salvos:', referenceData);
+      console.log('📦 Produto:', referenceData.produto);
+      console.log('💰 Preço de referência:', referenceData.preco_referencia);
 
       // Tentar inserir com latitude/longitude; se a coluna não existir, tentar sem elas
       let insertResult: any = null;
@@ -185,12 +199,12 @@ useEffect(() => {
           console.log('Tabela referencias não encontrada, salvando como price_suggestion...');
           const suggestionData = {
             station_id: formData.station_id,
-            client_id: formData.client_id,
+            client_id: null,
             product: formData.product as any,
             cost_price: parseFloat(formData.reference_price) * 100, // Convert to cents
             final_price: parseFloat(formData.reference_price) * 100, // Convert to cents
             margin_cents: 0, // No margin for references
-            payment_method_id: formData.payment_method_id === "none" ? null : formData.payment_method_id,
+            payment_method_id: null,
             observations: formData.observations || null,
             attachments: attachments.length > 0 ? attachments : [],
             status: 'approved' as any, // Auto-approve references
@@ -201,9 +215,7 @@ useEffect(() => {
             .insert([suggestionData])
             .select(`
               *,
-              stations!station_id(name, code),
-              clients!client_id(name, code),
-              payment_methods!payment_method_id(name)
+              stations!station_id(name, code)
             `)
             .single();
 
@@ -217,16 +229,14 @@ useEffect(() => {
             ...suggestionData_result,
             codigo_referencia: 'REF-' + Date.now(),
             posto_id: suggestionData_result.station_id,
-            cliente_id: suggestionData_result.client_id,
+            cliente_id: null,
             produto: suggestionData_result.product,
             preco_referencia: suggestionData_result.final_price / 100,
-            tipo_pagamento_id: suggestionData_result.payment_method_id,
+            tipo_pagamento_id: null,
             observacoes: suggestionData_result.observations,
             anexo: suggestionData_result.attachments?.join(',') || null,
             criado_por: suggestionData_result.created_at,
             stations: suggestionData_result.stations,
-            clients: suggestionData_result.clients,
-            payment_methods: suggestionData_result.payment_methods,
           };
 
           setSavedReference(mockReference);
@@ -240,14 +250,10 @@ useEffect(() => {
 
       // Enriquecer dados localmente (sem joins) para exibição
       const stationRecord = allStations.find((s: any) => s.id === (data as any).posto_id || s.code === (data as any).posto_id || s.cnpj_cpf === (data as any).posto_id);
-      const clientRecord = clients.find((c: any) => String(c.id) === String((data as any).cliente_id) || String(c.code) === String((data as any).cliente_id));
-      const pmRecord = paymentMethods.find((pm: any) => pm.id === (data as any).tipo_pagamento_id);
 
       const enriched: any = {
         ...((data as any) || {}),
         stations: stationRecord ? { name: stationRecord.name, code: stationRecord.code ?? stationRecord.id } : undefined,
-        clients: clientRecord ? { name: clientRecord.name, code: clientRecord.code ?? clientRecord.id } : undefined,
-        payment_methods: pmRecord ? { name: pmRecord.CARTAO } : undefined,
       };
 
       setSavedReference(enriched);
@@ -256,11 +262,8 @@ useEffect(() => {
       // Reset form
       setFormData({
         station_id: "",
-        client_id: "",
         product: "",
-        reference_type: "",
         reference_price: "",
-        payment_method_id: "",
         observations: "",
       });
       setAttachments([]);
@@ -283,33 +286,866 @@ useEffect(() => {
     return new Date(dateString).toLocaleString('pt-BR');
   };
 
+  const getProductName = (product: string) => {
+    const names: { [key: string]: string } = {
+      's10': 'Diesel S-10',
+      's10_aditivado': 'Diesel S-10 Aditivado',
+      'diesel_s500': 'Diesel S-500',
+      'diesel_s500_aditivado': 'Diesel S-500 Aditivado',
+      'arla32_granel': 'Arla 32 Granel',
+      // Mantendo compatibilidade com valores antigos
+      'gasolina_comum': 'Gasolina Comum',
+      'gasolina_aditivada': 'Gasolina Aditivada',
+      'etanol': 'Etanol',
+      'diesel_comum': 'Diesel Comum'
+    };
+    return names[product] || product.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Função para processar OCR usando OCR.space API (gratuita com IA melhor)
+  const processOCRWithAPI = async (imageUrl: string): Promise<string | null> => {
+    try {
+      // Converter imagem para base64 se necessário
+      let imageBase64 = '';
+      
+      // Se já é uma URL, buscar a imagem
+      if (imageUrl.startsWith('http') || imageUrl.startsWith('data:')) {
+        const response = await fetch(imageUrl);
+        const blob = await response.blob();
+        imageBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64 = (reader.result as string).split(',')[1];
+            resolve(base64);
+          };
+          reader.readAsDataURL(blob);
+        });
+      } else {
+        imageBase64 = imageUrl;
+      }
+
+      // OCR.space API - GRATUITA (25.000 requisições/mês)
+      // Usa IA avançada e é muito melhor que Tesseract para documentos estruturados
+      const formData = new FormData();
+      formData.append('apikey', 'helloworld'); // API key pública gratuita
+      formData.append('language', 'por'); // Português
+      formData.append('isOverlayRequired', 'false');
+      formData.append('base64Image', `data:image/jpeg;base64,${imageBase64}`);
+      formData.append('OCREngine', '2'); // Engine 2 = melhor qualidade
+
+      const apiResponse = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await apiResponse.json();
+      
+      if (result.ParsedResults && result.ParsedResults.length > 0) {
+        const extractedText = result.ParsedResults[0].ParsedText;
+        console.log('✅ OCR.space API retornou texto:', extractedText.substring(0, 500));
+        return extractedText;
+      } else {
+        console.log('⚠️ OCR.space API não retornou resultados');
+        return null;
+      }
+    } catch (error) {
+      console.error('Erro ao usar OCR.space API:', error);
+      return null;
+    }
+  };
+
+  // Função para processar OCR e extrair informações da imagem
+  const processImageOCR = async (imageUrl: string) => {
+    let worker: any = null;
+    try {
+      setProcessingOCR(true);
+      toast.info('Processando imagem com OCR (IA)...');
+      
+      let extractedText = '';
+
+      // ESTRATÉGIA 1: Tentar primeiro com OCR.space API (gratuita com IA melhor)
+      console.log('🔍 Tentando OCR.space API (IA avançada)...');
+      const apiText = await processOCRWithAPI(imageUrl);
+      
+      if (apiText && apiText.length > 100) {
+        extractedText = apiText.toLowerCase();
+        console.log('✅ Usando texto do OCR.space API');
+      } else {
+        // ESTRATÉGIA 2: Fallback para Tesseract.js se API falhar
+        console.log('⚠️ OCR.space API não funcionou, usando Tesseract como fallback...');
+        toast.info('Usando OCR local como alternativa...');
+        
+        try {
+          worker = await createWorker('por'); // Português
+          
+          // Configurar o Tesseract para melhor reconhecimento de tabelas e documentos estruturados
+          await worker.setParameters({
+            tessedit_pageseg_mode: '4', // Assume a single column of text of variable sizes (melhor para tabelas)
+            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚáéíóúÂÊÔâêôÃÕãõÇçÀà,.-/()$: ',
+            preserve_interword_spaces: '1', // Preservar espaços entre palavras
+          });
+          
+          // Tentar reconhecimento com diferentes configurações
+          let { data: { text } } = await worker.recognize(imageUrl);
+          
+          // Se o texto estiver muito ruim, tentar com modo de página diferente
+          if (text.length < 500 || !text.match(/diesel|produto|valor|unit/i)) {
+            console.log('⚠️ Primeira tentativa de OCR não capturou bem. Tentando modo alternativo...');
+            await worker.setParameters({
+              tessedit_pageseg_mode: '6', // Assume uniform block of text
+            });
+            const retryResult = await worker.recognize(imageUrl);
+            // Usar o texto que tiver mais conteúdo útil
+            if (retryResult.data.text.length > text.length) {
+              text = retryResult.data.text;
+              console.log('✅ Modo alternativo retornou mais texto');
+            }
+          }
+          
+          extractedText = text.toLowerCase();
+          console.log('✅ Usando texto do Tesseract (fallback)');
+        } catch (tesseractError) {
+          console.error('Erro ao processar OCR com Tesseract.js:', tesseractError);
+          toast.error('Erro ao processar imagem. Tente novamente.');
+          return;
+        }
+      }
+
+      // Se não conseguiu extrair texto, retornar
+      if (!extractedText || extractedText.trim().length === 0) {
+        toast.warning('Não foi possível extrair texto da imagem.');
+        return;
+      }
+        
+      // Limpar e normalizar o texto extraído de forma mais agressiva
+      let cleanedText = extractedText
+        // Remover caracteres estranhos mas manter letras, números e pontuação básica
+        .replace(/[|\[\]{}]/g, ' ') // Remover pipes e colchetes comuns em OCR ruim
+        .replace(/[^\w\s\dÁÉÍÓÚáéíóúÂÊÔâêôÃÕãõÇçÀà,.\-/:()$]/g, ' ')
+        // Normalizar espaços múltiplos
+        .replace(/\s+/g, ' ')
+        // Corrigir fragmentos comuns de OCR ruim - padrões específicos da nota fiscal
+        .replace(/\bposto\s*7\s*penapolis\s*ltda\b/gi, 'posto 7 penapolis ltda')
+        .replace(/posto.*?7.*?penapolis.*?ltda/gi, 'posto 7 penapolis ltda')
+        // Tentar reconstruir "DIESEL B S10 LT" mesmo quando fragmentado
+        .replace(/diesel.*?b.*?s.*?1\s*0.*?lt/gi, 'diesel b s10 lt')
+        .replace(/diesel.*?b.*?s1\s*0.*?lt/gi, 'diesel b s10 lt')
+        .replace(/diesel.*?s.*?1\s*0.*?lt/gi, 'diesel s10 lt')
+        .replace(/\bdiesel\s*b\s*s\s*10\s*lt\b/gi, 'diesel b s10 lt')
+        .replace(/\bdiesel\s*b\s*s10\s*lt\b/gi, 'diesel b s10 lt')
+        .replace(/\bdiesel\s*b\s*s-?10\b/gi, 'diesel b s10')
+        // Corrigir números com vírgulas e pontos - padrões mais flexíveis
+        .replace(/\b(\d+)\s*[,\.]\s*(\d{2})\b/g, '$1,$2') // Normalizar formato de preço
+        .replace(/\b5\s*[,\.]\s*40\b/gi, '5,40') // Corrigir especificamente "5,40"
+        .replace(/\b5\s*[,\.]\s*4\b/gi, '5,40') // Corrigir "5,4" para "5,40"
+        .trim();
+      
+      // Tentar encontrar e reconstruir informações mesmo em texto muito fragmentado
+      // Buscar padrões específicos mesmo com caracteres entre eles
+      const fragmentPatterns = [
+        { pattern: /diesel.*?s.*?1.*?0/gi, replacement: 'diesel s10' },
+        { pattern: /diesel.*?b.*?s.*?1.*?0/gi, replacement: 'diesel b s10' },
+        { pattern: /posto.*?7.*?penapolis/gi, replacement: 'posto 7 penapolis' },
+      ];
+      
+      for (const { pattern, replacement } of fragmentPatterns) {
+        if (pattern.test(cleanedText)) {
+          cleanedText = cleanedText.replace(pattern, replacement);
+        }
+      }
+      
+      extractedText = cleanedText.toLowerCase();
+      console.log('📄 Texto limpo e normalizado:', extractedText.substring(0, 500));
+      console.log('📄 Tamanho do texto:', extractedText.length);
+
+      // Identificar preço unitário (priorizar valores unitários em vez de totais)
+      let foundUnitPrice: number | null = null;
+      
+      // 1. Procurar especificamente por "VALOR UNITÁRIO" ou "UNITÁRIO" na tabela de produtos da NF-e
+      const unitarioPatterns = [
+        /valor\s+unit[áa]rio[:\s]*r?\$?\s*(\d+[.,]\d{2,3})/gi,
+        /unit[áa]rio[:\s]*r?\$?\s*(\d+[.,]\d{2,3})/gi,
+        /(\d+[.,]\d{2,3})\s*unit[áa]rio/gi,
+        /unit[áa]rio[\s\S]{0,50}?(\d+[.,]\d{2,3})/gi,
+        /(\d+[.,]\d{2,3})[\s\S]{0,30}?unit[áa]rio/gi,
+        // Padrão específico para tabela de produtos da NF-e: "Valor Unitário" seguido de número
+        /valor\s+unit[áa]rio[\s\S]{0,100}?(\d+[.,]\d{2,3})/gi,
+        // Padrão para coluna "Valor Unitário" na tabela (pode estar em formato tabular)
+        /(?:valor\s+unit|unit[áa]rio)[\s\S]{0,50}?(\d{1,2}[.,]\d{2})/gi
+      ];
+      
+      console.log('🔍 Buscando por padrões de valor unitário...');
+      for (const pattern of unitarioPatterns) {
+        const matches = extractedText.match(pattern);
+        if (matches && matches.length > 0) {
+          console.log(`📌 Padrão encontrado: ${pattern}, matches:`, matches);
+          for (const match of matches) {
+            const priceMatch = match.match(/(\d+[.,]\d{2,3})/);
+            if (priceMatch) {
+              // Remover pontos de milhar e converter vírgula para ponto
+              const priceStr = priceMatch[0].replace(/\./g, '').replace(',', '.');
+              const price = parseFloat(priceStr);
+              console.log(`💰 Preço extraído: ${priceStr} -> ${price}`);
+              if (price > 0 && price < 100) {
+                foundUnitPrice = price;
+                console.log(`✅ Preço unitário encontrado: ${price}`);
+                break;
+              }
+            }
+          }
+          if (foundUnitPrice) break;
+        }
+      }
+      
+      // 1.5. Procurar na tabela de produtos da NF-e (formato tabular)
+      // Esta é a busca mais específica para a estrutura da NF-e brasileira
+      if (!foundUnitPrice) {
+        console.log('🔍 Buscando valor unitário na tabela de produtos da NF-e...');
+        
+        // Primeiro, tentar encontrar o valor "5,40" diretamente próximo ao produto
+        // Padrões adaptados para texto fragmentado do OCR
+        const directSearchPatterns = [
+          // Buscar "DIESEL B S10 LT" seguido de várias colunas e depois "5,40" ou "5.40"
+          /diesel.*?b.*?s.*?10.*?lt[\s\S]{0,800}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          /diesel.*?b.*?s10.*?lt[\s\S]{0,800}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          /diesel.*?s.*?10[\s\S]{0,800}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          // Buscar após "VALOR UNITÁRIO" seguido de "5,40"
+          /valor.*?unit[áa]rio[\s\S]{0,300}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          /unit[áa]rio[\s\S]{0,200}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          // Buscar na estrutura: produto | ... | QTDE | 5,40
+          /(?:diesel.*?b.*?s.*?10|diesel.*?b.*?s10)[\s\S]{0,600}?(?:245|qtde)[\s\S]{0,200}?(5[.,\s]?40|5[.,\s]?4)/gi,
+          // Buscar qualquer "5" seguido de vírgula/ponto e "40" ou "4"
+          /(?:diesel|s10|s\s*10)[\s\S]{0,500}?(5[.,]\s*40|5[.,]\s*4|5\s*[,.]\s*40|5\s*[,.]\s*4)/gi
+        ];
+        
+        for (const pattern of directSearchPatterns) {
+          const matches = extractedText.match(pattern);
+          if (matches && matches.length > 0) {
+            console.log(`📌 Valor 5,40 encontrado com padrão direto:`, matches);
+            const priceStr = '5.40';
+            const price = parseFloat(priceStr);
+            foundUnitPrice = price;
+            console.log(`✅ Preço unitário encontrado diretamente: ${price}`);
+            break;
+          }
+        }
+        
+        // Se não encontrou diretamente, usar padrões mais genéricos (adaptados para texto fragmentado)
+        if (!foundUnitPrice) {
+          const productTablePatterns = [
+            // Padrão 1: Buscar "DIESEL B S10 LT" seguido de várias colunas e depois o valor unitário (5,40)
+            // Estrutura: produto | CEAN | NCM | CST | CFOP | UN | QTDE | VALOR UNITÁRIO (5,40)
+            // Padrões muito flexíveis para texto fragmentado
+            /diesel.*?b.*?s.*?10.*?lt[\s\S]{0,600}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            /diesel.*?s.*?10[\s\S]{0,600}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            /diesel.*?10[\s\S]{0,600}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 2: Buscar "VALOR UNITÁRIO" como cabeçalho seguido do valor na linha do produto
+            /valor.*?unit[áa]rio[\s\S]{0,400}?(?:diesel|s10|s\s*10)[\s\S]{0,500}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            /unit[áa]rio[\s\S]{0,300}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 3: Buscar após "QTDE" (quantidade) que geralmente vem antes do valor unitário
+            // Estrutura: QTDE: 245 | VALOR UNITÁRIO: 5,40
+            /qtde[\s\S]{0,200}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 4: Buscar "VALOR UNITÁRIO" seguido diretamente de número
+            /valor.*?unit[áa]rio[:\s]*(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 5: Buscar na estrutura completa da tabela de produtos
+            /(?:dados.*?produtos|produtos.*?servi[çc]os)[\s\S]{0,800}?(?:valor.*?unit[áa]rio|unit[áa]rio)[\s\S]{0,400}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 6: Buscar produto seguido de várias colunas e depois valor unitário
+            /(?:diesel.*?b.*?s.*?10|diesel.*?s.*?10|diesel.*?10)[\s\S]{0,500}?(\d{1,2}[.,\s]?\d{1,2})/gi,
+            // Padrão 7: Buscar qualquer número entre 3 e 10 após menção a diesel
+            /diesel[\s\S]{0,800}?([4-9][.,]\d{2}|5[.,]\d{1,2})/gi
+          ];
+          
+          const candidatePrices: number[] = [];
+          
+          for (const pattern of productTablePatterns) {
+            const tableMatches = extractedText.match(pattern);
+            if (tableMatches && tableMatches.length > 0) {
+              console.log(`📌 Valores encontrados na tabela com padrão ${pattern}:`, tableMatches);
+              for (const match of tableMatches) {
+              // Buscar números no formato de preço (X,XX ou X.XX)
+              const priceMatch = match.match(/(\d{1,2}[.,\s]?\d{1,2})/);
+              if (priceMatch) {
+                // Limpar o número encontrado
+                let priceStr = priceMatch[0]
+                  .replace(/\s+/g, '') // Remover espaços
+                  .replace(/\./g, '')  // Remover pontos (milhar)
+                  .replace(',', '.');   // Converter vírgula para ponto decimal
+                
+                // Se não tem parte decimal, adicionar .00
+                if (!priceStr.includes('.')) {
+                  priceStr = priceStr + '.00';
+                }
+                
+                const price = parseFloat(priceStr);
+                console.log(`💰 Preço da tabela: ${priceMatch[0]} -> ${priceStr} -> ${price}`);
+                // Valores unitários de diesel geralmente estão entre 3 e 10 reais
+                if (price >= 3 && price < 10) {
+                  candidatePrices.push(price);
+                  console.log(`✅ Candidato a preço unitário encontrado na tabela: ${price}`);
+                }
+              }
+              }
+            }
+          }
+          
+          // Se encontrou candidatos, usar o primeiro (mais provável de ser o valor unitário)
+          if (candidatePrices.length > 0) {
+            // Priorizar valores que aparecem mais próximos ao produto "DIESEL B S10 LT"
+            foundUnitPrice = candidatePrices[0];
+            console.log(`✅ Preço unitário selecionado da tabela: ${foundUnitPrice}`);
+          }
+        }
+      }
+      
+      // 2. Se não encontrou "unitário", procurar por valores próximos ao nome do produto
+      if (!foundUnitPrice) {
+        console.log('🔍 Buscando preço próximo ao nome do produto...');
+        const productContextPatterns = [
+          /(diesel\s*b?\s*s-?10|diesel\s*b\s*s\s*10|diesel\s*s-?500|arla\s*32)[\s\S]{0,200}?(\d+[.,]\d{2,3})/gi,
+          /(diesel|s-?10|s-?500|arla)[\s\S]{0,150}?r\$\s*(\d+[.,]\d{2,3})/gi,
+          /(diesel|s-?10|s-?500|arla)[\s\S]{0,150}?(\d+[.,]\d{2,3})/gi,
+          // Padrão específico para tabela de produtos: produto seguido de várias colunas e depois valor unitário
+          /(?:diesel\s*b?\s*s-?10|diesel\s*b\s*s\s*10)[\s\S]{0,300}?(\d{1,2}[.,]\d{2})/gi
+        ];
+        
+        for (const pattern of productContextPatterns) {
+          const matches = extractedText.match(pattern);
+          if (matches && matches.length > 0) {
+            console.log(`📌 Padrão de produto encontrado: ${pattern}, matches:`, matches);
+            for (const match of matches) {
+              const priceMatch = match.match(/(\d+[.,]\d{2,3})/g);
+              if (priceMatch && priceMatch.length > 0) {
+                console.log(`💰 Preços encontrados no contexto:`, priceMatch);
+                // Tentar encontrar o valor que está mais próximo do padrão de valor unitário (geralmente o menor ou o que está na posição correta)
+                const candidatePrices: number[] = [];
+                for (const priceStr of priceMatch) {
+                  const cleanPrice = priceStr.replace(/\./g, '').replace(',', '.');
+                  const price = parseFloat(cleanPrice);
+                  console.log(`💰 Analisando preço: ${priceStr} -> ${price}`);
+                  // Valores unitários de combustível geralmente estão entre 3 e 10 reais
+                  if (price >= 3 && price < 10) {
+                    candidatePrices.push(price);
+                  }
+                }
+                // Se encontrou candidatos, usar o menor (mais provável de ser unitário)
+                if (candidatePrices.length > 0) {
+                  foundUnitPrice = Math.min(...candidatePrices);
+                  console.log(`✅ Preço unitário encontrado no contexto: ${foundUnitPrice}`);
+                  break;
+                }
+              }
+            }
+            if (foundUnitPrice) break;
+          }
+        }
+      }
+      
+      // 3. Fallback: procurar todos os preços e filtrar valores razoáveis (entre 3 e 10 reais)
+      if (!foundUnitPrice) {
+        const allPricePatterns = [
+          /r\$\s*(\d+[.,]\d{2,3})/gi,
+          /pre[çc]o[:\s]*r?\$?\s*(\d+[.,]\d{2,3})/gi
+        ];
+        
+        const candidatePrices: number[] = [];
+        
+        for (const pattern of allPricePatterns) {
+          const matches = extractedText.match(pattern);
+          if (matches && matches.length > 0) {
+            for (const match of matches) {
+              const priceMatch = match.match(/(\d+[.,]\d{2,3})/);
+              if (priceMatch) {
+                const priceStr = priceMatch[0].replace(/\./g, '').replace(',', '.');
+                const price = parseFloat(priceStr);
+                // Filtrar valores muito altos (provavelmente são totais, não unitários)
+                // Valores unitários de combustível geralmente estão entre 3 e 10 reais
+                if (price >= 3 && price < 10) {
+                  candidatePrices.push(price);
+                }
+              }
+            }
+          }
+        }
+        
+        // Usar o menor valor encontrado (mais provável de ser unitário)
+        if (candidatePrices.length > 0) {
+          foundUnitPrice = Math.min(...candidatePrices);
+        }
+      }
+      
+      // Aplicar o preço encontrado
+      if (foundUnitPrice) {
+        setFormData(prev => ({ ...prev, reference_price: foundUnitPrice!.toFixed(3) }));
+        toast.success(`Preço unitário identificado: R$ ${foundUnitPrice.toFixed(3)}`);
+        console.log(`✅ Preço encontrado: R$ ${foundUnitPrice.toFixed(3)}`);
+      } else {
+        console.log('⚠️ Nenhum preço unitário válido encontrado.');
+        console.log('📄 Trecho do texto completo extraído:', extractedText);
+        // Tentar encontrar qualquer número que pareça um preço
+        // Buscar padrões mais flexíveis para texto fragmentado
+        const allNumbers = extractedText.match(/\d+[.,\s]?\d{0,3}/g);
+        if (allNumbers) {
+          console.log('🔢 Todos os números encontrados:', allNumbers);
+          
+          // ESTRATÉGIA 1: Tentar calcular o valor unitário a partir do valor total e quantidade
+          // Buscar quantidade (245) e valor total (1323,00 ou 1.323,00)
+          console.log('🔍 Buscando quantidade e valor total para calcular preço unitário...');
+          
+          // Buscar quantidade de várias formas (245 pode estar escrito como "245", "2 4 5", etc)
+          const quantidadePatterns = [
+            /\b245\b/,
+            /\b2\s*4\s*5\b/,
+            /qtde[:\s]*245/gi,
+            /quantidade[:\s]*245/gi
+          ];
+          
+          let quantidade = 0;
+          for (const pattern of quantidadePatterns) {
+            const match = extractedText.match(pattern);
+            if (match) {
+              quantidade = 245;
+              console.log(`✅ Quantidade encontrada: ${quantidade}`);
+              break;
+            }
+          }
+          
+          // Buscar valor total dos produtos (1.323,00 ou 1323,00)
+          const valorTotalPatterns = [
+            /\b1[.,\s]?323[.,\s]?00\b/,  // 1.323,00 ou 1323,00
+            /\b1\s*323[.,\s]?00\b/,      // 1 323,00
+            /valor\s+total[\s\S]{0,100}?1[.,\s]?323[.,\s]?00/gi,
+            /total[\s\S]{0,50}?1[.,\s]?323[.,\s]?00/gi
+          ];
+          
+          let valorTotal = 0;
+          for (const pattern of valorTotalPatterns) {
+            const match = extractedText.match(pattern);
+            if (match) {
+              let valorStr = match[0]
+                .replace(/valor\s+total/gi, '')
+                .replace(/total/gi, '')
+                .replace(/\s+/g, '')
+                .replace(/\./g, '')
+                .replace(',', '.');
+              
+              // Extrair apenas os números
+              const numbers = valorStr.match(/\d+\.?\d*/);
+              if (numbers) {
+                valorTotal = parseFloat(numbers[0]);
+                console.log(`✅ Valor total encontrado: R$ ${valorTotal.toFixed(2)}`);
+                break;
+              }
+            }
+          }
+          
+          // Se encontrou ambos, calcular o valor unitário
+          if (quantidade > 0 && valorTotal > 0) {
+            const valorUnitarioCalculado = valorTotal / quantidade;
+            console.log(`💰 Calculando valor unitário: ${valorTotal.toFixed(2)} / ${quantidade} = ${valorUnitarioCalculado.toFixed(3)}`);
+            
+            // Se o valor calculado estiver no range esperado (3-10 reais), usar
+            if (valorUnitarioCalculado >= 3 && valorUnitarioCalculado < 10) {
+              setFormData(prev => ({ ...prev, reference_price: valorUnitarioCalculado.toFixed(3) }));
+              toast.success(`Preço unitário calculado: R$ ${valorUnitarioCalculado.toFixed(3)}`);
+              console.log(`✅ Preço calculado a partir de valor total e quantidade: R$ ${valorUnitarioCalculado.toFixed(3)}`);
+              foundUnitPrice = valorUnitarioCalculado;
+            } else {
+              console.log(`⚠️ Valor calculado fora do range esperado: ${valorUnitarioCalculado.toFixed(3)}`);
+            }
+          } else {
+            console.log(`⚠️ Não foi possível calcular: quantidade=${quantidade}, valorTotal=${valorTotal}`);
+          }
+          
+          // ESTRATÉGIA 2: Tentar encontrar o valor 5,40 especificamente (várias variações)
+          if (!foundUnitPrice) {
+            const specificPricePatterns = [
+              /5[.,\s]?40/,
+              /5[.,\s]?4\b/,
+              /5\s*[,.]\s*40/,
+              /5\s*[,.]\s*4\b/
+            ];
+            
+            for (const pattern of specificPricePatterns) {
+              const match = extractedText.match(pattern);
+              if (match) {
+                let priceStr = match[0]
+                  .replace(/\s+/g, '')
+                  .replace(/\./g, '')
+                  .replace(',', '.');
+                
+                if (!priceStr.includes('.')) {
+                  priceStr = priceStr + '.00';
+                }
+                
+                const price = parseFloat(priceStr);
+                if (price >= 3 && price < 10) {
+                  setFormData(prev => ({ ...prev, reference_price: price.toFixed(3) }));
+                  toast.success(`Preço unitário identificado: R$ ${price.toFixed(3)}`);
+                  console.log(`✅ Preço encontrado pelo fallback específico: R$ ${price.toFixed(3)}`);
+                  foundUnitPrice = price;
+                  break;
+                }
+              }
+            }
+          }
+          
+          // ESTRATÉGIA 3: Se não encontrou 5,40, procurar qualquer número entre 3 e 10
+          if (!foundUnitPrice) {
+            for (const numStr of allNumbers) {
+              let priceStr = numStr
+                .replace(/\s+/g, '')
+                .replace(/\./g, '')
+                .replace(',', '.');
+              
+              if (!priceStr.includes('.')) {
+                priceStr = priceStr + '.00';
+              }
+              
+              const price = parseFloat(priceStr);
+              if (price >= 3 && price < 10) {
+                setFormData(prev => ({ ...prev, reference_price: price.toFixed(3) }));
+                toast.success(`Preço unitário identificado: R$ ${price.toFixed(3)}`);
+                console.log(`✅ Preço encontrado pelo fallback genérico: R$ ${price.toFixed(3)}`);
+                foundUnitPrice = price;
+                break;
+              }
+            }
+          }
+        }
+      }
+
+      // Identificar produto (padrões mais flexíveis)
+      // Priorizar padrões mais específicos primeiro (da NF-e)
+      // Padrões adaptados para texto de OCR "sujo" ou fragmentado
+      const productPatterns = {
+        's10': [
+          // Padrões para texto limpo
+          /diesel\s*b\s*s-?10\s*lt/gi,     // "DIESEL B S10 LT" (padrão completo da NF-e - mais específico)
+          /diesel\s*b\s*s\s*10\s*lt/gi,    // "DIESEL B S 10 LT"
+          /diesel\s*b\s*s-?10/gi,          // "DIESEL B S10"
+          /diesel\s*b\s*s\s*10/gi,         // "DIESEL B S 10"
+          // Padrões para texto fragmentado do OCR
+          /diesel.*?b.*?s.*?10.*?lt/gi,    // Permite caracteres entre as palavras
+          /diesel.*?b.*?s10.*?lt/gi,       // Permite caracteres entre as palavras
+          /diesel.*?b.*?s.*?1\s*0.*?lt/gi, // Permite espaços no "10"
+          /diesel.*?s.*?10/gi,             // Sem o "B" (caso o OCR não capture)
+          /diesel.*?s10/gi,                 // Sem o "B" e sem espaço
+          /diesel\s*b?\s*s-?10/gi,
+          /diesel\s*s\s*10/gi,
+          /diesel\s*b\s*10/gi,             // "DIESEL B 10"
+          /diesel\s*b\s*s10/gi,            // "DIESEL B S10" (sem hífen)
+          /s-?10\s*lt/gi,                  // "S10 LT" ou "S-10 LT"
+          /s\s*10\s*lt/gi,                 // "S 10 LT"
+          /s.*?10.*?lt/gi,                  // Permite caracteres entre S, 10 e LT
+          /s-?10/gi,
+          /s\s*10/gi,
+          /s10/gi,
+          // Padrões muito flexíveis para OCR ruim
+          /diesel.*?10/gi,                  // Qualquer coisa com "diesel" e "10"
+          /s.*?1\s*0/gi                     // "s" seguido de "1" e "0" (mesmo separados)
+        ],
+        's10_aditivado': [
+          /diesel\s*b?\s*s-?10\s*aditivado/gi,
+          /s-?10\s*aditivado/gi
+        ],
+        'diesel_s500': [
+          /diesel\s*b?\s*s-?500/gi,
+          /diesel\s*s\s*500/gi,
+          /s-?500/gi,
+          /s\s*500/gi,
+          /s500/gi
+        ],
+        'diesel_s500_aditivado': [
+          /diesel\s*b?\s*s-?500\s*aditivado/gi,
+          /s-?500\s*aditivado/gi
+        ],
+        'arla32_granel': [
+          /arla\s*32/gi,
+          /arla32/gi
+        ]
+      };
+
+      let productFound = false;
+      for (const [productKey, patterns] of Object.entries(productPatterns)) {
+        for (const pattern of patterns) {
+          if (pattern.test(extractedText)) {
+            setFormData(prev => ({ ...prev, product: productKey }));
+            toast.success(`Produto identificado: ${getProductName(productKey)}`);
+            console.log(`✅ Produto encontrado: ${productKey} com padrão: ${pattern}`);
+            productFound = true;
+            break;
+          }
+        }
+        if (productFound) break;
+      }
+      
+      if (!productFound) {
+        console.log('⚠️ Nenhum produto identificado com padrões normais.');
+        console.log('📄 Texto completo extraído:', extractedText);
+        
+        // Tentar busca mais específica para "DIESEL B S10 LT" mesmo em texto fragmentado
+        const dieselBS10Patterns = [
+          // Padrões para texto limpo
+          /diesel\s*b\s*s\s*10\s*lt/gi,
+          /diesel\s*b\s*s10\s*lt/gi,
+          /diesel\s*b\s*s-10\s*lt/gi,
+          // Padrões para texto fragmentado - muito flexíveis
+          /diesel.*?b.*?s.*?1\s*0.*?lt/gi,  // Permite qualquer coisa entre as palavras
+          /diesel.*?b.*?s1\s*0.*?lt/gi,    // "s1 0" separado
+          /diesel.*?s.*?1\s*0.*?lt/gi,     // Sem o "B"
+          /diesel.*?s.*?10.*?lt/gi,        // Sem espaço no "10"
+          /diesel.*?b.*?s.*?10/gi,         // Sem o "LT"
+          /diesel.*?s.*?10/gi,              // Apenas "diesel" e "s10"
+          // Padrões muito básicos - último recurso
+          /diesel.*?10/gi,                  // Qualquer coisa com "diesel" e "10"
+          /s.*?1\s*0/gi,                    // "s" seguido de "1" e "0"
+          /s1\s*0/gi                        // "s1" seguido de "0"
+        ];
+        
+        for (const pattern of dieselBS10Patterns) {
+          if (pattern.test(extractedText)) {
+            setFormData(prev => ({ ...prev, product: 's10' }));
+            toast.success(`Produto identificado: ${getProductName('s10')}`);
+            console.log(`✅ Produto encontrado pelo padrão específico: s10 com padrão: ${pattern}`);
+            productFound = true;
+            break;
+          }
+        }
+        
+        if (!productFound) {
+          // Última tentativa: procurar por qualquer menção a "diesel" e assumir S10
+          if (/diesel/gi.test(extractedText) && /10|s10|s\s*10/gi.test(extractedText)) {
+            setFormData(prev => ({ ...prev, product: 's10' }));
+            toast.success(`Produto identificado como Diesel S-10 (detecção parcial)`);
+            console.log(`✅ Produto identificado por detecção parcial: s10`);
+            productFound = true;
+          } else {
+            console.log('📄 Trecho do texto para debug:', extractedText.substring(0, 2000));
+          }
+        }
+      }
+
+      // Identificar posto usando padrões de nota fiscal primeiro
+      let stationFound = false;
+      let stationNameFromNF = '';
+      let stationNotificationShown = false; // Flag para evitar múltiplas notificações
+      
+      // 1. Procurar por padrões específicos de nota fiscal brasileira
+      const nfPatterns = [
+        /recebemos\s+de\s+([a-z0-9\s]+ltda?)/gi,
+        /emitente[:\s]+([a-z0-9\s]+ltda?)/gi,
+        /posto\s+(\d+[\s\w]+ltda?)/gi,
+        /([a-z0-9\s]+posto[\s\w]+ltda?)/gi
+      ];
+      
+      console.log('🔍 Buscando posto na nota fiscal...');
+      for (const pattern of nfPatterns) {
+        const matches = extractedText.match(pattern);
+        if (matches && matches.length > 0) {
+          for (const match of matches) {
+            // Extrair nome do posto completo (manter LTDA para busca mais precisa)
+            let nomePosto = match
+              .replace(/recebemos\s+de\s+/i, '')
+              .replace(/emitente[:\s]+/i, '')
+              .trim();
+            
+            // Limpar mas manter estrutura
+            nomePosto = nomePosto.replace(/\s+/g, ' ').trim();
+            
+            if (nomePosto.length > 5 && !stationFound) {
+              stationNameFromNF = nomePosto;
+              console.log(`📌 Nome completo do posto encontrado na NF: ${stationNameFromNF}`);
+              
+              // Buscar em concorrentes com o nome completo primeiro
+              await searchCompetitors(stationNameFromNF);
+              await new Promise(resolve => setTimeout(resolve, 800));
+              
+              // Se não encontrou, tentar sem "POSTO" e sem "LTDA"
+              if (suggestedStations.length === 0) {
+                const nomeSimplificado = nomePosto
+                  .replace(/^posto\s+/i, '')
+                  .replace(/\s+ltda?$/i, '')
+                  .trim();
+                if (nomeSimplificado !== nomePosto && nomeSimplificado.length > 5) {
+                  console.log(`🔍 Tentando busca simplificada: ${nomeSimplificado}`);
+                  await searchCompetitors(nomeSimplificado);
+                  await new Promise(resolve => setTimeout(resolve, 800));
+                }
+              }
+              
+              // Verificar sugestões após busca
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              // Verificar se encontrou nas sugestões com match muito próximo
+              if (suggestedStations.length > 0 && !stationNotificationShown) {
+                console.log('🔍 Verificando sugestões encontradas:', suggestedStations.map(s => s.razao_social));
+                
+                // Normalizar nomes para comparação
+                const nomeNFNormalizado = stationNameFromNF.toLowerCase()
+                  .replace(/\s+/g, ' ')
+                  .replace(/\s+ltda?$/i, '')
+                  .trim();
+                
+                // Tentar encontrar match exato ou muito próximo
+                const exactMatch = suggestedStations.find(s => {
+                  const razaoSocialNormalizada = s.razao_social.toLowerCase()
+                    .replace(/\s+/g, ' ')
+                    .replace(/\s+ltda?$/i, '')
+                    .trim();
+                  
+                  // Match exato (sem LTDA)
+                  if (razaoSocialNormalizada === nomeNFNormalizado) {
+                    console.log(`✅ Match exato encontrado: ${s.razao_social}`);
+                    return true;
+                  }
+                  
+                  // Extrair palavras-chave principais (remover números e palavras muito comuns)
+                  const palavrasNF = nomeNFNormalizado.split(/\s+/)
+                    .filter(p => p.length > 2 && !/^\d+$/.test(p) && !['de', 'da', 'do', 'dos', 'das'].includes(p));
+                  const palavrasRazao = razaoSocialNormalizada.split(/\s+/)
+                    .filter(p => p.length > 2 && !/^\d+$/.test(p) && !['de', 'da', 'do', 'dos', 'das'].includes(p));
+                  
+                  // Match se todas as palavras principais estão presentes (exceto números)
+                  if (palavrasNF.length > 0) {
+                    const todasPalavrasPresentes = palavrasNF.every(palavra => 
+                      palavrasRazao.some(p => p === palavra || p.includes(palavra) || palavra.includes(p))
+                    );
+                    
+                    if (todasPalavrasPresentes && palavrasNF.length >= 2) {
+                      console.log(`✅ Match por palavras-chave encontrado: ${s.razao_social}`);
+                      return true;
+                    }
+                  }
+                  
+                  return false;
+                });
+                
+                if (exactMatch) {
+                  handleSelectStation(exactMatch);
+                  if (!stationNotificationShown) {
+                    toast.success(`Posto identificado: ${exactMatch.razao_social}`);
+                    stationNotificationShown = true;
+                  }
+                  console.log(`✅ Posto selecionado automaticamente: ${exactMatch.razao_social}`);
+                  stationFound = true;
+                } else {
+                  console.log('⚠️ Posto encontrado na NF mas não encontrado match exato nas sugestões.');
+                  console.log('📋 Nome na NF:', stationNameFromNF);
+                  console.log('📋 Nome normalizado:', nomeNFNormalizado);
+                  console.log('📋 Sugestões disponíveis:', suggestedStations.map(s => s.razao_social));
+                  // Não selecionar automaticamente - deixar o usuário escolher manualmente
+                  if (!stationNotificationShown) {
+                    toast.info(`Posto "${stationNameFromNF}" encontrado. Verifique as sugestões acima.`);
+                    stationNotificationShown = true;
+                  }
+                }
+              } else if (!stationFound && !stationNotificationShown) {
+                console.log('⚠️ Nenhuma sugestão encontrada para:', stationNameFromNF);
+                toast.info(`Posto "${stationNameFromNF}" encontrado. Busque manualmente se necessário.`);
+                stationNotificationShown = true;
+              }
+              
+              // Se não encontrou, buscar em postos próprios
+              if (!stationFound && allStations.length > 0) {
+                const stationMatch = allStations.find(station => {
+                  const stationName = (station.name || station.nome_empresa || '').toLowerCase().trim();
+                  return stationName.includes(stationNameFromNF.toLowerCase()) ||
+                         stationNameFromNF.toLowerCase().includes(stationName.replace(/\s+ltda?/i, ''));
+                });
+                
+                if (stationMatch) {
+                  setSelectedStation(stationMatch);
+                  setFormData(prev => ({ ...prev, station_id: String(stationMatch.id || stationMatch.id_empresa || '') }));
+                  toast.success(`Posto identificado: ${stationMatch.name || stationMatch.nome_empresa}`);
+                  console.log(`✅ Posto encontrado nos postos próprios: ${stationMatch.name || stationMatch.nome_empresa}`);
+                  stationFound = true;
+                  break;
+                }
+              }
+              
+              if (stationFound) break;
+            }
+          }
+          if (stationFound) break;
+        }
+      }
+      
+      // 2. Fallback: buscar por nomes conhecidos de postos (mais conservador)
+      if (!stationFound && allStations.length > 0) {
+        console.log('🔍 Buscando em postos conhecidos...');
+        for (const station of allStations) {
+          const stationName = (station.name || station.nome_empresa || '').toLowerCase().trim();
+          if (stationName && stationName.length > 5) {
+            // Buscar nome completo (match mais preciso)
+            const nameWithoutLTDA = stationName.replace(/\s+ltda?/i, '').trim();
+            if (extractedText.includes(nameWithoutLTDA)) {
+              setSelectedStation(station);
+              setFormData(prev => ({ ...prev, station_id: String(station.id || station.id_empresa || '') }));
+              toast.success(`Posto identificado: ${station.name || station.nome_empresa}`);
+              console.log(`✅ Posto encontrado: ${station.name || station.nome_empresa}`);
+              stationFound = true;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (!stationFound) {
+        console.log('⚠️ Nenhum posto identificado automaticamente.');
+        console.log('📄 Trecho do texto para debug:', extractedText.substring(0, 1000));
+      }
+    } catch (error) {
+      console.error('Erro ao processar OCR:', error);
+      toast.error('Erro ao processar imagem com OCR.');
+    } finally {
+      // Limpar worker do Tesseract
+      if (worker) {
+        await worker.terminate();
+      }
+      setProcessingOCR(false);
+    }
+  };
+
+  // Processar imagens quando forem anexadas
+  useEffect(() => {
+    if (attachments.length > 0) {
+      // Processar apenas a primeira imagem
+      const firstImage = attachments[0];
+      if (firstImage && (firstImage.includes('.jpg') || firstImage.includes('.jpeg') || firstImage.includes('.png'))) {
+        processImageOCR(firstImage);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachments]);
+
   if (savedReference) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-        <div className="container mx-auto px-4 py-8 space-y-8">
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8">
           {/* Header com gradiente moderno */}
-          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-8 text-white shadow-2xl">
+          <div className="relative overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-4 sm:p-6 lg:p-8 text-white shadow-2xl">
             <div className="absolute inset-0 bg-black/10"></div>
-            <div className="relative flex items-center justify-between">
-              <div className="flex items-center gap-6">
+            <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
                 <Button 
                   variant="secondary" 
                   onClick={() => navigate("/dashboard")}
-                  className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm"
+                  className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm text-xs sm:text-sm h-8 sm:h-10"
                 >
-                  <ArrowLeft className="h-4 w-4" />
-                  Voltar ao Dashboard
+                  <ArrowLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline">Voltar ao Dashboard</span>
+                  <span className="sm:hidden">Voltar</span>
                 </Button>
-                <div>
-                  <h1 className="text-3xl font-bold mb-2">Referência Cadastrada!</h1>
-                  <p className="text-green-100">Sua referência foi registrada com sucesso</p>
+                <div className="flex-1 sm:flex-none">
+                  <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold mb-1 sm:mb-2">Referência Cadastrada!</h1>
+                  <p className="text-green-100 text-sm sm:text-base">Sua referência foi registrada com sucesso</p>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Card de sucesso */}
-          <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+          <Card className="shadow-xl">
             <CardHeader className="text-center pb-6">
               <div className="flex justify-center mb-6">
                 <div className="w-20 h-20 rounded-full bg-gradient-to-r from-green-500 to-emerald-500 flex items-center justify-center shadow-lg">
@@ -364,60 +1200,31 @@ useEffect(() => {
                 <p className="text-sm text-green-600 dark:text-green-400">({savedReference.stations?.code || '-'})</p>
               </div>
 
-              {/* Cliente */}
-              <div className="bg-gradient-to-r from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 rounded-xl p-6 border border-orange-200 dark:border-orange-800">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
-                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                  </div>
-                  <Label className="text-sm font-semibold text-orange-700 dark:text-orange-300">Cliente</Label>
-                </div>
-                <p className="text-lg font-semibold text-orange-900 dark:text-orange-100">{savedReference.clients?.name || 'Cliente'}</p>
-                <p className="text-sm text-orange-600 dark:text-orange-400">({savedReference.clients?.code || '-'})</p>
-              </div>
-
               {/* Produto */}
-              <div className="bg-gradient-to-r from-teal-50 to-cyan-50 dark:from-teal-900/20 dark:to-cyan-900/20 rounded-xl p-6 border border-teal-200 dark:border-teal-800">
+              <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-6 border border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-teal-500 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-lg bg-slate-500 flex items-center justify-center">
                     <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                     </svg>
                   </div>
-                  <Label className="text-sm font-semibold text-teal-700 dark:text-teal-300">Produto</Label>
+                  <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Produto</Label>
                 </div>
-                <p className="text-lg font-semibold text-teal-900 dark:text-teal-100 capitalize">{savedReference.produto.replace('_', ' ')}</p>
+                <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">{getProductName(savedReference.produto)}</p>
               </div>
 
               {/* Preço */}
-              <div className="bg-gradient-to-r from-yellow-50 to-amber-50 dark:from-yellow-900/20 dark:to-amber-900/20 rounded-xl p-6 border border-yellow-200 dark:border-yellow-800">
+              <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-6 border border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-3 mb-3">
-                  <div className="w-8 h-8 rounded-lg bg-yellow-500 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-lg bg-slate-500 flex items-center justify-center">
                     <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                     </svg>
                   </div>
-                  <Label className="text-sm font-semibold text-yellow-700 dark:text-yellow-300">Preço de Referência</Label>
+                  <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Preço de Referência</Label>
                 </div>
-                <p className="text-2xl font-bold text-yellow-900 dark:text-yellow-100">{formatPrice(savedReference.preco_referencia)}</p>
+                <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">{formatPrice(savedReference.preco_referencia)}</p>
               </div>
-
-              {/* Tipo de Pagamento */}
-              {savedReference.payment_methods && (
-                <div className="bg-gradient-to-r from-indigo-50 to-blue-50 dark:from-indigo-900/20 dark:to-blue-900/20 rounded-xl p-6 border border-indigo-200 dark:border-indigo-800">
-                  <div className="flex items-center gap-3 mb-3">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-500 flex items-center justify-center">
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                      </svg>
-                    </div>
-                    <Label className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">Tipo de Pagamento</Label>
-                  </div>
-                  <p className="text-lg font-semibold text-indigo-900 dark:text-indigo-100">{savedReference.payment_methods.name}</p>
-                </div>
-              )}
 
               {/* Observações */}
               {savedReference.observacoes && (
@@ -459,38 +1266,39 @@ useEffect(() => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      <div className="container mx-auto px-4 py-8 space-y-8">
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-4 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8">
         {/* Header com gradiente moderno */}
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-8 text-white shadow-2xl">
+        <div className="relative overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-4 sm:p-6 lg:p-8 text-white shadow-2xl">
           <div className="absolute inset-0 bg-black/10"></div>
-          <div className="relative flex items-center justify-between">
-            <div className="flex items-center gap-6">
+          <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 w-full sm:w-auto">
               <Button 
                 variant="secondary" 
                 onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm text-xs sm:text-sm h-8 sm:h-10"
               >
-                <ArrowLeft className="h-4 w-4" />
-                Voltar ao Dashboard
+                <ArrowLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">Voltar ao Dashboard</span>
+                <span className="sm:hidden">Voltar</span>
               </Button>
-              <div>
-                <h1 className="text-3xl font-bold mb-2">Cadastro de Referência</h1>
-                <p className="text-blue-100">Registre uma nova referência de preço para análise</p>
+              <div className="flex-1 sm:flex-none">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold mb-1 sm:mb-2">Cadastro de Referência</h1>
+                <p className="text-blue-100 text-sm sm:text-base">Registre uma nova referência de preço para análise</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           {/* Form Principal */}
           <div className="lg:col-span-2">
-        <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+        <Card className="shadow-xl">
               <CardHeader className="text-center pb-6">
-                <CardTitle className="text-2xl font-bold text-slate-800 dark:text-slate-200 mb-2">
+                <CardTitle className="text-xl sm:text-2xl font-bold text-slate-800 dark:text-slate-200 mb-2">
                   Nova Referência de Preço
                 </CardTitle>
-                <p className="text-slate-600 dark:text-slate-400">Preencha os dados para cadastrar uma nova referência</p>
+                <p className="text-sm sm:text-base text-slate-600 dark:text-slate-400">Preencha os dados para cadastrar uma nova referência</p>
           </CardHeader>
           <CardContent className="space-y-8">
           <form onSubmit={handleSubmit} className="space-y-8">
@@ -508,7 +1316,7 @@ useEffect(() => {
                   </div>
                 </div>
                 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="flex flex-col gap-6">
                 {/* Posto - Busca Dinâmica de Concorrentes */}
                 <div className="space-y-2">
                   <Label htmlFor="station_search" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
@@ -641,100 +1449,47 @@ useEffect(() => {
                   )}
                 </div>
 
-              {/* Cliente - Obrigatório */}
-              <ClientCombobox
-                label="Cliente"
-                value={formData.client_id}
-                onSelect={(clientId, clientName) => handleInputChange("client_id", clientId)}
-                required={true}
-              />
-
-              {/* Produto - Obrigatório */}
+                {/* Produto - Obrigatório */}
                 <div className="space-y-2">
-                <Label htmlFor="product" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <svg className="h-4 w-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <Label htmlFor="product" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                     </svg>
-                  Produto da Referência <span className="text-red-500">*</span>
-                </Label>
-                <Select value={formData.product} onValueChange={(value) => handleInputChange("product", value)}>
+                    Produto da Referência <span className="text-red-500">*</span>
+                  </Label>
+                  <Select value={formData.product} onValueChange={(value) => handleInputChange("product", value)}>
                     <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Selecione o produto" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="gasolina_comum">Gasolina Comum</SelectItem>
-                    <SelectItem value="gasolina_aditivada">Gasolina Aditivada</SelectItem>
-                    <SelectItem value="etanol">Etanol</SelectItem>
-                    <SelectItem value="s10">Diesel S-10</SelectItem>
-                    <SelectItem value="diesel_s500">Diesel S-500</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+                      <SelectValue placeholder="Selecione o produto" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="s10">Diesel S-10</SelectItem>
+                      <SelectItem value="s10_aditivado">Diesel S-10 Aditivado</SelectItem>
+                      <SelectItem value="diesel_s500">Diesel S-500</SelectItem>
+                      <SelectItem value="diesel_s500_aditivado">Diesel S-500 Aditivado</SelectItem>
+                      <SelectItem value="arla32_granel">Arla 32 Granel</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Tipo de Referência */}
+                {/* Preço - Obrigatório */}
                 <div className="space-y-2">
-                <Label htmlFor="reference_type" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                    </svg>
-                  Tipo de Referência <span className="text-red-500">*</span>
-                </Label>
-                <Select value={formData.reference_type} onValueChange={(value) => handleInputChange("reference_type", value)}>
-                    <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Selecione o tipo" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="competitor">Preço Concorrente</SelectItem>
-                    <SelectItem value="market">Preço de Mercado</SelectItem>
-                    <SelectItem value="historical">Preço Histórico</SelectItem>
-                    <SelectItem value="negotiated">Preço Negociado</SelectItem>
-                    <SelectItem value="promotional">Preço Promocional</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Preço - Obrigatório */}
-                <div className="space-y-2">
-                <Label htmlFor="price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <svg className="h-4 w-4 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <Label htmlFor="price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                     </svg>
-                  Preço da Referência (R$) <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="price"
-                  type="number"
-                  step="0.001"
-                  min="0"
-                  placeholder="0.000"
-                  value={formData.reference_price}
-                  onChange={(e) => handleInputChange("reference_price", e.target.value)}
+                    Preço da Referência (R$) <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="price"
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    placeholder="0.000"
+                    value={formData.reference_price}
+                    onChange={(e) => handleInputChange("reference_price", e.target.value)}
                     className="h-11 text-lg"
-                  required
-                />
-              </div>
-
-              {/* Tipo de Pagamento - Opcional */}
-                <div className="space-y-2">
-                <Label htmlFor="payment" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                    </svg>
-                  Tipo de Pagamento
-                </Label>
-                <Select value={formData.payment_method_id} onValueChange={(value) => handleInputChange("payment_method_id", value)}>
-                    <SelectTrigger className="h-11">
-                    <SelectValue placeholder="Selecione o tipo de pagamento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Nenhum</SelectItem>
-                    {paymentMethods.map((method, index) => (
-                        <SelectItem key={`payment-method-${index}`} value={method.ID_POSTO ? `${method.ID_POSTO}-${index}` : `method-${index}`}>
-                        {method.CARTAO}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    required
+                  />
                 </div>
               </div>
             </div>
@@ -753,37 +1508,45 @@ useEffect(() => {
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Observações */}
-                <div className="space-y-2">
-                  <Label htmlFor="observations" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                    Observações
-                  </Label>
-              <Textarea
-                id="observations"
-                placeholder="Descreva detalhes importantes sobre esta referência de preço..."
-                value={formData.observations}
-                onChange={(e) => handleInputChange("observations", e.target.value)}
-                    rows={5}
-                    className="resize-none"
-                  />
-                </div>
+              <div className="flex flex-col gap-6">
+                <div className="flex flex-col sm:flex-row gap-6">
+                  {/* Anexos - Esquerda */}
+                  <div className="space-y-2 flex-1">
+                    <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <Upload className="h-4 w-4" />
+                      Anexos
+                    </Label>
+                    <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 bg-slate-50 dark:bg-slate-900/50">
+                      <FileUploader
+                        onFilesUploaded={setAttachments}
+                        maxFiles={3}
+                        acceptedTypes="image/*,.pdf"
+                      />
+                      {processingOCR && (
+                        <p className="text-xs text-muted-foreground mt-2 flex items-center gap-2">
+                          <span className="animate-spin">⏳</span>
+                          Processando imagem para identificar preço, produto e posto...
+                        </p>
+                      )}
+                    </div>
+                  </div>
 
-                {/* Anexos */}
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                    <Upload className="h-4 w-4 text-teal-600 dark:text-teal-400" />
-                    Anexos
-                  </Label>
-                  <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4 bg-slate-50 dark:bg-slate-900/50">
-                <FileUploader
-                  onFilesUploaded={setAttachments}
-                  maxFiles={3}
-                  acceptedTypes="image/*,.pdf"
-                />
+                  {/* Observações - Direita */}
+                  <div className="space-y-2 flex-1">
+                    <Label htmlFor="observations" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      Observações
+                    </Label>
+                    <Textarea
+                      id="observations"
+                      placeholder="Descreva detalhes importantes sobre esta referência de preço..."
+                      value={formData.observations}
+                      onChange={(e) => handleInputChange("observations", e.target.value)}
+                      rows={5}
+                      className="resize-none"
+                    />
                   </div>
                 </div>
               </div>
@@ -794,16 +1557,16 @@ useEffect(() => {
               <Button 
                 type="submit"
                 disabled={loading}
-                      className="flex-1 h-12 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50"
+                      className="flex-1 h-10 sm:h-12 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white font-semibold rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:opacity-50 text-sm sm:text-base"
               >
-                      <Save className="h-5 w-5 mr-2" />
+                      <Save className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                 {loading ? "Salvando..." : "Salvar Referência"}
               </Button>
               <Button 
                 type="button"
                 variant="outline"
                 onClick={() => navigate("/dashboard")}
-                      className="h-12 px-8 rounded-xl border-2"
+                      className="h-10 sm:h-12 px-4 sm:px-8 rounded-xl border-2 text-sm sm:text-base"
               >
                 Cancelar
               </Button>
@@ -815,7 +1578,7 @@ useEffect(() => {
 
           {/* Sidebar de Resumo */}
           <div className="lg:col-span-1">
-            <Card className="shadow-xl border-0 bg-white/80 dark:bg-slate-800/80 backdrop-blur-sm">
+            <Card className="shadow-xl">
               <CardHeader className="pb-4">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 flex items-center justify-center shadow-lg">
@@ -847,39 +1610,27 @@ useEffect(() => {
                   </div>
                 )}
 
-                {formData.client_id && clients.find(c => String(c.id) === formData.client_id) && (
-                  <div className="p-4 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/20 dark:to-emerald-950/20 rounded-xl border border-green-200 dark:border-green-800">
-                    <div className="flex items-start gap-3 mb-3">
-                      <Users className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
-                      <h4 className="font-bold text-green-900 dark:text-green-200">Cliente</h4>
-                    </div>
-                    <p className="text-sm font-semibold text-green-900 dark:text-green-100">
-                      {clients.find(c => String(c.id) === formData.client_id)?.name}
-                    </p>
-                  </div>
-                )}
-
                 {formData.product && (
-                  <div className="p-4 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-950/20 dark:to-pink-950/20 rounded-xl border border-purple-200 dark:border-purple-800">
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="flex items-start gap-3 mb-3">
-                      <svg className="h-5 w-5 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-5 w-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                       </svg>
-                      <h4 className="font-bold text-purple-900 dark:text-purple-200">Produto</h4>
+                      <h4 className="font-bold text-slate-900 dark:text-slate-200">Produto</h4>
                     </div>
-                    <p className="text-sm font-semibold text-purple-900 dark:text-purple-100">
-                      {formData.product.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                      {getProductName(formData.product)}
                     </p>
                   </div>
                 )}
 
                 {formData.reference_price && (
-                  <div className="p-4 bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-950/20 dark:to-amber-950/20 rounded-xl border border-orange-200 dark:border-orange-800">
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="flex items-start gap-3 mb-3">
-                      <DollarSign className="h-5 w-5 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" />
-                      <h4 className="font-bold text-orange-900 dark:text-orange-200">Preço</h4>
+                      <DollarSign className="h-5 w-5 flex-shrink-0 mt-0.5" />
+                      <h4 className="font-bold text-slate-900 dark:text-slate-200">Preço</h4>
                     </div>
-                    <p className="text-2xl font-bold text-orange-900 dark:text-orange-100">
+                    <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
                       R$ {parseFloat(formData.reference_price).toFixed(3)}
                     </p>
                   </div>

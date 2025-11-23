@@ -15,3 +15,4 @@ COMMENT ON COLUMN public.price_suggestions.batch_name IS 'Nome do lote - opciona
 
 
 
+

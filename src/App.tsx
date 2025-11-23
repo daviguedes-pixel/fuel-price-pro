@@ -75,8 +75,6 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 const App = () => {
-  console.log('🎬 App renderizando...');
-  
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

@@ -64,7 +64,7 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
   return (
     <div className="fixed inset-0 z-50 bg-black/50 dark:bg-black/80" onClick={onClose}>
       <div 
-        className="fixed right-4 top-20 w-96 max-h-[600px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg"
+        className="fixed right-0 sm:right-4 top-12 sm:top-20 w-full sm:w-96 max-w-full sm:max-w-none max-h-[calc(100vh-3rem)] sm:max-h-[600px] bg-white dark:bg-slate-900 border-0 sm:border border-slate-200 dark:border-slate-700 rounded-none sm:rounded-lg shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-4 border-b border-slate-200 dark:border-slate-700">

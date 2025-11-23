@@ -17,7 +17,6 @@ export const DashboardFilters = ({ onFilter }: DashboardFiltersProps) => {
   });
 
   const handleFilter = (filters: { searchTerm: string; status: string; product: string }) => {
-    console.log('Applying filters:', filters);
     
     const newFilters = { ...filters };
     setFilters(newFilters);

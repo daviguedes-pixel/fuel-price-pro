@@ -198,11 +198,11 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   const defaultZoom = 12;
 
   return (
-    <div className="h-96 w-full rounded-lg overflow-hidden">
+    <div className="h-96 w-full rounded-lg overflow-hidden relative z-0">
       <MapContainer
         center={defaultCenter}
         zoom={defaultZoom}
-        style={{ height: '100%', width: '100%' }}
+        style={{ height: '100%', width: '100%', zIndex: 1 }}
         scrollWheelZoom={true}
       >
         <TileLayer

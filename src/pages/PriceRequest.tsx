@@ -749,11 +749,10 @@ export default function PriceRequest() {
         const cleanedId = rawId.replace(/-\d+\.\d+$/, '');
         
         const productMap: Record<string, string> = {
-          gasolina_comum: 'Gasolina Comum',
-          gasolina_aditivada: 'Aditivada',
-          etanol: 'Etanol',
-          diesel_comum: 'S500',
           s10: 'S10',
+          s10_aditivado: 'S10 Aditivado',
+          diesel_s500: 'S500',
+          diesel_s500_aditivado: 'S500 Aditivado',
           arla32_granel: 'ARLA'
         };
         const produtoBusca = productMap[formData.product] || formData.product;
@@ -951,11 +950,10 @@ export default function PriceRequest() {
         
         // Mapear produto para termos usados na base de cotação
         const productMap: Record<string, string> = {
-          gasolina_comum: 'Gasolina Comum',
-          gasolina_aditivada: 'Aditivada',
-          etanol: 'Etanol',
-          diesel_comum: 'S500',
           s10: 'S10',
+          s10_aditivado: 'S10 Aditivado',
+          diesel_s500: 'S500',
+          diesel_s500_aditivado: 'S500 Aditivado',
           arla32_granel: 'ARLA'
         };
         const produtoBusca = productMap[formData.product] || formData.product;
@@ -3006,7 +3004,7 @@ export default function PriceRequest() {
                 {/* Produto */}
                   <div className="space-y-2">
                     <Label htmlFor="product" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                       </svg>
                       Produto <span className="text-red-500">*</span>
@@ -3016,12 +3014,11 @@ export default function PriceRequest() {
                         <SelectValue placeholder="Selecione o produto" />
                       </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gasolina_comum">Gasolina Comum</SelectItem>
-                      <SelectItem value="gasolina_aditivada">Gasolina Aditivada</SelectItem>
-                      <SelectItem value="etanol">Etanol</SelectItem>
-                      <SelectItem value="diesel_comum">Diesel Comum</SelectItem>
-                        <SelectItem value="s10">Diesel S-10</SelectItem>
-                        <SelectItem value="arla32_granel">ARLA 32 Granel</SelectItem>
+                      <SelectItem value="s10">Diesel S-10</SelectItem>
+                      <SelectItem value="s10_aditivado">Diesel S-10 Aditivado</SelectItem>
+                      <SelectItem value="diesel_s500">Diesel S-500</SelectItem>
+                      <SelectItem value="diesel_s500_aditivado">Diesel S-500 Aditivado</SelectItem>
+                      <SelectItem value="arla32_granel">Arla 32 Granel</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -3029,7 +3026,7 @@ export default function PriceRequest() {
                   {/* Tipo de Pagamento */}
                   <div className="space-y-2">
                     <Label htmlFor="payment_method" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                       </svg>
                       Tipo de Pagamento
@@ -3059,7 +3056,7 @@ export default function PriceRequest() {
                   {/* Preço Atual */}
                   <div className="space-y-2">
                     <Label htmlFor="current_price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                       </svg>
                       Preço Atual
@@ -3080,7 +3077,7 @@ export default function PriceRequest() {
                   {/* Preço Sugerido */}
                   <div className="space-y-2">
                     <Label htmlFor="suggested_price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                       </svg>
                       Preço Sugerido <span className="text-red-500">*</span>
@@ -3145,7 +3142,7 @@ export default function PriceRequest() {
                   {/* Volume Feito */}
                   <div className="space-y-2">
                     <Label htmlFor="volume_made" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                       </svg>
                       Volume Feito (m³)
@@ -3165,7 +3162,7 @@ export default function PriceRequest() {
                   {/* Volume Projetado */}
                   <div className="space-y-2">
                     <Label htmlFor="volume_projected" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-teal-600 dark:text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                       </svg>
                       Volume Projetado (m³)
@@ -3201,7 +3198,7 @@ export default function PriceRequest() {
                   {/* Documento Anexável */}
                   <div className="space-y-2">
                     <Label htmlFor="reference_document" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                       </svg>
                       Documento de Referência (Opcional)
@@ -3217,7 +3214,7 @@ export default function PriceRequest() {
                   {/* Observações */}
                   <div className="space-y-2">
                     <Label htmlFor="observations" className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-                      <svg className="h-4 w-4 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                       </svg>
                       Observações
@@ -3947,7 +3944,7 @@ export default function PriceRequest() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-slate-600 dark:text-slate-400">Pendentes</p>
-                        <p className="text-2xl font-bold text-yellow-600">{myRequests.filter(r => r.type !== 'batch' && r.status === 'pending').length}</p>
+                        <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{myRequests.filter(r => r.type !== 'batch' && r.status === 'pending').length}</p>
                       </div>
                       <Clock className="h-6 w-6 text-yellow-500" />
                     </div>
@@ -3959,7 +3956,7 @@ export default function PriceRequest() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-slate-600 dark:text-slate-400">Aprovadas</p>
-                        <p className="text-2xl font-bold text-green-600">{myRequests.filter(r => r.type !== 'batch' && r.status === 'approved').length}</p>
+                        <p className="text-2xl font-bold text-green-600 dark:text-green-400">{myRequests.filter(r => r.type !== 'batch' && r.status === 'approved').length}</p>
                       </div>
                       <Check className="h-6 w-6 text-green-500" />
                     </div>
@@ -3971,7 +3968,7 @@ export default function PriceRequest() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm text-slate-600 dark:text-slate-400">Rejeitadas</p>
-                        <p className="text-2xl font-bold text-red-600">{myRequests.filter(r => r.type !== 'batch' && r.status === 'rejected').length}</p>
+                        <p className="text-2xl font-bold text-red-600 dark:text-red-400">{myRequests.filter(r => r.type !== 'batch' && r.status === 'rejected').length}</p>
                       </div>
                       <X className="h-6 w-6 text-red-500" />
                     </div>
