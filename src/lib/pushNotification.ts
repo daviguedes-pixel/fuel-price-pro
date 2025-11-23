@@ -93,6 +93,8 @@ async function sendPushToToken(
     console.log('Payload:', payload);
 
     // Opção 1: Usar Edge Function do Supabase (recomendado)
+    console.log('🔗 URL da Edge Function:', `${supabase.supabaseUrl}/functions/v1/send-push-notification`);
+    
     const { data, error } = await supabase.functions.invoke('send-push-notification', {
       body: {
         token: fcmToken,
@@ -107,6 +109,10 @@ async function sendPushToToken(
           url: payload.url || '/dashboard',
           tag: payload.tag || 'notification',
         }
+      },
+      // Adicionar headers explícitos para garantir autenticação
+      headers: {
+        'Content-Type': 'application/json',
       }
     });
 
