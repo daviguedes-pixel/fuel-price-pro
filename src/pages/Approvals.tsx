@@ -1643,6 +1643,14 @@ export default function Approvals() {
           });
           
           const { createNotification } = await import('@/lib/utils');
+          
+          // Garantir que suggestion_id está presente (pode ser obrigatório)
+          const notificationData: any = {
+            suggestion_id: suggestionId, // SEMPRE incluir suggestion_id
+            approved_by: approverName,
+            url: '/approvals'
+          };
+          
           const result = await createNotification(
             requesterUserId,
             newStatus === 'approved' ? 'price_approved' : 'price_rejected',
@@ -1650,11 +1658,7 @@ export default function Approvals() {
             newStatus === 'approved' 
               ? `Sua solicitação de preço foi aprovada por ${approverName}!` 
               : `Sua solicitação de preço foi rejeitada por ${approverName}.`,
-            {
-              suggestion_id: suggestionId,
-              approved_by: approverName,
-              url: '/approvals'
-            }
+            notificationData
           );
           
           console.log('✅ Notificação criada com sucesso:', {

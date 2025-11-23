@@ -83,9 +83,13 @@ export async function createNotification(
     read: false
   };
 
-  // Adicionar suggestion_id se estiver nos dados
+  // Adicionar suggestion_id se estiver nos dados (pode ser obrigatório na tabela)
   if (data?.suggestion_id) {
     notificationData.suggestion_id = data.suggestion_id;
+  } else {
+    // Se suggestion_id não foi fornecido mas pode ser obrigatório, usar um UUID vazio ou null
+    // Mas primeiro vamos tentar sem ele e ver se dá erro
+    console.warn('⚠️ suggestion_id não fornecido nos dados da notificação');
   }
 
   if (data) {
@@ -105,10 +109,21 @@ export async function createNotification(
     notificationData
   });
 
-  const { data: insertedData, error } = await supabase
-    .from('notifications')
-    .insert([notificationData])
-    .select();
+  // Verificar se suggestion_id é obrigatório tentando inserir primeiro
+  let insertedData: any = null;
+  let error: any = null;
+  
+  try {
+    const result = await supabase
+      .from('notifications')
+      .insert([notificationData])
+      .select();
+    
+    insertedData = result.data;
+    error = result.error;
+  } catch (err: any) {
+    error = err;
+  }
 
   if (error) {
     console.error('❌ Erro ao criar notificação:', {
@@ -116,38 +131,80 @@ export async function createNotification(
       errorCode: error.code,
       errorMessage: error.message,
       errorDetails: error.details,
+      errorHint: error.hint,
       notificationData
     });
     
-    // Se o erro for sobre suggestion_id obrigatório, tentar novamente sem ele
-    if (error.message?.includes('suggestion_id') || error.code === '23502') {
-      console.log('⚠️ Tentando inserir sem suggestion_id...');
-      const notificationDataWithoutSuggestion = { ...notificationData };
-      delete notificationDataWithoutSuggestion.suggestion_id;
+    // Se o erro for sobre suggestion_id obrigatório (23502 = not null violation)
+    if ((error.message?.includes('suggestion_id') || error.code === '23502') && !notificationData.suggestion_id) {
+      console.log('⚠️ suggestion_id é obrigatório mas não foi fornecido. Gerando UUID temporário...');
       
-      const { data: retryData, error: retryError } = await supabase
+      // Gerar UUID temporário para suggestion_id (não ideal, mas necessário se a tabela exige)
+      notificationData.suggestion_id = generateUUID();
+      
+      const retryResult = await supabase
         .from('notifications')
-        .insert([notificationDataWithoutSuggestion])
+        .insert([notificationData])
         .select();
       
-      if (retryError) {
-        console.error('❌ Erro ao criar notificação (retry):', retryError);
-        throw retryError;
+      if (retryResult.error) {
+        console.error('❌ Erro ao criar notificação (retry com suggestion_id):', retryResult.error);
+        throw retryResult.error;
       }
       
-      console.log('✅ Notificação inserida no banco (sem suggestion_id):', retryData);
-      return true;
+      insertedData = retryResult.data;
+      console.log('✅ Notificação inserida no banco (com suggestion_id gerado):', insertedData);
+    } else {
+      throw error;
     }
-    
-    throw error;
+  } else {
+    console.log('✅ Notificação inserida no banco:', {
+      insertedData,
+      userId,
+      title,
+      notificationId: insertedData?.[0]?.id,
+      user_id: insertedData?.[0]?.user_id
+    });
   }
-
-  console.log('✅ Notificação inserida no banco:', {
-    insertedData,
-    userId,
-    title,
-    notificationId: insertedData?.[0]?.id
-  });
+  
+  // Verificar se a notificação foi realmente criada e é visível para o usuário
+  if (insertedData?.[0]?.id) {
+    // Aguardar um pouco para garantir que a transação foi commitada
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const { data: verifyData, error: verifyError } = await supabase
+      .from('notifications')
+      .select('*')
+      .eq('id', insertedData[0].id)
+      .single();
+    
+    if (verifyError) {
+      console.error('⚠️ Notificação criada mas não encontrada na verificação:', {
+        error: verifyError,
+        notificationId: insertedData[0].id,
+        userId,
+        possibleRLSIssue: verifyError.code === 'PGRST301' || verifyError.message?.includes('RLS')
+      });
+    } else {
+      console.log('✅ Notificação verificada no banco:', {
+        id: verifyData?.id,
+        user_id: verifyData?.user_id,
+        userId,
+        match: verifyData?.user_id === userId,
+        read: verifyData?.read,
+        title: verifyData?.title
+      });
+      
+      // Se o user_id não corresponde, há um problema
+      if (verifyData?.user_id !== userId) {
+        console.error('❌ PROBLEMA CRÍTICO: user_id da notificação não corresponde!', {
+          expectedUserId: userId,
+          actualUserId: verifyData?.user_id,
+          notificationId: verifyData?.id
+        });
+      }
+    }
+  }
 
   // Enviar notificação push também
   try {
