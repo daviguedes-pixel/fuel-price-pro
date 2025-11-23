@@ -170,15 +170,35 @@ export function PushNotificationSetup() {
         console.error('Erro completo:', edgeError);
         console.error('═══════════════════════════════════════════════════════');
         console.error('');
+        
+        // Se for 404, mostrar mensagem específica sobre deploy
+        if (edgeError.status === 404 || edgeError.message?.includes('not found') || edgeError.message?.includes('404')) {
+          console.error('🔴 PROBLEMA IDENTIFICADO: Edge Function não está deployada!');
+          console.error('');
+          console.error('📋 SOLUÇÃO RÁPIDA:');
+          console.error('   1. Acesse: https://supabase.com/dashboard');
+          console.error('   2. Vá em Edge Functions');
+          console.error('   3. Crie/edite a função: send-push-notification');
+          console.error('   4. Cole o código de: supabase/functions/send-push-notification/index.ts');
+          console.error('   5. Configure os Secrets (FIREBASE_SERVICE_ACCOUNT_JSON ou FIREBASE_ACCESS_TOKEN)');
+          console.error('   6. Clique em Deploy');
+          console.error('');
+          console.error('📖 Guia completo: docs/DEPLOY_EDGE_FUNCTION_RAPIDO.md');
+          console.error('');
+        }
+        
         console.error('💡 Possíveis causas:');
-        console.error('   1. Service Account JSON não configurado');
+        console.error('   1. Edge Function não deployada (404)');
+        console.error('      → Veja instruções acima');
+        console.error('');
+        console.error('   2. Service Account JSON não configurado');
         console.error('      → Supabase Dashboard > Edge Functions > Settings > Secrets');
         console.error('      → Deve ter FIREBASE_SERVICE_ACCOUNT_JSON');
         console.error('');
-        console.error('   2. Access Token expirado (se usando FIREBASE_ACCESS_TOKEN)');
+        console.error('   3. Access Token expirado (se usando FIREBASE_ACCESS_TOKEN)');
         console.error('      → Gere um novo token');
         console.error('');
-        console.error('   3. Edge Function com erro');
+        console.error('   4. Edge Function com erro');
         console.error('      → Verifique logs: Edge Functions > send-push-notification > Logs');
         console.error('');
         
