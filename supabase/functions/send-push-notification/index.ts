@@ -21,20 +21,44 @@ async function getAccessToken(): Promise<string> {
   }
 
   try {
-    // Obter Service Account JSON
+    // Obter Service Account JSON (PRIORIDADE 1)
     const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT_JSON');
+    
+    console.log('🔍 Verificando configuração...');
+    console.log('   FIREBASE_SERVICE_ACCOUNT_JSON:', serviceAccountJson ? `✅ Configurado (${serviceAccountJson.length} caracteres)` : '❌ Não configurado');
     
     if (!serviceAccountJson) {
       // Fallback: tentar usar Access Token direto (se configurado)
       const directToken = Deno.env.get('FIREBASE_ACCESS_TOKEN');
+      console.log('   FIREBASE_ACCESS_TOKEN:', directToken ? `⚠️ Configurado (usando como fallback)` : '❌ Não configurado');
+      
       if (directToken) {
         console.log('⚠️ Usando FIREBASE_ACCESS_TOKEN direto (pode expirar)');
+        console.log('💡 RECOMENDAÇÃO: Configure FIREBASE_SERVICE_ACCOUNT_JSON para renovação automática');
         return directToken;
       }
       throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON não configurado');
     }
 
-    const serviceAccount = JSON.parse(serviceAccountJson);
+    // Validar se o JSON é válido
+    let serviceAccount: any;
+    try {
+      serviceAccount = JSON.parse(serviceAccountJson);
+      console.log('✅ Service Account JSON parseado com sucesso');
+      console.log('   Client Email:', serviceAccount.client_email || 'não encontrado');
+      console.log('   Project ID:', serviceAccount.project_id || 'não encontrado');
+    } catch (parseError: any) {
+      console.error('❌ Erro ao fazer parse do Service Account JSON:', parseError.message);
+      throw new Error(`Service Account JSON inválido: ${parseError.message}`);
+    }
+
+    // Validar campos obrigatórios
+    if (!serviceAccount.client_email || !serviceAccount.private_key) {
+      console.error('❌ Service Account JSON está incompleto');
+      console.error('   Campos obrigatórios: client_email, private_key');
+      throw new Error('Service Account JSON está incompleto (faltam client_email ou private_key)');
+    }
+
     console.log('🔑 Gerando novo Access Token do Service Account...');
 
     // Criar JWT para autenticação
