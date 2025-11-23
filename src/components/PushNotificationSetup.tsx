@@ -188,18 +188,26 @@ export function PushNotificationSetup() {
         }
         
         console.error('💡 Possíveis causas:');
-        console.error('   1. Edge Function não deployada (404)');
-        console.error('      → Veja instruções acima');
+        console.error('   1. Edge Function não deployada corretamente (404)');
+        console.error('      → Acesse: Supabase Dashboard > Edge Functions > send-push-notification');
+        console.error('      → Clique em "Deploy" para fazer um novo deploy');
+        console.error('      → Teste diretamente no Dashboard usando "Invoke"');
         console.error('');
-        console.error('   2. Service Account JSON não configurado');
+        console.error('   2. Access Token expirado (se usando FIREBASE_ACCESS_TOKEN)');
+        console.error('      → O Access Token expira em 1 hora!');
+        console.error('      → Gere um novo token e atualize no Dashboard');
+        console.error('      → OU use FIREBASE_SERVICE_ACCOUNT_JSON (não expira)');
+        console.error('');
+        console.error('   3. Service Account JSON não configurado');
         console.error('      → Supabase Dashboard > Edge Functions > Settings > Secrets');
-        console.error('      → Deve ter FIREBASE_SERVICE_ACCOUNT_JSON');
+        console.error('      → Configure FIREBASE_SERVICE_ACCOUNT_JSON (recomendado)');
+        console.error('      → OU configure FIREBASE_ACCESS_TOKEN (expira em 1 hora)');
         console.error('');
-        console.error('   3. Access Token expirado (se usando FIREBASE_ACCESS_TOKEN)');
-        console.error('      → Gere um novo token');
+        console.error('   4. Verifique os logs da Edge Function');
+        console.error('      → Edge Functions > send-push-notification > Logs');
+        console.error('      → Veja se há erros específicos');
         console.error('');
-        console.error('   4. Edge Function com erro');
-        console.error('      → Verifique logs: Edge Functions > send-push-notification > Logs');
+        console.error('📚 Guia completo: docs/RESOLVER_404_EDGE_FUNCTION.md');
         console.error('');
         
         toast.error('Erro ao chamar Edge Function', {
