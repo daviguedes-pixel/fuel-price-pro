@@ -1671,6 +1671,10 @@ export default function Approvals() {
           window.dispatchEvent(new CustomEvent('notification-created', { 
             detail: { userId: requesterUserId } 
           }));
+          
+          // Também disparar via localStorage como fallback
+          localStorage.setItem('notification-refresh', Date.now().toString());
+          localStorage.removeItem('notification-refresh');
         } else {
           console.warn('⚠️ Não foi possível encontrar user_id do solicitante:', {
             requested_by: currentSuggestion.requested_by,

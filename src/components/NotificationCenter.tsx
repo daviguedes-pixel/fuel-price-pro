@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect as ReactUseEffect } from "react";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,8 +51,16 @@ const getNotificationColor = (type: string, read: boolean) => {
 };
 
 export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps) {
-  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification } = useNotifications();
+  const { notifications, unreadCount, markAsRead, markAllAsRead, deleteNotification, refresh } = useNotifications();
   const navigate = useNavigate();
+  
+  // Forçar refresh quando o modal abrir
+  ReactUseEffect(() => {
+    if (isOpen) {
+      console.log('🔔 NotificationCenter aberto, forçando refresh...');
+      refresh();
+    }
+  }, [isOpen, refresh]);
 
   const handleNotificationClick = (notification: any) => {
     // Navegar para a página de aprovações

@@ -95,13 +95,27 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
     // Escutar evento customizado para refresh quando notificação for criada
     const handleNotificationCreated = () => {
       console.log('🔄 Evento de notificação criada recebido, recarregando...');
-      loadNotifications();
+      // Aguardar um pouco antes de recarregar para garantir que a transação foi commitada
+      setTimeout(() => {
+        loadNotifications();
+      }, 500);
     };
     
     window.addEventListener('notification-created', handleNotificationCreated);
     
+    // Também escutar mudanças no storage (fallback)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'notification-refresh') {
+        console.log('🔄 Storage change detectado, recarregando notificações...');
+        loadNotifications();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    
     return () => {
       window.removeEventListener('notification-created', handleNotificationCreated);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [loadNotifications]);
 
