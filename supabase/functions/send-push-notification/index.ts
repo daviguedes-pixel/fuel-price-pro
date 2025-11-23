@@ -176,6 +176,14 @@ interface PushRequest {
 }
 
 serve(async (req) => {
+  // Log inicial para debug
+  console.log('📥 Requisição recebida:', req.method, req.url);
+  console.log('🔍 Verificando secrets disponíveis...');
+  const hasServiceAccount = !!Deno.env.get('FIREBASE_SERVICE_ACCOUNT_JSON');
+  const hasAccessToken = !!Deno.env.get('FIREBASE_ACCESS_TOKEN');
+  console.log('   FIREBASE_SERVICE_ACCOUNT_JSON:', hasServiceAccount ? '✅' : '❌');
+  console.log('   FIREBASE_ACCESS_TOKEN:', hasAccessToken ? '✅' : '❌');
+  
   // Handle CORS
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
