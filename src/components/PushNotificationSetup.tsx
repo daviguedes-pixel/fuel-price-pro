@@ -163,21 +163,44 @@ export function PushNotificationSetup() {
         }
       });
       
-      const { data: result, error: edgeError } = await supabase.functions.invoke('send-push-notification', {
-        body: {
-          token: token.trim(), // Garantir que não há espaços
-          notification: {
-            title: '🧪 Teste Automático',
-            body: 'Esta notificação foi enviada automaticamente via Edge Function!'
-          },
-          data: {
-            url: '/dashboard',
-            tag: 'test-auto'
-          }
+      const payload = {
+        token: token.trim(), // Garantir que não há espaços
+        notification: {
+          title: '🧪 Teste Automático',
+          body: 'Esta notificação foi enviada automaticamente via Edge Function!'
+        },
+        data: {
+          url: '/dashboard',
+          tag: 'test-auto'
         }
+      };
+      
+      console.log('📤 Enviando payload para Edge Function:', {
+        ...payload,
+        token: payload.token.substring(0, 30) + '...' // Não logar token completo por segurança
+      });
+      
+      const { data: result, error: edgeError } = await supabase.functions.invoke('send-push-notification', {
+        body: payload
       });
 
       if (edgeError) {
+        console.error('❌ Erro retornado pela Edge Function:', edgeError);
+        console.error('   Status:', edgeError.status);
+        console.error('   Message:', edgeError.message);
+        console.error('   Context:', edgeError.context);
+        
+        // Se o erro contém detalhes do token, mostrar
+        if (edgeError.context?.body) {
+          try {
+            const errorBody = typeof edgeError.context.body === 'string' 
+              ? JSON.parse(edgeError.context.body) 
+              : edgeError.context.body;
+            console.error('   Detalhes do erro:', errorBody);
+          } catch (e) {
+            console.error('   Response body:', edgeError.context.body);
+          }
+        }
         console.error('');
         console.error('═══════════════════════════════════════════════════════');
         console.error('❌❌❌ ERRO AO CHAMAR EDGE FUNCTION ❌❌❌');
@@ -186,6 +209,10 @@ export function PushNotificationSetup() {
         console.error('Status:', edgeError.status);
         console.error('Context:', edgeError.context);
         console.error('Erro completo:', edgeError);
+        console.error('');
+        console.error('💡 IMPORTANTE: Os logs da Edge Function aparecem no Supabase Dashboard!');
+        console.error('   Acesse: Edge Functions > send-push-notification > Logs');
+        console.error('   Lá você verá os logs detalhados do que a função recebeu');
         console.error('═══════════════════════════════════════════════════════');
         console.error('');
         
