@@ -1600,21 +1600,57 @@ export default function Approvals() {
       if (updateError) throw updateError;
 
       // Criar notificação usando função helper (que também envia push)
+      // IMPORTANTE: Converter requested_by (que pode ser email) para user_id
       try {
-        const { createNotification } = await import('@/lib/utils');
-        await createNotification(
-          currentSuggestion.requested_by,
-          newStatus === 'approved' ? 'price_approved' : 'price_rejected',
-          newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
-          newStatus === 'approved' 
-            ? `Sua solicitação de preço foi aprovada por ${approverName}!` 
-            : `Sua solicitação de preço foi rejeitada por ${approverName}.`,
-          {
-            suggestion_id: suggestionId,
-            approved_by: approverName,
-            url: '/approvals'
+        let requesterUserId: string | null = null;
+        
+        // Tentar buscar user_id do solicitante
+        if (currentSuggestion.requested_by) {
+          // Verificar se já é um UUID (user_id)
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(currentSuggestion.requested_by)) {
+            // Já é um user_id
+            requesterUserId = currentSuggestion.requested_by;
+          } else {
+            // É um email, buscar user_id correspondente
+            const { data: userProfile } = await supabase
+              .from('user_profiles')
+              .select('user_id')
+              .eq('email', currentSuggestion.requested_by)
+              .maybeSingle();
+            
+            if (userProfile?.user_id) {
+              requesterUserId = userProfile.user_id;
+            } else {
+              // Tentar buscar direto na tabela auth.users
+              const { data: authUser } = await supabase.auth.admin?.getUserByEmail(currentSuggestion.requested_by);
+              if (authUser?.user?.id) {
+                requesterUserId = authUser.user.id;
+              }
+            }
           }
-        );
+        }
+        
+        // Criar notificação sempre que encontrar o user_id (mesmo se for o próprio usuário)
+        if (requesterUserId) {
+          const { createNotification } = await import('@/lib/utils');
+          await createNotification(
+            requesterUserId,
+            newStatus === 'approved' ? 'price_approved' : 'price_rejected',
+            newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
+            newStatus === 'approved' 
+              ? `Sua solicitação de preço foi aprovada por ${approverName}!` 
+              : `Sua solicitação de preço foi rejeitada por ${approverName}.`,
+            {
+              suggestion_id: suggestionId,
+              approved_by: approverName,
+              url: '/approvals'
+            }
+          );
+          console.log('✅ Notificação criada para:', requesterUserId, requesterUserId === user?.id ? '(próprio usuário)' : '');
+        } else {
+          console.warn('⚠️ Não foi possível encontrar user_id do solicitante:', currentSuggestion.requested_by);
+        }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
         // Não bloquear a aprovação se a notificação falhar
@@ -2409,22 +2445,66 @@ export default function Approvals() {
       if (updateError) throw updateError;
 
       // Criar notificação manualmente
+      // IMPORTANTE: Converter requested_by (que pode ser email) para user_id
       try {
-        const notificationData = {
-          user_id: currentSuggestion.requested_by,
-          suggestion_id: suggestionId,
-          type: newStatus === 'pending' ? 'rejected' : newStatus,
-          title: 'Preço Rejeitado',
-          message: 'Sua solicitação de preço foi rejeitada.'
-        };
+        let requesterUserId: string | null = null;
         
-        const { error: notifError } = await supabase
-          .from('notifications')
-          .insert([notificationData])
-          .select();
+        // Tentar buscar user_id do solicitante
+        if (currentSuggestion.requested_by) {
+          // Verificar se já é um UUID (user_id)
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(currentSuggestion.requested_by)) {
+            // Já é um user_id
+            requesterUserId = currentSuggestion.requested_by;
+          } else {
+            // É um email, buscar user_id correspondente
+            const { data: userProfile } = await supabase
+              .from('user_profiles')
+              .select('user_id')
+              .eq('email', currentSuggestion.requested_by)
+              .maybeSingle();
+            
+            if (userProfile?.user_id) {
+              requesterUserId = userProfile.user_id;
+            }
+          }
+        }
         
-        if (notifError) {
-          console.error('❌ Erro ao criar notificação:', notifError);
+        if (requesterUserId) {
+          const notificationData = {
+            user_id: requesterUserId,
+            suggestion_id: suggestionId,
+            type: newStatus === 'pending' ? 'rejected' : newStatus,
+            title: 'Preço Rejeitado',
+            message: 'Sua solicitação de preço foi rejeitada.'
+          };
+          
+          const { error: notifError } = await supabase
+            .from('notifications')
+            .insert([notificationData])
+            .select();
+          
+          if (notifError) {
+            console.error('❌ Erro ao criar notificação:', notifError);
+          } else {
+            console.log('✅ Notificação de rejeição criada para:', requesterUserId);
+            
+            // Enviar push notification também
+            try {
+              const { sendPushNotification } = await import('@/lib/pushNotification');
+              await sendPushNotification(requesterUserId, {
+                title: 'Preço Rejeitado',
+                body: 'Sua solicitação de preço foi rejeitada.',
+                data: { suggestion_id: suggestionId },
+                url: '/approvals',
+                tag: 'price_rejected'
+              });
+            } catch (pushError) {
+              console.warn('Aviso: Não foi possível enviar push notification:', pushError);
+            }
+          }
+        } else {
+          console.warn('⚠️ Não foi possível encontrar user_id do solicitante para notificação de rejeição:', currentSuggestion.requested_by);
         }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
@@ -2529,19 +2609,48 @@ export default function Approvals() {
         });
       
       // Criar notificação para o solicitante (com push)
+      // IMPORTANTE: Converter requested_by (que pode ser email) para user_id
       try {
-        const { createNotification } = await import('@/lib/utils');
-        const productName = currentSuggestion?.product || 'produto';
-        await createNotification(
-          currentSuggestion?.requested_by,
-          'approval_pending',
-          'Preço Sugerido',
-          `Um preço foi sugerido para sua solicitação de ${productName}`,
-          {
-            suggestion_id: suggestionId,
-            url: '/approvals'
+        let requesterUserId: string | null = null;
+        
+        // Tentar buscar user_id do solicitante
+        if (currentSuggestion?.requested_by) {
+          // Verificar se já é um UUID (user_id)
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(currentSuggestion.requested_by)) {
+            // Já é um user_id
+            requesterUserId = currentSuggestion.requested_by;
+          } else {
+            // É um email, buscar user_id correspondente
+            const { data: userProfile } = await supabase
+              .from('user_profiles')
+              .select('user_id')
+              .eq('email', currentSuggestion.requested_by)
+              .maybeSingle();
+            
+            if (userProfile?.user_id) {
+              requesterUserId = userProfile.user_id;
+            }
           }
-        );
+        }
+        
+        if (requesterUserId) {
+          const { createNotification } = await import('@/lib/utils');
+          const productName = currentSuggestion?.product || 'produto';
+          await createNotification(
+            requesterUserId,
+            'approval_pending',
+            'Preço Sugerido',
+            `Um preço foi sugerido para sua solicitação de ${productName}`,
+            {
+              suggestion_id: suggestionId,
+              url: '/approvals'
+            }
+          );
+          console.log('✅ Notificação de preço sugerido criada para:', requesterUserId);
+        } else {
+          console.warn('⚠️ Não foi possível encontrar user_id do solicitante para notificação de preço sugerido:', currentSuggestion?.requested_by);
+        }
       } catch (notifError) {
         console.error('Erro ao criar notificação:', notifError);
       }
