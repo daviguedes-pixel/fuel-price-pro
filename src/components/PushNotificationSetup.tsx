@@ -180,9 +180,44 @@ export function PushNotificationSetup() {
         token: payload.token.substring(0, 30) + '...' // Não logar token completo por segurança
       });
       
-      const { data: result, error: edgeError } = await supabase.functions.invoke('send-push-notification', {
-        body: payload
-      });
+      console.log('🔗 URL da Edge Function:', `${import.meta.env.VITE_SUPABASE_URL || 'https://ijygsxwfmribbjymxhaf.supabase.co'}/functions/v1/send-push-notification`);
+      console.log('🔑 Anon Key configurada:', !!import.meta.env.VITE_SUPABASE_ANON_KEY);
+      
+      try {
+        const { data: result, error: edgeError } = await supabase.functions.invoke('send-push-notification', {
+          body: payload
+        });
+        
+        console.log('📥 Resposta recebida da Edge Function');
+        console.log('   Data:', result);
+        console.log('   Error:', edgeError);
+        
+        if (edgeError) {
+          throw edgeError;
+        }
+        
+        return { result, error: null };
+      } catch (invokeError: any) {
+        console.error('❌ Erro ao invocar Edge Function:', invokeError);
+        console.error('   Tipo:', typeof invokeError);
+        console.error('   Message:', invokeError.message);
+        console.error('   Status:', invokeError.status);
+        console.error('   Stack:', invokeError.stack);
+        
+        // Verificar se é erro de rede
+        if (invokeError.message?.includes('fetch') || invokeError.message?.includes('network') || invokeError.message?.includes('Failed to fetch')) {
+          console.error('');
+          console.error('🔴 ERRO DE REDE DETECTADO!');
+          console.error('   A requisição não conseguiu chegar ao servidor.');
+          console.error('   Possíveis causas:');
+          console.error('   1. Problema de conexão com a internet');
+          console.error('   2. CORS bloqueando a requisição');
+          console.error('   3. Edge Function não está acessível');
+          console.error('');
+        }
+        
+        return { result: null, error: invokeError };
+      }
 
       if (edgeError) {
         console.error('❌ Erro retornado pela Edge Function:', edgeError);
