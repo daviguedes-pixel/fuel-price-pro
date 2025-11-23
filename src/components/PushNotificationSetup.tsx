@@ -123,8 +123,17 @@ export function PushNotificationSetup() {
       }
 
       const token = subscriptions[0].fcm_token;
+      
+      // Validar token
+      if (!token || token.trim() === '') {
+        console.error('❌ Token FCM está vazio ou inválido!');
+        toast.error('Token FCM inválido. Ative as notificações push novamente.');
+        return;
+      }
+      
       console.log('✅ Token FCM encontrado:', token.substring(0, 30) + '...');
       console.log('📋 Token completo:', token);
+      console.log('📏 Tamanho do token:', token.length);
 
       // Verificar Service Worker antes de enviar
       console.log('🔍 Verificando Service Worker...');
@@ -145,9 +154,18 @@ export function PushNotificationSetup() {
       console.log('═══════════════════════════════════════════════════════');
       console.log('📤 CHAMANDO EDGE FUNCTION...');
       console.log('═══════════════════════════════════════════════════════');
+      console.log('📋 Payload que será enviado:', {
+        token: token.substring(0, 30) + '...',
+        tokenLength: token.length,
+        notification: {
+          title: '🧪 Teste Automático',
+          body: 'Esta notificação foi enviada automaticamente via Edge Function!'
+        }
+      });
+      
       const { data: result, error: edgeError } = await supabase.functions.invoke('send-push-notification', {
         body: {
-          token: token,
+          token: token.trim(), // Garantir que não há espaços
           notification: {
             title: '🧪 Teste Automático',
             body: 'Esta notificação foi enviada automaticamente via Edge Function!'
