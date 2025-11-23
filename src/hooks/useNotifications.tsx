@@ -5,12 +5,13 @@ import { useAuth } from '@/hooks/useAuth';
 
 interface Notification {
   id: string;
-  suggestion_id: string;
+  suggestion_id?: string;
   type: string;
   title: string;
   message: string;
   read: boolean;
   created_at: string;
+  data?: any;
 }
 
 interface NotificationsContextType {
@@ -36,7 +37,12 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
   const [notifications, setNotifications] = useState<Notification[]>([]);
 
   const loadNotifications = useCallback(async () => {
-    if (!user) return;
+    if (!user) {
+      console.log('⚠️ Usuário não autenticado, não carregando notificações');
+      return;
+    }
+
+    console.log('🔄 Carregando notificações para user_id:', user.id);
 
     try {
       const { data, error } = await supabase
@@ -52,24 +58,51 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
           setNotifications([]);
           return;
         }
+        
+        console.error('❌ Erro ao carregar notificações:', {
+          error,
+          errorCode: error.code,
+          errorMessage: error.message,
+          errorDetails: error.details,
+          userId: user.id
+        });
         throw error;
       }
       
       console.log('📬 Notificações carregadas:', {
         total: data?.length || 0,
         unread: data?.filter((n: Notification) => !n.read).length || 0,
-        data: data?.map((n: Notification) => ({ id: n.id, read: n.read, type: typeof n.read, title: n.title }))
+        userId: user.id,
+        notifications: data?.map((n: Notification) => ({ 
+          id: n.id, 
+          read: n.read, 
+          type: n.type, 
+          title: n.title,
+          user_id: (n as any).user_id 
+        }))
       });
       
       setNotifications(data || []);
     } catch (error) {
-      console.error('Erro ao carregar notificações:', error);
+      console.error('❌ Erro ao carregar notificações:', error);
       setNotifications([]);
     }
   }, [user]);
 
   useEffect(() => {
     loadNotifications();
+    
+    // Escutar evento customizado para refresh quando notificação for criada
+    const handleNotificationCreated = () => {
+      console.log('🔄 Evento de notificação criada recebido, recarregando...');
+      loadNotifications();
+    };
+    
+    window.addEventListener('notification-created', handleNotificationCreated);
+    
+    return () => {
+      window.removeEventListener('notification-created', handleNotificationCreated);
+    };
   }, [loadNotifications]);
 
   const markAsRead = async (id: string) => {

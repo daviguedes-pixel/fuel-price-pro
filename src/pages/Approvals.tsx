@@ -1633,8 +1633,17 @@ export default function Approvals() {
         
         // Criar notificação sempre que encontrar o user_id (mesmo se for o próprio usuário)
         if (requesterUserId) {
+          console.log('🔔 Criando notificação:', {
+            requesterUserId,
+            currentUserId: user?.id,
+            requestedBy: currentSuggestion.requested_by,
+            isSameUser: requesterUserId === user?.id,
+            status: newStatus,
+            approverName
+          });
+          
           const { createNotification } = await import('@/lib/utils');
-          await createNotification(
+          const result = await createNotification(
             requesterUserId,
             newStatus === 'approved' ? 'price_approved' : 'price_rejected',
             newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
@@ -1647,9 +1656,22 @@ export default function Approvals() {
               url: '/approvals'
             }
           );
-          console.log('✅ Notificação criada para:', requesterUserId, requesterUserId === user?.id ? '(próprio usuário)' : '');
+          
+          console.log('✅ Notificação criada com sucesso:', {
+            requesterUserId,
+            result,
+            isSameUser: requesterUserId === user?.id
+          });
+          
+          // Disparar evento customizado para forçar refresh das notificações
+          window.dispatchEvent(new CustomEvent('notification-created', { 
+            detail: { userId: requesterUserId } 
+          }));
         } else {
-          console.warn('⚠️ Não foi possível encontrar user_id do solicitante:', currentSuggestion.requested_by);
+          console.warn('⚠️ Não foi possível encontrar user_id do solicitante:', {
+            requested_by: currentSuggestion.requested_by,
+            currentUserId: user?.id
+          });
         }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);

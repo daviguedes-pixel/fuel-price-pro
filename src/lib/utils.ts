@@ -83,6 +83,11 @@ export async function createNotification(
     read: false
   };
 
+  // Adicionar suggestion_id se estiver nos dados
+  if (data?.suggestion_id) {
+    notificationData.suggestion_id = data.suggestion_id;
+  }
+
   if (data) {
     notificationData.data = data;
   }
@@ -91,14 +96,58 @@ export async function createNotification(
     notificationData.expires_at = expiresAt.toISOString();
   }
 
-  const { error } = await supabase
+  console.log('📝 Inserindo notificação no banco:', {
+    user_id: userId,
+    type,
+    title,
+    message,
+    data,
+    notificationData
+  });
+
+  const { data: insertedData, error } = await supabase
     .from('notifications')
-    .insert([notificationData]);
+    .insert([notificationData])
+    .select();
 
   if (error) {
-    console.error('Erro ao criar notificação:', error);
+    console.error('❌ Erro ao criar notificação:', {
+      error,
+      errorCode: error.code,
+      errorMessage: error.message,
+      errorDetails: error.details,
+      notificationData
+    });
+    
+    // Se o erro for sobre suggestion_id obrigatório, tentar novamente sem ele
+    if (error.message?.includes('suggestion_id') || error.code === '23502') {
+      console.log('⚠️ Tentando inserir sem suggestion_id...');
+      const notificationDataWithoutSuggestion = { ...notificationData };
+      delete notificationDataWithoutSuggestion.suggestion_id;
+      
+      const { data: retryData, error: retryError } = await supabase
+        .from('notifications')
+        .insert([notificationDataWithoutSuggestion])
+        .select();
+      
+      if (retryError) {
+        console.error('❌ Erro ao criar notificação (retry):', retryError);
+        throw retryError;
+      }
+      
+      console.log('✅ Notificação inserida no banco (sem suggestion_id):', retryData);
+      return true;
+    }
+    
     throw error;
   }
+
+  console.log('✅ Notificação inserida no banco:', {
+    insertedData,
+    userId,
+    title,
+    notificationId: insertedData?.[0]?.id
+  });
 
   // Enviar notificação push também
   try {
