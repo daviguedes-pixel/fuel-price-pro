@@ -26,6 +26,7 @@ import Settings from "./pages/Settings";
 import Gestao from "./pages/Gestao";
 import ApprovalMarginConfig from "./pages/ApprovalMarginConfig";
 import ApprovalOrderConfig from "./pages/ApprovalOrderConfig";
+import DescontosIndevidos from "./pages/DescontosIndevidos";
 import Layout from "./components/Layout";
 import NotFound from "./pages/NotFound";
 
@@ -102,6 +103,7 @@ const App = () => {
                   <Route path="/gestao" element={<ProtectedRoute><Gestao /></ProtectedRoute>} />
                   <Route path="/approval-margin-config" element={<ProtectedRoute><ApprovalMarginConfig /></ProtectedRoute>} />
                   <Route path="/approval-order-config" element={<ProtectedRoute><ApprovalOrderConfig /></ProtectedRoute>} />
+                  <Route path="/descontos-indevidos" element={<ProtectedRoute><DescontosIndevidos /></ProtectedRoute>} />
                   <Route path="/change-password" element={<PasswordChange />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

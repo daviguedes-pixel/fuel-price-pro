@@ -179,9 +179,10 @@ export const useFirebasePush = () => {
       }
       
       return null;
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro ao obter token FCM:', error);
-      return null;
+      // Re-lançar o erro para que o componente possa tratá-lo
+      throw error;
     } finally {
       setIsLoading(false);
     }

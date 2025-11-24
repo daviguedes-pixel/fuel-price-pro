@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { Users, UsersRound, Database, TrendingUp, Bell, TestTube } from 'lucide-react';
 import { PushNotificationSetup } from '@/components/PushNotificationSetup';
 import { FirebaseDebug } from '@/components/FirebaseDebug';
+import { FirebaseConfig } from '@/components/FirebaseConfig';
 import { useAuth } from '@/hooks/useAuth';
 import { createNotification } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -312,6 +313,11 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+
+        {/* Configuração do Firebase */}
+        <div className="mt-6 space-y-4">
+          <FirebaseConfig />
+        </div>
 
         {/* Notificações Push */}
         <div className="mt-6 space-y-4">

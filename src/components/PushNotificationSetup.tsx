@@ -19,15 +19,38 @@ export function PushNotificationSetup() {
   const handleEnable = async () => {
     setIsRequesting(true);
     try {
+      // Firebase já está configurado com valores hardcoded como fallback
+      // Não precisa verificar, pode tentar ativar diretamente
+
       const token = await requestToken();
       if (token) {
         toast.success('Notificações push ativadas!');
       } else {
-        toast.error('Não foi possível ativar notificações. Verifique as configurações do Firebase.');
+        // Verificar qual foi o problema específico
+        const permission = Notification.permission;
+        if (permission === 'denied') {
+          toast.error('Permissão de notificação negada', {
+            description: 'Acesse as configurações do navegador para permitir notificações.',
+            duration: 8000
+          });
+        } else if (permission === 'default') {
+          toast.warning('Permissão não foi concedida', {
+            description: 'Por favor, permita as notificações quando o navegador solicitar.',
+            duration: 8000
+          });
+        } else {
+          toast.error('Não foi possível obter token FCM', {
+            description: 'Verifique o Console (F12) para mais detalhes. Possíveis causas: Service Worker não registrado, VAPID Key inválida, ou problema de conexão.',
+            duration: 10000
+          });
+        }
       }
-    } catch (error) {
-      toast.error('Erro ao ativar notificações');
-      console.error(error);
+    } catch (error: any) {
+      console.error('Erro ao ativar notificações:', error);
+      toast.error('Erro ao ativar notificações', {
+        description: error.message || 'Verifique o Console (F12) para mais detalhes.',
+        duration: 8000
+      });
     } finally {
       setIsRequesting(false);
     }

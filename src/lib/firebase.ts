@@ -2,17 +2,72 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getMessaging, getToken, onMessage, Messaging, isSupported } from 'firebase/messaging';
 
+// Configuração padrão do Firebase (hardcoded)
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDOWFfM7bePXhXTiR9T7auiBB8RSiF4jZs",
+  authDomain: "notifica-6e935.firebaseapp.com",
+  projectId: "notifica-6e935",
+  storageBucket: "notifica-6e935.firebasestorage.app",
+  messagingSenderId: "201676842130",
+  appId: "1:201676842130:web:73a61de5dabf4a66e1324b",
+  measurementId: "G-04XHJMG4X1"
+};
+
+const DEFAULT_VAPID_KEY = "BP_5hFuOqmqyWQhYdjVKHE98UYEkPjDmBXM69swNHCksU8CmK9TkPjMZuNtRVyqVxXRprDaQGw0Hao60PuGbh98";
+
+// Função para obter configuração do Firebase (prioridade: .env > localStorage > hardcoded)
+const getFirebaseConfig = () => {
+  // Primeiro, tentar variáveis de ambiente
+  let config = {
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || DEFAULT_FIREBASE_CONFIG.apiKey,
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || DEFAULT_FIREBASE_CONFIG.authDomain,
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_CONFIG.projectId,
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || DEFAULT_FIREBASE_CONFIG.storageBucket,
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || DEFAULT_FIREBASE_CONFIG.messagingSenderId,
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || DEFAULT_FIREBASE_CONFIG.appId,
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || DEFAULT_FIREBASE_CONFIG.measurementId
+  };
+
+  // Se não tiver configurado via .env, tentar localStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const savedConfig = localStorage.getItem('firebase_config');
+      if (savedConfig) {
+        const parsed = JSON.parse(savedConfig);
+        // Usar valores do localStorage apenas se estiverem preenchidos
+        if (parsed.apiKey) config.apiKey = parsed.apiKey;
+        if (parsed.authDomain) config.authDomain = parsed.authDomain;
+        if (parsed.projectId) config.projectId = parsed.projectId;
+        if (parsed.storageBucket) config.storageBucket = parsed.storageBucket;
+        if (parsed.messagingSenderId) config.messagingSenderId = parsed.messagingSenderId;
+        if (parsed.appId) config.appId = parsed.appId;
+        if (parsed.measurementId) config.measurementId = parsed.measurementId;
+        console.log('✅ Usando configuração do Firebase do localStorage (com fallback para hardcoded)');
+      }
+
+      // Tentar também do objeto global (se foi definido dinamicamente)
+      if ((window as any).__FIREBASE_CONFIG__) {
+        const dynamicConfig = (window as any).__FIREBASE_CONFIG__;
+        if (dynamicConfig.apiKey) config.apiKey = dynamicConfig.apiKey;
+        if (dynamicConfig.authDomain) config.authDomain = dynamicConfig.authDomain;
+        if (dynamicConfig.projectId) config.projectId = dynamicConfig.projectId;
+        if (dynamicConfig.storageBucket) config.storageBucket = dynamicConfig.storageBucket;
+        if (dynamicConfig.messagingSenderId) config.messagingSenderId = dynamicConfig.messagingSenderId;
+        if (dynamicConfig.appId) config.appId = dynamicConfig.appId;
+        if (dynamicConfig.measurementId) config.measurementId = dynamicConfig.measurementId;
+        console.log('✅ Usando configuração do Firebase do objeto global (com fallback para hardcoded)');
+      }
+    } catch (error) {
+      console.warn('Erro ao carregar configuração do localStorage:', error);
+    }
+  }
+
+  return config;
+};
+
 // Configuração do Firebase (você precisará obter essas credenciais do Firebase Console)
 // https://console.firebase.google.com/
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || ""
-};
+const firebaseConfig = getFirebaseConfig();
 
 // Debug: Log da configuração (sem valores sensíveis)
 console.log('🔧 Firebase Config Check:', {
@@ -417,16 +472,36 @@ export const requestNotificationPermission = async (): Promise<string | null> =>
   try {
     console.log('🔔 Iniciando solicitação de permissão de notificação...');
     
+    // Verificar se navegador suporta notificações
+    if (!('Notification' in window)) {
+      console.error('❌ Este navegador não suporta notificações');
+      throw new Error('Navegador não suporta notificações');
+    }
+
+    // Verificar variáveis de ambiente antes de inicializar Firebase
+    const hasApiKey = !!firebaseConfig.apiKey;
+    const hasProjectId = !!firebaseConfig.projectId;
+    const hasVapidKey = !!import.meta.env.VITE_FIREBASE_VAPID_KEY;
+
+    if (!hasApiKey || !hasProjectId) {
+      console.error('❌ Configuração do Firebase incompleta');
+      console.error('Verificando configuração:', {
+        apiKey: hasApiKey ? '✅' : '❌',
+        projectId: hasProjectId ? '✅' : '❌',
+        vapidKey: hasVapidKey ? '✅' : '❌'
+      });
+      throw new Error('Configuração do Firebase incompleta. Verifique as variáveis de ambiente VITE_FIREBASE_API_KEY e VITE_FIREBASE_PROJECT_ID no arquivo .env');
+    }
+    
     const { messaging } = await initFirebase();
     
     if (!messaging) {
       console.error('❌ Firebase Messaging não está disponível');
-      console.log('Verificando configuração:', {
-        apiKey: firebaseConfig.apiKey ? '✅' : '❌',
-        projectId: firebaseConfig.projectId ? '✅' : '❌',
-        vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY ? '✅' : '❌'
-      });
-      return null;
+      console.error('Possíveis causas:');
+      console.error('  1. Service Worker não está registrado');
+      console.error('  2. Navegador não suporta Firebase Messaging');
+      console.error('  3. Não está usando HTTPS ou localhost');
+      throw new Error('Firebase Messaging não está disponível. Verifique se o Service Worker está registrado e se está usando HTTPS ou localhost.');
     }
 
     console.log('✅ Firebase Messaging inicializado');
@@ -438,33 +513,71 @@ export const requestNotificationPermission = async (): Promise<string | null> =>
     
     if (permission !== 'granted') {
       console.warn('❌ Permissão de notificação negada:', permission);
-      return null;
+      if (permission === 'denied') {
+        throw new Error('Permissão de notificação foi negada. Acesse as configurações do navegador para permitir notificações.');
+      } else {
+        throw new Error('Permissão de notificação não foi concedida. Por favor, permita as notificações quando o navegador solicitar.');
+      }
     }
 
     console.log('✅ Permissão concedida');
 
-    // Obter token FCM
-    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || "";
+    // Obter token FCM (prioridade: .env > localStorage > hardcoded)
+    let vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || DEFAULT_VAPID_KEY;
+    
+    // Se não tiver no .env, tentar localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const savedConfig = localStorage.getItem('firebase_config');
+        if (savedConfig) {
+          const parsed = JSON.parse(savedConfig);
+          if (parsed.vapidKey) {
+            vapidKey = parsed.vapidKey;
+          }
+        }
+        
+        // Tentar também do objeto global
+        if ((window as any).__FIREBASE_CONFIG__?.vapidKey) {
+          vapidKey = (window as any).__FIREBASE_CONFIG__?.vapidKey;
+        }
+      } catch (error) {
+        console.warn('Erro ao carregar VAPID Key do localStorage:', error);
+      }
+    }
     
     if (!vapidKey) {
-      console.error('❌ VAPID Key não configurada. Configure VITE_FIREBASE_VAPID_KEY no .env');
-      return null;
+      console.error('❌ VAPID Key não configurada. Usando valor padrão.');
+      vapidKey = DEFAULT_VAPID_KEY;
     }
 
     console.log('🔑 VAPID Key encontrada, obtendo token FCM...');
-    const token = await getToken(messaging, { vapidKey });
     
-    if (token) {
-      console.log('✅ Token FCM obtido:', token.substring(0, 50) + '...');
-      return token;
-    } else {
-      console.warn('❌ Não foi possível obter token FCM');
-      return null;
+    try {
+      const token = await getToken(messaging, { vapidKey });
+      
+      if (token) {
+        console.log('✅ Token FCM obtido:', token.substring(0, 50) + '...');
+        return token;
+      } else {
+        console.warn('❌ Não foi possível obter token FCM');
+        throw new Error('Não foi possível obter token FCM. Verifique se o Service Worker está ativo e se a VAPID Key está correta.');
+      }
+    } catch (tokenError: any) {
+      console.error('❌ Erro ao obter token FCM:', tokenError);
+      if (tokenError.code === 'messaging/permission-blocked') {
+        throw new Error('Permissão de notificação está bloqueada. Acesse as configurações do navegador.');
+      } else if (tokenError.code === 'messaging/token-subscribe-failed') {
+        throw new Error('Falha ao registrar token. Verifique se a VAPID Key está correta e se o Service Worker está ativo.');
+      } else {
+        throw new Error(`Erro ao obter token FCM: ${tokenError.message || 'Erro desconhecido'}`);
+      }
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Erro ao solicitar permissão de notificação:', error);
     console.error('Detalhes do erro:', error);
-    return null;
+    
+    // Re-lançar o erro para que o componente possa tratá-lo
+    throw error;
   }
 };
 
