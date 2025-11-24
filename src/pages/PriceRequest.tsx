@@ -253,7 +253,7 @@ function ProposalFullView({ batch, proposalNumber, proposalDate, generalStatus, 
         <div className="space-y-1 text-sm text-slate-700 dark:text-slate-300 print:text-[9px] print:space-y-0.5">
           <p className="flex items-start gap-2 print:gap-1 print:leading-tight">
             <span className="font-bold print:font-normal">•</span>
-            <span className="print:leading-tight">Preço sujeito a alteração, conforme anúncio da companhia.</span>
+            <span className="print:leading-tight">Preço sujeito a alteração dentro da proposta comercial.</span>
           </p>
           <p className="flex items-start gap-2 print:gap-1 print:leading-tight">
             <span className="font-bold print:font-normal">•</span>
@@ -272,9 +272,9 @@ function ProposalFullView({ batch, proposalNumber, proposalDate, generalStatus, 
           <p className="text-sm text-slate-600 dark:text-slate-400 print:text-[9px] print:leading-tight">
             Agradecemos sua atenção e ficamos à disposição para quaisquer esclarecimentos.
           </p>
-          <p className="text-lg font-bold text-blue-600 dark:text-blue-400 print:text-xs print:font-semibold print:text-black">
-            REDE SÃO ROQUE
-          </p>
+          <div className="flex justify-center items-center gap-2 print:gap-1">
+            <IntegraLogo className="h-8 w-auto print:h-5" />
+          </div>
         </div>
       </div>
     </div>

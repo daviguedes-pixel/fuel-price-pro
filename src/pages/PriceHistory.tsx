@@ -145,9 +145,17 @@ export default function PriceHistory() {
             if (!approverId) return 'Sistema';
             // Se for UUID, buscar nome do mapa
             if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(approverId)) {
-              return approversMap.get(approverId) || approverId;
+              const name = approversMap.get(approverId);
+              // Se o nome contém @, pegar apenas a parte antes do @
+              if (name && name.includes('@')) {
+                return name.split('@')[0];
+              }
+              return name || 'Desconhecido';
             }
-            // Se não for UUID, pode ser email ou nome direto
+            // Se não for UUID, pode ser email ou nome direto - remover email se houver
+            if (approverId.includes('@')) {
+              return approverId.split('@')[0];
+            }
             return approverId;
           })(),
           change_type: null,
@@ -243,24 +251,32 @@ export default function PriceHistory() {
         }
       }
       
-      // Contar por cliente usando nome
+      // Contar por cliente usando nome do mapa
       const clientCounts: { [key: string]: number } = {};
       suggestions.forEach(suggestion => {
-        const client = clientsData?.find(c => String(c.id) === String(suggestion.client_id));
-        const clientName = client?.nome || suggestion.client_id || 'Sem cliente';
-        clientCounts[clientName] = (clientCounts[clientName] || 0) + 1;
+        const clientId = String(suggestion.client_id);
+        // Primeiro tentar buscar no mapa de clientes
+        const clientName = clientsMap.get(clientId);
+        if (clientName) {
+          clientCounts[clientName] = (clientCounts[clientName] || 0) + 1;
+        } else {
+          // Fallback: buscar na lista de clientes
+          const client = clientsData?.find(c => String(c.id) === clientId);
+          const name = client?.nome || 'Sem cliente';
+          clientCounts[name] = (clientCounts[name] || 0) + 1;
+        }
       });
       
-      // Buscar usuários do perfil para mapear IDs para emails
+      // Buscar usuários do perfil para mapear IDs para nomes
       const { data: userProfiles } = await supabase
         .from('user_profiles')
-        .select('user_id, email');
+        .select('user_id, nome, email');
       
-      // Contar por solicitante usando email
+      // Contar por solicitante usando nome
       const requesterCounts: { [key: string]: number } = {};
       suggestions.forEach(suggestion => {
         const user = userProfiles?.find(u => String(u.user_id) === String(suggestion.requested_by));
-        const requesterName = user?.email || suggestion.requested_by || 'Desconhecido';
+        const requesterName = user?.nome || user?.email?.split('@')[0] || 'Desconhecido';
         requesterCounts[requesterName] = (requesterCounts[requesterName] || 0) + 1;
       });
       

@@ -21,13 +21,21 @@ import {
   Receipt,
   Truck,
   FileCheck,
-  Percent
+  Percent,
+  Building2,
+  Briefcase,
+  Gauge
 } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "./ui/collapsible";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "./ui/popover";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -71,9 +79,14 @@ interface MenuGroup {
   items?: MenuItem[];
 }
 
-const menuStructure: MenuGroup[] = [
+interface MenuGroupWithIcon extends MenuGroup {
+  icon: any;
+}
+
+const menuStructure: MenuGroupWithIcon[] = [
   {
     label: "Comercial",
+    icon: Building2,
     subgroups: [
       {
         label: "Precificação",
@@ -95,12 +108,14 @@ const menuStructure: MenuGroup[] = [
         label: "Gestoria",
         items: [
           { icon: Users, label: "Gestão", href: "/gestao", permission: "gestao" },
+          { icon: Settings, label: "Configurações", href: "/settings", permission: "settings" },
         ]
       }
     ]
   },
   {
     label: "Pricing",
+    icon: Gauge,
     items: [
       { icon: Percent, label: "Descontos Indevidos (Desenvolvimento)", href: "/descontos-indevidos", permission: "pricing" },
       { icon: Map, label: "Mapa Contatos (Desenvolvimento)", href: "/mapa-contatos", permission: "pricing" },
@@ -123,14 +138,16 @@ function Layout({ children }: LayoutProps) {
   const location = useLocation();
   
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    "Comercial": true,
-    "Pricing": true
+    "Comercial": false,
+    "Pricing": false
   });
   const [openSubGroups, setOpenSubGroups] = useState<Record<string, boolean>>({
-    "Precificação": true,
-    "Estrategia": true,
-    "Gestoria": true
+    "Precificação": false,
+    "Estrategia": false,
+    "Gestoria": false
   });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(256); // 64 * 4 = 256px (w-64)
 
   const toggleGroup = useCallback((groupLabel: string) => {
     setOpenGroups(prev => ({ ...prev, [groupLabel]: !prev[groupLabel] }));
@@ -161,28 +178,88 @@ function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-background flex">
       {/* Sidebar - Navy Blue */}
-      <aside className={`
-        bg-sidebar border-r border-sidebar-border transition-all duration-300 flex flex-col
-        ${sidebarOpen ? 'w-64' : 'w-0 lg:w-64'}
-        ${sidebarOpen ? 'fixed' : 'hidden lg:flex'}
-        lg:sticky lg:top-0 z-50 h-screen max-h-screen overflow-hidden flex-shrink-0
-      `}>
+      <aside 
+        className={`
+          bg-sidebar border-r border-sidebar-border transition-all duration-300 flex flex-col relative
+          ${sidebarOpen ? 'fixed' : 'hidden lg:flex'}
+          lg:sticky lg:top-0 z-50 h-screen max-h-screen overflow-hidden flex-shrink-0
+        `}
+        style={{ width: sidebarCollapsed ? '64px' : `${sidebarWidth}px` }}
+      >
+        {/* Resize Handle */}
+        {!sidebarCollapsed && (
+          <div
+            className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-sidebar-accent/50 transition-colors z-10"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startWidth = sidebarWidth;
+              
+              const handleMouseMove = (e: MouseEvent) => {
+                const diff = e.clientX - startX;
+                const newWidth = Math.max(200, Math.min(400, startWidth + diff));
+                setSidebarWidth(newWidth);
+              };
+              
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove);
+                document.removeEventListener('mouseup', handleMouseUp);
+              };
+              
+              document.addEventListener('mousemove', handleMouseMove);
+              document.addEventListener('mouseup', handleMouseUp);
+            }}
+          />
+        )}
+        
         {/* Logo Area */}
         <div className="h-12 flex items-center justify-between px-3 border-b border-sidebar-border">
-          <button 
-            onClick={handleLogoClick}
-            className="flex items-center hover:opacity-80 transition-opacity cursor-pointer -ml-4"
-          >
-            <IntegraLogo className="h-6" />
-          </button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-sidebar-foreground hover:bg-sidebar-accent"
-          >
-            <X className="h-5 w-5" />
-          </Button>
+          {sidebarCollapsed ? (
+            // Menu minimizado: apenas botão de minimizar centralizado
+            <div className="flex-1 flex items-center justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                className="text-sidebar-foreground hover:bg-sidebar-accent p-0 h-8 w-8 hidden lg:flex items-center justify-center"
+                title="Expandir menu"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            </div>
+          ) : (
+            // Menu expandido: botão + logo completa
+            <>
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                {/* Collapse Button - 3 linhas */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  className="text-sidebar-foreground hover:bg-sidebar-accent p-0 h-8 w-8 hidden lg:flex items-center justify-center flex-shrink-0"
+                  title="Minimizar menu"
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
+                {/* Logo completa */}
+                <button 
+                  onClick={handleLogoClick}
+                  className="flex items-center hover:opacity-80 transition-opacity cursor-pointer flex-1 min-w-0 justify-start"
+                  title="Integra"
+                >
+                  <IntegraLogo className="h-6" />
+                </button>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSidebarOpen(false)}
+                className="lg:hidden text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </>
+          )}
         </div>
 
         {/* Navigation */}
@@ -199,7 +276,7 @@ function Layout({ children }: LayoutProps) {
               onClick={() => handleMenuClick(homeItem.href)}
             >
               <homeItem.icon className="h-4 w-4 flex-shrink-0" />
-              <span className="text-xs">{homeItem.label}</span>
+              {!sidebarCollapsed && <span className="text-xs">{homeItem.label}</span>}
             </Button>
           )}
 
@@ -210,6 +287,63 @@ function Layout({ children }: LayoutProps) {
               : group.items?.some(item => canAccess(item.permission));
             
             if (!hasAccessibleItems) return null;
+
+            // Se estiver minimizado, mostrar apenas o ícone com popover
+            if (sidebarCollapsed) {
+              return (
+                <Popover key={group.label}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-center h-8 px-2 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+                      title={group.label}
+                    >
+                      <group.icon className="h-4 w-4 flex-shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent side="right" className="w-64 p-2" align="start">
+                    <div className="space-y-1">
+                      <div className="px-2 py-1.5 text-xs font-semibold text-foreground border-b mb-2">
+                        {group.label}
+                      </div>
+                      {group.subgroups?.map((subgroup) => {
+                        const accessibleItems = subgroup.items.filter(item => canAccess(item.permission));
+                        if (accessibleItems.length === 0) return null;
+                        return (
+                          <div key={subgroup.label} className="space-y-0.5">
+                            <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                              {subgroup.label}
+                            </div>
+                            {accessibleItems.map((item) => (
+                              <Button
+                                key={item.href}
+                                variant="ghost"
+                                className="w-full justify-start gap-2 h-8 px-2 text-[11px]"
+                                onClick={() => handleMenuClick(item.href)}
+                              >
+                                <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                                <span>{item.label}</span>
+                              </Button>
+                            ))}
+                          </div>
+                        );
+                      })}
+                      {group.items?.filter(item => canAccess(item.permission)).map((item) => (
+                        <Button
+                          key={item.href}
+                          variant="ghost"
+                          className="w-full justify-start gap-2 h-8 px-2 text-[11px]"
+                          onClick={() => handleMenuClick(item.href)}
+                        >
+                          <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                          <span>{item.label}</span>
+                        </Button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              );
+            }
 
             return (
               <Collapsible
@@ -222,7 +356,10 @@ function Layout({ children }: LayoutProps) {
                     variant="ghost"
                     className="w-full justify-between gap-2 h-8 px-2 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 text-xs font-semibold"
                   >
-                    <span>{group.label}</span>
+                    <div className="flex items-center gap-2">
+                      <group.icon className="h-4 w-4 flex-shrink-0" />
+                      <span>{group.label}</span>
+                    </div>
                     {openGroups[group.label] ? (
                       <ChevronDown className="h-3 w-3" />
                     ) : (
@@ -246,12 +383,12 @@ function Layout({ children }: LayoutProps) {
                               variant="ghost"
                               className="w-full justify-between gap-2 h-7 px-2 text-sidebar-foreground/60 hover:text-sidebar-foreground/80 hover:bg-sidebar-accent/30 text-[11px] font-medium"
                             >
-                              <span>{subgroup.label}</span>
-                              {openSubGroups[subgroup.label] ? (
+                              {!sidebarCollapsed && <span>{subgroup.label}</span>}
+                              {!sidebarCollapsed && (openSubGroups[subgroup.label] ? (
                                 <ChevronDown className="h-3 w-3" />
                               ) : (
                                 <ChevronRight className="h-3 w-3" />
-                              )}
+                              ))}
                             </Button>
                           </CollapsibleTrigger>
                           <CollapsibleContent className="space-y-0.5 pl-3">
@@ -267,7 +404,7 @@ function Layout({ children }: LayoutProps) {
                                 onClick={() => handleMenuClick(item.href)}
                               >
                                 <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
-                                <span className="text-[11px]">{item.label}</span>
+                                {!sidebarCollapsed && <span className="text-[11px]">{item.label}</span>}
                               </Button>
                             ))}
                           </CollapsibleContent>
@@ -287,7 +424,7 @@ function Layout({ children }: LayoutProps) {
                       onClick={() => handleMenuClick(item.href)}
                     >
                       <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="text-[11px]">{item.label}</span>
+                      {!sidebarCollapsed && <span className="text-[11px]">{item.label}</span>}
                     </Button>
                   ))}
                 </CollapsibleContent>
@@ -302,12 +439,14 @@ function Layout({ children }: LayoutProps) {
             <div className="w-7 h-7 rounded-full bg-sidebar-primary flex items-center justify-center">
               <User className="h-3.5 w-3.5 text-sidebar-primary-foreground" />
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-sidebar-foreground truncate">{profile?.nome}</p>
-              <p className="text-[10px] text-sidebar-foreground/60 truncate">
-                {profile ? getProfileDisplayName(profile.perfil) : 'Carregando...'}
-              </p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-sidebar-foreground truncate">{profile?.nome}</p>
+                <p className="text-[10px] text-sidebar-foreground/60 truncate">
+                  {profile ? getProfileDisplayName(profile.perfil) : 'Carregando...'}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
