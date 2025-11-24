@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { sanitizeText, sanitizeObject } from '@/lib/sanitize';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -49,6 +50,53 @@ export function parsePriceToInteger(priceString: string): number {
   return parseInt(cleanValue, 10) || 0;
 }
 
+/**
+ * Mapeia o valor do produto do frontend para o valor válido do enum product_type no banco de dados
+ * @param product - Valor do produto do frontend (ex: 's10_aditivado', 'diesel_s500_aditivado')
+ * @returns Valor válido do enum product_type ou null se não mapeado
+ */
+export function mapProductToEnum(product: string | null | undefined): string | null {
+  if (!product) return null;
+  
+  const productLower = product.toLowerCase().trim();
+  
+  // Mapeamento de valores do frontend para valores do enum
+  // Baseado no enum atual: 'gasolina_comum', 'gasolina_aditivada', 'etanol', 's10', 's500'
+  // (O enum pode ter 'diesel_s10'/'diesel_s500' ou 's10'/'s500' dependendo da migração)
+  const productMap: Record<string, string> = {
+    // S10 - mapeia para s10 (versão atual do enum)
+    's10': 's10',
+    'diesel_s10': 's10', // Fallback: se o enum usar 's10' ao invés de 'diesel_s10'
+    's10_aditivado': 's10', // Mapeia para s10 pois não existe s10_aditivado no enum
+    'diesel_s10_aditivado': 's10',
+    
+    // S500 - mapeia para s500 (versão atual do enum)
+    's500': 's500',
+    'diesel_s500': 's500', // Fallback: se o enum usar 's500' ao invés de 'diesel_s500'
+    's500_aditivado': 's500', // Mapeia para s500 pois não existe s500_aditivado no enum
+    'diesel_s500_aditivado': 's500',
+    
+    // Gasolina
+    'gasolina_comum': 'gasolina_comum',
+    'gasolina_aditivada': 'gasolina_aditivada',
+    
+    // Etanol
+    'etanol': 'etanol',
+    
+    // ARLA - não existe no enum, retorna null
+    'arla32_granel': null, // ARLA não está no enum
+    'arla': null,
+  };
+  
+  // Retorna o valor mapeado ou o próprio valor se já for válido
+  if (productMap[productLower] !== undefined) {
+    return productMap[productLower];
+  }
+  
+  // Se não encontrou no mapa, retorna o valor original (pode ser válido)
+  return productLower;
+}
+
 // Função para gerar UUID v4 compatível (funciona em todos os ambientes)
 export function generateUUID(): string {
   // Verificar se crypto.randomUUID está disponível (navegadores modernos)
@@ -64,7 +112,32 @@ export function generateUUID(): string {
   });
 }
 
-// Função helper para criar notificações
+/**
+ * Cria uma notificação no banco de dados e envia push notification
+ * 
+ * IMPORTANTE: Esta função cria notificações SEMPRE, mesmo se for para o próprio usuário.
+ * Não há limitação de auto-notificação - o usuário quer receber notificações sempre.
+ * 
+ * @param userId - ID do usuário que receberá a notificação
+ * @param type - Tipo da notificação
+ * @param title - Título da notificação (será sanitizado para prevenir XSS)
+ * @param message - Mensagem da notificação (será sanitizada para prevenir XSS)
+ * @param data - Dados adicionais em formato JSON (será sanitizado)
+ * @param expiresAt - Data de expiração da notificação (opcional)
+ * @returns Promise<boolean> - true se a notificação foi criada com sucesso
+ * @throws Error se userId for inválido
+ * 
+ * @example
+ * ```typescript
+ * await createNotification(
+ *   user.id,
+ *   'price_approved',
+ *   'Preço Aprovado',
+ *   'Sua solicitação foi aprovada',
+ *   { suggestion_id: '123', approved_by: 'João' }
+ * );
+ * ```
+ */
 export async function createNotification(
   userId: string,
   type: 'rate_expiry' | 'approval_pending' | 'price_approved' | 'price_rejected' | 'system' | 'competitor_update' | 'client_update',
@@ -73,13 +146,37 @@ export async function createNotification(
   data?: Record<string, any>,
   expiresAt?: Date
 ) {
+  // Validar userId
+  if (!userId || typeof userId !== 'string' || userId.trim().length === 0) {
+    throw new Error('userId inválido: deve ser uma string não vazia');
+  }
+  
+  // Sanitizar inputs para prevenir XSS
+  const sanitizedTitle = sanitizeText(title);
+  const sanitizedMessage = sanitizeText(message);
+  const sanitizedData = data ? sanitizeObject(data) : undefined;
+  
   const { supabase } = await import('@/integrations/supabase/client');
   
-  const notificationData: any = {
-    user_id: userId,
+  // IMPORTANTE: Não há verificação de "mesmo usuário" aqui
+  // A notificação será criada SEMPRE, independente de quem está criando
+  
+  interface NotificationInsert {
+    user_id: string;
+    type: string;
+    title: string;
+    message: string;
+    read: boolean;
+    suggestion_id?: string | null;
+    data?: Record<string, any> | null;
+    expires_at?: string | null;
+  }
+
+  const notificationData: NotificationInsert = {
+    user_id: userId.trim(),
     type,
-    title,
-    message,
+    title: sanitizedTitle,
+    message: sanitizedMessage,
     read: false
   };
 
@@ -92,22 +189,32 @@ export async function createNotification(
     console.warn('⚠️ suggestion_id não fornecido nos dados da notificação');
   }
 
-  if (data) {
-    notificationData.data = data;
+  // Adicionar campo 'data' apenas se a coluna existir (para evitar erros)
+  // Vamos tentar adicionar sempre, mas se der erro, continuamos sem ele
+  if (sanitizedData) {
+    // Remover suggestion_id dos dados se já estiver no nível superior
+    const { suggestion_id, ...dataWithoutSuggestionId } = sanitizedData;
+    notificationData.data = dataWithoutSuggestionId;
   }
 
   if (expiresAt) {
     notificationData.expires_at = expiresAt.toISOString();
   }
 
-  console.log('📝 Inserindo notificação no banco:', {
-    user_id: userId,
-    type,
-    title,
-    message,
-    data,
-    notificationData
-  });
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('📝 INSERINDO NOTIFICAÇÃO NO BANCO');
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('User ID:', userId);
+  console.log('Type:', type);
+  console.log('Title:', title);
+  console.log('Message:', message);
+  console.log('Data recebido:', data);
+  console.log('Data type:', typeof data);
+  console.log('Notification Data completo:', notificationData);
+  console.log('Data field no notificationData:', notificationData.data);
+  console.log('═══════════════════════════════════════════════════════');
+  console.log('');
 
   // Verificar se suggestion_id é obrigatório tentando inserir primeiro
   let insertedData: any = null;
@@ -135,16 +242,46 @@ export async function createNotification(
       notificationData
     });
     
-    // Se o erro for sobre suggestion_id obrigatório (23502 = not null violation)
-    if ((error.message?.includes('suggestion_id') || error.code === '23502') && !notificationData.suggestion_id) {
-      console.log('⚠️ suggestion_id é obrigatório mas não foi fornecido. Gerando UUID temporário...');
+    // Se o erro for sobre coluna 'data' não encontrada, tentar sem ela
+    if (error.message?.includes("'data' column") || error.message?.includes('schema cache')) {
+      console.log('⚠️ Coluna "data" não encontrada. Tentando inserir sem ela...');
       
-      // Gerar UUID temporário para suggestion_id (não ideal, mas necessário se a tabela exige)
-      notificationData.suggestion_id = generateUUID();
+      // Remover campo 'data' e tentar novamente
+      const { data: dataField, ...notificationDataWithoutData } = notificationData;
       
       const retryResult = await supabase
         .from('notifications')
-        .insert([notificationData])
+        .insert([notificationDataWithoutData])
+        .select();
+      
+      if (retryResult.error) {
+        console.error('❌ Erro ao criar notificação (retry sem data):', retryResult.error);
+        // Continuar para outras tentativas
+      } else {
+        insertedData = retryResult.data;
+        console.log('✅ Notificação inserida no banco (sem campo data):', insertedData);
+        error = null; // Marcar como sucesso
+      }
+    }
+    
+    // Se o erro for sobre suggestion_id obrigatório (23502 = not null violation)
+    if (error && (error.message?.includes('suggestion_id') || error.code === '23502') && !notificationData.suggestion_id) {
+      console.log('⚠️ suggestion_id é obrigatório mas não foi fornecido. Gerando UUID temporário...');
+      
+      // Gerar UUID temporário para suggestion_id (não ideal, mas necessário se a tabela exige)
+      const notificationDataWithSuggestionId = {
+        ...notificationData,
+        suggestion_id: generateUUID()
+      };
+      
+      // Remover 'data' se ainda estiver presente e causar erro
+      if (error.message?.includes("'data' column")) {
+        delete notificationDataWithSuggestionId.data;
+      }
+      
+      const retryResult = await supabase
+        .from('notifications')
+        .insert([notificationDataWithSuggestionId])
         .select();
       
       if (retryResult.error) {
@@ -154,17 +291,27 @@ export async function createNotification(
       
       insertedData = retryResult.data;
       console.log('✅ Notificação inserida no banco (com suggestion_id gerado):', insertedData);
-    } else {
+      error = null; // Marcar como sucesso
+    } else if (error) {
       throw error;
     }
-  } else {
-    console.log('✅ Notificação inserida no banco:', {
-      insertedData,
-      userId,
-      title,
-      notificationId: insertedData?.[0]?.id,
-      user_id: insertedData?.[0]?.user_id
-    });
+  }
+  
+  if (!error) {
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('✅ NOTIFICAÇÃO INSERIDA NO BANCO');
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('Notification ID:', insertedData?.[0]?.id);
+    console.log('User ID:', userId);
+    console.log('Title:', title);
+    console.log('Type:', type);
+    console.log('Inserted Data completo:', insertedData?.[0]);
+    console.log('Data field inserido:', insertedData?.[0]?.data);
+    console.log('Data type:', typeof insertedData?.[0]?.data);
+    console.log('Approved by no data:', insertedData?.[0]?.data?.approved_by);
+    console.log('═══════════════════════════════════════════════════════');
+    console.log('');
   }
   
   // Verificar se a notificação foi realmente criada e é visível para o usuário
@@ -206,17 +353,22 @@ export async function createNotification(
     }
   }
 
-  // Enviar notificação push também
+  // Enviar notificação push também (usando a mesma função que funciona no PushNotificationSetup)
   try {
     const { sendPushNotification } = await import('@/lib/pushNotification');
-    await sendPushNotification(userId, {
+    
+    // Preparar payload exatamente como no PushNotificationSetup que funciona
+    const pushPayload = {
       title,
       body: message,
-      data: data || {},
       url: data?.url || '/dashboard',
-      tag: type
-    });
-  } catch (pushError) {
+      tag: type,
+      data: data || {}
+    };
+    
+    // Chamar exatamente como no PushNotificationSetup
+    await sendPushNotification(userId, pushPayload);
+  } catch (pushError: any) {
     // Não falhar se push não funcionar
     console.warn('Aviso: Não foi possível enviar push notification:', pushError);
   }

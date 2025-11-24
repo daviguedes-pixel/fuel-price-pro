@@ -52,6 +52,17 @@ export function PriceTimeline({ items }: PriceTimelineProps) {
     );
   };
 
+  if (!items || items.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-muted-foreground text-lg mb-2">Nenhum item no histórico</p>
+        <p className="text-muted-foreground text-sm">
+          Os registros aparecerão aqui quando houver alterações de preço aprovadas.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {items.map((item, index) => (

@@ -380,16 +380,16 @@ export const ApprovalDetailsModal = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+      <DialogContent className="max-w-5xl w-[95vw] sm:w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto p-4 sm:p-6" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle className="text-2xl">Detalhes da Solicitação de Preço</DialogTitle>
+          <DialogTitle className="text-lg sm:text-2xl">Detalhes da Solicitação de Preço</DialogTitle>
         </DialogHeader>
         
         <div className="space-y-6">
           {/* Status e Informações Básicas */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-2 gap-4">
+            <CardContent className="pt-4 sm:pt-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Posto{dataToShow.stations_list && dataToShow.stations_list.length > 1 ? 's' : ''}</h4>
                   {dataToShow.stations_list && dataToShow.stations_list.length > 0 ? (
@@ -453,8 +453,8 @@ export const ApprovalDetailsModal = ({
 
           {/* Informações de Preço e Margem */}
           <Card>
-            <CardContent className="pt-6">
-              <h3 className="text-lg font-semibold mb-4">Análise de Preço</h3>
+            <CardContent className="pt-4 sm:pt-6">
+              <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Análise de Preço</h3>
               {(() => {
                 const taxa = dataToShow.payment_methods?.TAXA || 0;
                 const purchaseCost = dataToShow.purchase_cost || 0;
@@ -470,7 +470,7 @@ export const ApprovalDetailsModal = ({
                 
                 return (
                   <>
-                    <div className="grid grid-cols-2 gap-6 mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6">
                       {/* Coluna Esquerda - Custos */}
                       <div className="space-y-3">
                         <div className="flex justify-between items-center py-2 border-b border-slate-200 dark:border-slate-700">
@@ -550,7 +550,7 @@ export const ApprovalDetailsModal = ({
                     )}
                     
                     {/* Cards Destacados - Custo Final e Margem */}
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                       <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border-2 border-slate-300 dark:border-slate-600">
                         <h4 className="font-semibold text-sm text-slate-700 dark:text-slate-300 mb-2">
                           Custo Final/L {taxa > 0 ? '(com taxa)' : ''}
@@ -590,7 +590,7 @@ export const ApprovalDetailsModal = ({
               {/* Volume Realizado e Projetado */}
               {(dataToShow.volume_made || dataToShow.volume_projected) && (
                 <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-600">
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     {dataToShow.volume_made && (
                       <div>
                         <h4 className="font-medium text-sm text-muted-foreground">Volume Realizado</h4>
@@ -614,9 +614,9 @@ export const ApprovalDetailsModal = ({
           {dataToShow.product === 's10' && (
             <>
               <Card>
-                <CardContent className="pt-6">
-                  <h3 className="text-lg font-semibold mb-4">Análise ARLA</h3>
-                  <div className="grid grid-cols-2 gap-6">
+                <CardContent className="pt-4 sm:pt-6">
+                  <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Análise ARLA</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
                     <div className="space-y-4">
                       <div>
                         <h4 className="font-medium text-sm text-muted-foreground">Volume Realizado (m³)</h4>
@@ -705,9 +705,9 @@ export const ApprovalDetailsModal = ({
 
               {/* Análise de Lucro Líquido com ARLA */}
               <Card>
-                <CardContent className="pt-6">
-                  <h3 className="text-lg font-semibold mb-4">Análise de Lucro Líquido</h3>
-                  <div className="grid grid-cols-2 gap-4">
+                <CardContent className="pt-4 sm:pt-6">
+                  <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Análise de Lucro Líquido</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border-2 border-slate-300 dark:border-slate-600">
                       {(() => {
                         // Lucro líquido = Lucro Total Projetado (com taxa) + Lucro ARLA 5%
@@ -793,9 +793,9 @@ export const ApprovalDetailsModal = ({
           {/* Análise de Lucro para outros tipos de Diesel */}
           {(dataToShow.product === 'diesel_comum' || dataToShow.product === 'diesel_s500') && dataToShow.volume_projected && (
             <Card>
-              <CardContent className="pt-6">
-                <h3 className="text-lg font-semibold mb-4">Análise de Lucro</h3>
-                <div className="grid grid-cols-2 gap-4">
+              <CardContent className="pt-4 sm:pt-6">
+                <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4">Análise de Lucro</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-lg border-2 border-slate-300 dark:border-slate-600">
                     {(() => {
                       const purchaseCost = dataToShow.purchase_cost || 0;
@@ -857,7 +857,7 @@ export const ApprovalDetailsModal = ({
 
           {/* Observações do Solicitante */}
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-4 sm:pt-6">
               <h4 className="font-medium text-sm text-muted-foreground mb-2">Observações do Solicitante</h4>
               <div className="bg-slate-50 dark:bg-slate-800/50 rounded-lg p-4 max-h-32 overflow-y-auto">
                 {dataToShow.observations ? (
@@ -872,32 +872,31 @@ export const ApprovalDetailsModal = ({
           {/* Histórico de Aprovações */}
           {approvalHistory.length > 0 && (
             <Card>
-              <CardContent className="pt-6">
-                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <CardContent className="pt-4 sm:pt-6">
+                <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
                   <MessageSquare className="h-5 w-5" />
                   Histórico de Aprovações
                 </h3>
                 <div className="space-y-4">
                   {approvalHistory.map((history, index) => (
-                    <div key={history.id} className="border-l-4 pl-4 py-2" 
-                         style={{ borderColor: history.action === 'approved' ? '#22c55e' : '#ef4444' }}>
-                      <div className="flex items-start justify-between">
+                    <div key={history.id} className={`border-l-4 pl-3 sm:pl-4 py-2 ${history.action === 'approved' ? 'border-green-500' : 'border-red-500'}`}>
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                         <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <User className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-semibold">{history.approver_name}</span>
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <User className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-muted-foreground" />
+                            <span className="font-semibold text-sm sm:text-base">{history.approver_name}</span>
                             <Badge variant={history.action === 'approved' ? 'default' : 'destructive'} className="text-xs">
                               {history.action === 'approved' ? 'Aprovado' : 'Rejeitado'}
                             </Badge>
                             <span className="text-xs text-muted-foreground">Nível {history.approval_level}</span>
                           </div>
                           {history.observations && (
-                            <p className="text-sm text-muted-foreground mt-2 italic">"{history.observations}"</p>
+                            <p className="text-xs sm:text-sm text-muted-foreground mt-2 italic break-words">"{history.observations}"</p>
                           )}
                         </div>
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Calendar className="h-3 w-3" />
-                          {formatDate(history.created_at)}
+                          <span className="text-[10px] sm:text-xs">{formatDate(history.created_at)}</span>
                         </div>
                       </div>
                     </div>
@@ -909,8 +908,8 @@ export const ApprovalDetailsModal = ({
 
           {/* Status de Aprovação Atual */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-3 gap-4">
+            <CardContent className="pt-4 sm:pt-6">
+              <div className="grid grid-cols-3 gap-2 sm:gap-4">
                 <div>
                   <h4 className="font-medium text-sm text-muted-foreground">Nível de Aprovação</h4>
                   <p className="text-lg font-bold">{dataToShow.approval_level || 1} de {dataToShow.total_approvers || 3}</p>
@@ -930,9 +929,9 @@ export const ApprovalDetailsModal = ({
           {/* Anexos */}
           {dataToShow.attachments && dataToShow.attachments.length > 0 && (
             <Card>
-              <CardContent className="pt-6">
+              <CardContent className="pt-4 sm:pt-6">
                 <h4 className="font-medium text-sm text-muted-foreground mb-3">Anexos</h4>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-2">
                   {dataToShow.attachments.map((url: string, index: number) => {
                     const fileName = url.split('/').pop() || `Anexo ${index + 1}`;
                     const isImage = url.match(/\.(jpg|jpeg|png|gif|webp)$/i);
@@ -992,7 +991,7 @@ export const ApprovalDetailsModal = ({
 
           {/* Data da Solicitação */}
           <Card>
-            <CardContent className="pt-6">
+            <CardContent className="pt-4 sm:pt-6">
               <h4 className="font-medium text-sm text-muted-foreground">Data da Solicitação</h4>
               <p className="font-medium">{formatDate(dataToShow.created_at)}</p>
             </CardContent>
@@ -1001,13 +1000,13 @@ export const ApprovalDetailsModal = ({
           {/* Ações de Aprovação - Apenas se status for pending E não for readOnly */}
           {dataToShow.status === 'pending' && !readOnly && (
             <Card className="bg-slate-50 dark:bg-slate-900">
-              <CardContent className="pt-6">
-                <div className="space-y-4">
+              <CardContent className="pt-4 sm:pt-6">
+                <div className="space-y-3 sm:space-y-4">
                   <div>
-                    <Label htmlFor="observations" className="text-base font-semibold">
+                    <Label htmlFor="observations" className="text-sm sm:text-base font-semibold">
                       Observações (obrigatório)
                     </Label>
-                    <p className="text-sm text-muted-foreground mb-2">
+                    <p className="text-xs sm:text-sm text-muted-foreground mb-2">
                       Deixe sua observação para o próximo aprovador ou para o solicitante
                     </p>
                     <Textarea
@@ -1016,16 +1015,16 @@ export const ApprovalDetailsModal = ({
                       value={observations}
                       onChange={(e) => setObservations(e.target.value)}
                       rows={4}
-                      className="resize-none"
+                      className="resize-none text-sm sm:text-base"
                     />
                   </div>
 
                   {onSuggestPrice && (
                     <div>
-                      <Label htmlFor="suggested-price" className="text-base font-semibold">
+                      <Label htmlFor="suggested-price" className="text-sm sm:text-base font-semibold">
                         Preço Sugerido (R$/L) - Opcional
                       </Label>
-                      <p className="text-sm text-muted-foreground mb-2">
+                      <p className="text-xs sm:text-sm text-muted-foreground mb-2">
                         Se desejar sugerir um preço diferente, informe abaixo
                       </p>
                       <Input
@@ -1080,24 +1079,24 @@ export const ApprovalDetailsModal = ({
 
                   <Separator />
 
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                     <Button
                       onClick={handleApprove}
                       disabled={loading || !observations.trim()}
-                      className="flex-1 bg-green-600 hover:bg-green-700"
+                      className="w-full sm:flex-1 bg-green-600 hover:bg-green-700"
                       size="lg"
                     >
-                      <Check className="h-5 w-5 mr-2" />
+                      <Check className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                       Aprovar
                     </Button>
                     <Button
                       onClick={handleReject}
                       disabled={loading || !observations.trim()}
                       variant="destructive"
-                      className="flex-1"
+                      className="w-full sm:flex-1"
                       size="lg"
                     >
-                      <X className="h-5 w-5 mr-2" />
+                      <X className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                       Rejeitar
                     </Button>
                     {onSuggestPrice && (
@@ -1105,22 +1104,22 @@ export const ApprovalDetailsModal = ({
                         onClick={handleSuggestPrice}
                         disabled={loading || !suggestedPrice.trim()}
                         variant="outline"
-                        className="flex-1 border-blue-600 text-blue-600 hover:bg-blue-50"
+                        className="w-full sm:flex-1 border-blue-600 text-blue-600 hover:bg-blue-50"
                         size="lg"
                       >
-                        <DollarSign className="h-5 w-5 mr-2" />
+                        <DollarSign className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
                         Sugerir Preço
                       </Button>
                     )}
                   </div>
                   
                   {!observations.trim() && (
-                    <p className="text-sm text-amber-600 text-center">
+                    <p className="text-xs sm:text-sm text-amber-600 text-center">
                       Por favor, adicione uma observação antes de aprovar ou rejeitar
                     </p>
                   )}
                   {onSuggestPrice && !suggestedPrice.trim() && (
-                    <p className="text-sm text-amber-600 text-center">
+                    <p className="text-xs sm:text-sm text-amber-600 text-center">
                       Por favor, informe um preço sugerido
                     </p>
                   )}
@@ -1130,8 +1129,8 @@ export const ApprovalDetailsModal = ({
           )}
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+        <DialogFooter className="flex-col sm:flex-row gap-2 sm:gap-0">
+          <Button variant="outline" onClick={onClose} className="w-full sm:w-auto">
             Fechar
           </Button>
         </DialogFooter>

@@ -3,8 +3,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Filter, Search } from "lucide-react";
-import { useDatabase } from "@/hooks/useDatabase";
+import { Filter } from "lucide-react";
+import { ClientCombobox } from "@/components/ClientCombobox";
+import { SisEmpresaCombobox } from "@/components/SisEmpresaCombobox";
 
 interface PriceHistoryFiltersProps {
   onFilter: (filters: any) => void;
@@ -12,14 +13,11 @@ interface PriceHistoryFiltersProps {
 
 export const PriceHistoryFilters = ({ onFilter }: PriceHistoryFiltersProps) => {
   const [filters, setFilters] = useState({
-    searchTerm: "",
     product: "all",
     sortBy: "date",
     stationId: "all",
     clientId: "all"
   });
-  
-  const { stations, clients } = useDatabase();
 
   const handleApplyFilters = () => {
     // Mapear os filtros para o formato esperado pela função de busca
@@ -27,26 +25,12 @@ export const PriceHistoryFilters = ({ onFilter }: PriceHistoryFiltersProps) => {
       product: filters.product,
       station: filters.stationId !== 'all' ? filters.stationId : undefined,
       client: filters.clientId !== 'all' ? filters.clientId : undefined,
-      searchTerm: filters.searchTerm || undefined,
       sortBy: filters.sortBy
     });
   };
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-secondary/20 rounded-lg">
-      <div className="space-y-2">
-        <Label>Buscar</Label>
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar..."
-            className="pl-8"
-            value={filters.searchTerm}
-            onChange={(e) => setFilters({...filters, searchTerm: e.target.value})}
-          />
-        </div>
-      </div>
-      
       <div className="space-y-2">
         <Label>Produto</Label>
         <Select value={filters.product} onValueChange={(value) => setFilters({...filters, product: value})}>
@@ -55,47 +39,63 @@ export const PriceHistoryFilters = ({ onFilter }: PriceHistoryFiltersProps) => {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos os produtos</SelectItem>
-            <SelectItem value="gasolina_comum">Gasolina Comum</SelectItem>
-            <SelectItem value="gasolina_aditivada">Gasolina Aditivada</SelectItem>
-            <SelectItem value="etanol">Etanol</SelectItem>
-            <SelectItem value="s10">S10</SelectItem>
-            <SelectItem value="s500">S500</SelectItem>
+            <SelectItem value="s10">Diesel S-10</SelectItem>
+            <SelectItem value="s10_aditivado">Diesel S-10 Aditivado</SelectItem>
+            <SelectItem value="diesel_s500">Diesel S-500</SelectItem>
+            <SelectItem value="diesel_s500_aditivado">Diesel S-500 Aditivado</SelectItem>
+            <SelectItem value="arla32_granel">Arla 32 Granel</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
       <div className="space-y-2">
         <Label>Posto</Label>
-        <Select value={filters.stationId} onValueChange={(value) => setFilters({...filters, stationId: value})}>
-          <SelectTrigger>
-            <SelectValue placeholder="Todos" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os postos</SelectItem>
-            {stations.map((station) => (
-              <SelectItem key={station.id} value={station.id}>
-                {station.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="relative">
+          <SisEmpresaCombobox
+            value={filters.stationId !== 'all' ? String(filters.stationId) : ''}
+            onSelect={(stationId, stationName) => {
+              setFilters({...filters, stationId: stationId ? String(stationId) : 'all'});
+            }}
+          />
+          {filters.stationId !== 'all' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1 h-7 w-7 p-0 z-10"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFilters({...filters, stationId: 'all'});
+              }}
+            >
+              ×
+            </Button>
+          )}
+        </div>
       </div>
       
       <div className="space-y-2">
         <Label>Cliente</Label>
-        <Select value={filters.clientId} onValueChange={(value) => setFilters({...filters, clientId: value})}>
-          <SelectTrigger>
-            <SelectValue placeholder="Todos" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os clientes</SelectItem>
-            {clients.map((client) => (
-              <SelectItem key={client.id} value={client.id}>
-                {client.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="relative">
+          <ClientCombobox
+            value={filters.clientId !== 'all' ? String(filters.clientId) : ''}
+            onSelect={(clientId, clientName) => {
+              setFilters({...filters, clientId: clientId ? String(clientId) : 'all'});
+            }}
+          />
+          {filters.clientId !== 'all' && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute right-1 top-1 h-7 w-7 p-0 z-10"
+              onClick={(e) => {
+                e.stopPropagation();
+                setFilters({...filters, clientId: 'all'});
+              }}
+            >
+              ×
+            </Button>
+          )}
+        </div>
       </div>
       
       <div className="space-y-2">

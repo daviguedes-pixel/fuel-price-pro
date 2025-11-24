@@ -6,7 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { NotificationsProvider } from "@/hooks/useNotifications";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
+// // import { ErrorBoundary } from "@/components/ErrorBoundary"; // Temporariamente desabilitado para debug // Temporariamente desabilitado para debug
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import PriceRequest from "./pages/PriceRequest";
@@ -76,8 +76,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 const App = () => {
   return (
-    <ErrorBoundary>
-      <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <Toaster />
           <Sonner />
@@ -110,7 +109,6 @@ const App = () => {
           </BrowserRouter>
         </TooltipProvider>
       </QueryClientProvider>
-    </ErrorBoundary>
   );
 };
 

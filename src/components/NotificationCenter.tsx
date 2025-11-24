@@ -139,6 +139,48 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
                           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                             {notification.message}
                           </p>
+                          {/* Exibir quem aprovou/rejeitou se disponível */}
+                          {(() => {
+                            // Debug: logar dados da notificação
+                            if (notification.type === 'price_approved' || notification.type === 'approved' || notification.type === 'price_rejected' || notification.type === 'rejected') {
+                              console.log('🔍 Notificação de aprovação/rejeição:', {
+                                id: notification.id,
+                                type: notification.type,
+                                data: notification.data,
+                                dataType: typeof notification.data,
+                                approved_by: notification.data?.approved_by,
+                                rejected_by: notification.data?.rejected_by,
+                                fullNotification: notification
+                              });
+                            }
+                            
+                            // Tentar múltiplas formas de acessar o approved_by
+                            const approvedBy = notification.data?.approved_by || 
+                                             (typeof notification.data === 'string' ? JSON.parse(notification.data)?.approved_by : null) ||
+                                             (notification as any).approved_by;
+                            
+                            const rejectedBy = notification.data?.rejected_by || 
+                                              (typeof notification.data === 'string' ? JSON.parse(notification.data)?.rejected_by : null) ||
+                                              (notification as any).rejected_by;
+                            
+                            if (approvedBy) {
+                              return (
+                                <p className="text-xs font-medium text-green-600 dark:text-green-400 mt-1">
+                                  Por: <span className="font-semibold">{approvedBy}</span>
+                                </p>
+                              );
+                            }
+                            
+                            if (rejectedBy) {
+                              return (
+                                <p className="text-xs font-medium text-red-600 dark:text-red-400 mt-1">
+                                  Por: <span className="font-semibold">{rejectedBy}</span>
+                                </p>
+                              );
+                            }
+                            
+                            return null;
+                          })()}
                           <p className="text-xs text-slate-500 dark:text-slate-500 mt-2">
                             {formatDistanceToNow(new Date(notification.created_at), {
                               addSuffix: true,

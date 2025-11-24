@@ -38,34 +38,213 @@ export default function PortfolioManager() {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Carregar histórico de preços
-      const { data: historyData } = await supabase
-        .from('price_history')
-        .select(`
-          *,
-          stations(name),
-          clients(name),
-          price_suggestions(status)
-        `)
-        .order('created_at', { ascending: false });
-
-      // Carregar sugestões de preço
-      const { data: suggestionsData } = await supabase
+      // SEMPRE buscar histórico de price_suggestions aprovadas
+      let historyData: any[] = [];
+      console.log('🔍 Carregando histórico de price_suggestions aprovadas...');
+      const { data: approvedSuggestions, error: approvedSuggestionsError } = await supabase
         .from('price_suggestions')
         .select('*')
-        .order('created_at', { ascending: false });
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false })
+        .limit(1000);
+      
+      if (!approvedSuggestionsError && approvedSuggestions && approvedSuggestions.length > 0) {
+        console.log('✅ Encontrados', approvedSuggestions.length, 'sugestões aprovadas');
+        
+        // Buscar IDs únicos
+        const stationIds = [...new Set(approvedSuggestions.map((s: any) => s.station_id).filter(Boolean))];
+        const clientIds = [...new Set(approvedSuggestions.map((s: any) => s.client_id).filter(Boolean))];
+        const approverIds = [...new Set(approvedSuggestions
+          .map((s: any) => s.approved_by)
+          .filter(Boolean)
+          .filter((id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+        )];
+        
+        // Buscar nomes dos postos em sis_empresa
+        const stationsMap = new Map<string, string>();
+        if (stationIds.length > 0) {
+          // Converter IDs para strings (id_empresa na tabela é text/varchar)
+          const stringIds = stationIds.map(id => String(id)).filter(Boolean);
+          
+          if (stringIds.length > 0) {
+            // Usar função RPC para buscar empresas do schema cotacao
+            const { data: sisEmpresaData, error: sisError } = await supabase.rpc('get_sis_empresa_by_ids', {
+              p_ids: stringIds
+            });
+            
+            if (sisError) {
+              console.error('❌ Erro ao buscar postos em sis_empresa via RPC:', sisError);
+            } else if (sisEmpresaData) {
+                sisEmpresaData.forEach((e: any) => {
+                  const stationId = String(e.id_empresa);
+                  stationsMap.set(stationId, e.nome_empresa || 'Posto Desconhecido');
+                });
+            }
+          }
+        }
+        
+        // Buscar nomes dos clientes em clientes
+        const clientsMap = new Map<string, string>();
+        if (clientIds.length > 0) {
+          const numericIds = clientIds.map(id => {
+            const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+            return isNaN(numId) ? null : numId;
+          }).filter(Boolean);
+          
+          if (numericIds.length > 0) {
+            const { data: clientesData } = await supabase
+              .from('clientes' as any)
+              .select('id_cliente, nome')
+              .in('id_cliente', numericIds);
+            
+            if (clientesData) {
+              clientesData.forEach((c: any) => {
+                const clientId = String(c.id_cliente);
+                clientsMap.set(clientId, c.nome);
+              });
+            }
+          }
+        }
+        
+        // Buscar nomes dos aprovadores
+        const approversMap = new Map<string, string>();
+        if (approverIds.length > 0) {
+          const { data: approversData } = await supabase
+            .from('user_profiles')
+            .select('user_id, nome, email')
+            .in('user_id', approverIds);
+          
+          if (approversData) {
+            approversData.forEach((a: any) => {
+              approversMap.set(a.user_id, a.nome || a.email);
+            });
+          }
+        }
+        
+        // Converter para formato de price_history
+        historyData = approvedSuggestions.map((suggestion: any) => ({
+          id: suggestion.id,
+          suggestion_id: suggestion.id,
+          station_id: suggestion.station_id,
+          client_id: suggestion.client_id,
+          product: suggestion.product,
+          old_price: null,
+          new_price: suggestion.final_price >= 100 ? suggestion.final_price / 100 : suggestion.final_price,
+          margin_cents: suggestion.margin_cents || 0,
+          approved_by: (() => {
+            const approverId = suggestion.approved_by;
+            if (!approverId) return 'Sistema';
+            if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(approverId)) {
+              return approversMap.get(approverId) || approverId;
+            }
+            return approverId;
+          })(),
+          change_type: null,
+          created_at: suggestion.approved_at || suggestion.created_at,
+          stations: suggestion.station_id ? (() => {
+            const stationId = String(suggestion.station_id);
+            return { name: stationsMap.get(stationId) || 'Posto Desconhecido' };
+          })() : null,
+          clients: suggestion.client_id ? (() => {
+            const clientId = String(suggestion.client_id);
+            return { name: clientsMap.get(clientId) || 'Cliente Desconhecido' };
+          })() : null,
+          price_suggestions: { status: suggestion.status, approved_by: suggestion.approved_by }
+        }));
+      }
 
-      // Carregar clientes
-      const { data: clientsData } = await supabase
-        .from('clientes' as any)
-        .select('id_cliente, nome');
+      // Carregar sugestões de preço
+      const { data: suggestionsData, error: suggestionsError } = await supabase
+        .from('price_suggestions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1000); // Limitar para performance
+      
+      if (suggestionsError) {
+        console.error('Erro ao carregar sugestões:', suggestionsError);
+      }
+
+      // Carregar clientes - tentar primeiro na tabela clients
+      let clientsData: any[] = [];
+      const { data: clients } = await supabase
+        .from('clients')
+        .select('id, name');
+      
+      if (clients && clients.length > 0) {
+        clientsData = clients.map(c => ({ id_cliente: c.id, nome: c.name }));
+      } else {
+        // Fallback para tabela clientes
+        const { data: clientesData } = await supabase
+          .from('clientes' as any)
+          .select('id_cliente, nome');
+        
+        if (clientesData) {
+          clientsData = clientesData;
+        }
+      }
 
       // Carregar perfis de usuário
-      const { data: profilesData } = await supabase
+      const { data: profilesData, error: profilesError } = await supabase
         .from('user_profiles')
         .select('user_id, email, nome');
+      
+      if (profilesError) {
+        console.error('Erro ao carregar perfis:', profilesError);
+      }
 
-      setPriceHistory(historyData || []);
+      // Enriquecer dados de histórico com nomes de postos e clientes
+      const enrichedHistory = await Promise.all(historyData.map(async (item: any) => {
+        // Buscar nome do posto se não vier
+        if (!item.stations?.name && item.station_id) {
+          try {
+            const { data: stationData } = await supabase
+              .from('stations')
+              .select('name')
+              .eq('id', item.station_id)
+              .maybeSingle();
+            
+            if (stationData?.name) {
+              item.stations = { name: stationData.name };
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do posto:', err);
+          }
+        }
+        
+        // Buscar nome do cliente se não vier
+        if (!item.clients?.name && item.client_id) {
+          try {
+            // Tentar clients primeiro
+            const { data: clientData } = await supabase
+              .from('clients')
+              .select('name')
+              .eq('id', item.client_id)
+              .maybeSingle();
+            
+            if (clientData?.name) {
+              item.clients = { name: clientData.name };
+            } else {
+              // Tentar clientes (formato antigo)
+              const { data: clientesData } = await supabase
+                .from('clientes' as any)
+                .select('nome')
+                .eq('id_cliente', item.client_id)
+                .maybeSingle();
+              
+              if (clientesData?.nome) {
+                item.clients = { name: clientesData.nome };
+              }
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do cliente:', err);
+          }
+        }
+        
+        return item;
+      }));
+      
+      setPriceHistory(enrichedHistory);
+      console.log('📊 Total de registros no histórico:', enrichedHistory.length);
       setSuggestions(suggestionsData || []);
       setClients(clientsData || []);
       setUserProfiles(profilesData || []);
@@ -162,8 +341,9 @@ export default function PortfolioManager() {
   const getProductDistributionData = () => {
     const productCounts: { [key: string]: number } = {};
 
-    priceHistory.forEach(history => {
-      const product = history.product || 'outro';
+    // Usar priceHistory (histórico) E suggestions (aprovadas) para ter dados completos
+    [...priceHistory, ...suggestions].forEach(item => {
+      const product = item.product || 'outro';
       productCounts[product] = (productCounts[product] || 0) + 1;
     });
 
@@ -172,8 +352,15 @@ export default function PortfolioManager() {
       'gasolina_aditivada': 'Gasolina Aditivada',
       'etanol': 'Etanol',
       's10': 'Diesel S-10',
+      'diesel_s10': 'Diesel S-10',
       's500': 'Diesel S-500',
-      'arla32_granel': 'ARLA 32'
+      'diesel_s500': 'Diesel S-500',
+      's10_aditivado': 'Diesel S-10 Aditivado',
+      'diesel_s10_aditivado': 'Diesel S-10 Aditivado',
+      's500_aditivado': 'Diesel S-500 Aditivado',
+      'diesel_s500_aditivado': 'Diesel S-500 Aditivado',
+      'arla32_granel': 'ARLA 32',
+      'arla': 'ARLA 32'
     };
 
     return Object.entries(productCounts).map(([product, count]) => ({
@@ -188,8 +375,12 @@ export default function PortfolioManager() {
 
     priceHistory.forEach(history => {
       const clientId = history.client_id;
-      const client = clients.find(c => String(c.id_cliente) === String(clientId));
-      const clientName = client?.nome || history.clients?.name || clientId || 'Cliente Desconhecido';
+      // Tentar buscar na lista de clientes carregada
+      const client = clients.find((c: any) => {
+        const clientIdStr = String(c.id_cliente || c.id || '');
+        return clientIdStr === String(clientId);
+      });
+      const clientName = client?.nome || client?.name || history.clients?.name || clientId || 'Cliente Desconhecido';
       
       if (!clientCounts[clientName]) {
         clientCounts[clientName] = { count: 0, name: clientName };
@@ -286,7 +477,16 @@ export default function PortfolioManager() {
               <h1 className="text-3xl font-bold mb-2">Gestor de Carteiras</h1>
               <p className="text-blue-100">Visualização completa de gráficos e estatísticas dos clientes</p>
             </div>
-            <Button variant="outline" className="bg-white/10 hover:bg-white/20 border-white/20 text-white">
+            <Button 
+              variant="outline" 
+              className="bg-white/10 hover:bg-white/20 border-white/20 text-white"
+              onClick={() => {
+                toast({
+                  title: "Exportar Relatório",
+                  description: "Funcionalidade em desenvolvimento"
+                });
+              }}
+            >
               <Download className="h-4 w-4 mr-2" />
               Exportar Relatório
             </Button>
@@ -367,21 +567,27 @@ export default function PortfolioManager() {
                   <CardDescription>Últimos 30 dias</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ChartContainer config={chartConfig}>
-                    <AreaChart data={priceEvolutionData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <ChartTooltip content={<ChartTooltipContent />} />
-                      <Area 
-                        type="monotone" 
-                        dataKey="aprovados" 
-                        stroke="hsl(var(--chart-1))" 
-                        fill="hsl(var(--chart-1))" 
-                        fillOpacity={0.2}
-                      />
-                    </AreaChart>
-                  </ChartContainer>
+                  {priceEvolutionData.length > 0 && priceEvolutionData.some(d => d.aprovados > 0) ? (
+                    <ChartContainer config={chartConfig}>
+                      <AreaChart data={priceEvolutionData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" />
+                        <YAxis />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Area 
+                          type="monotone" 
+                          dataKey="aprovados" 
+                          stroke="hsl(var(--chart-1))" 
+                          fill="hsl(var(--chart-1))" 
+                          fillOpacity={0.2}
+                        />
+                      </AreaChart>
+                    </ChartContainer>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground">Nenhum dado disponível para os últimos 30 dias</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -391,22 +597,28 @@ export default function PortfolioManager() {
                   <CardDescription>Últimos 30 dias</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <ChartContainer config={chartConfig}>
-                    <AreaChart data={priceEvolutionData}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <ChartTooltip content={<ChartTooltipContent />} />
-                      <Area 
-                        type="monotone" 
-                        dataKey="precoMedio" 
-                        stroke="hsl(var(--chart-2))" 
-                        fill="hsl(var(--chart-2))" 
-                        fillOpacity={0.2}
-                        strokeWidth={2}
-                      />
-                    </AreaChart>
-                  </ChartContainer>
+                  {priceEvolutionData.length > 0 && priceEvolutionData.some(d => d.precoMedio > 0) ? (
+                    <ChartContainer config={chartConfig}>
+                      <AreaChart data={priceEvolutionData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="date" />
+                        <YAxis />
+                        <ChartTooltip content={<ChartTooltipContent />} />
+                        <Area 
+                          type="monotone" 
+                          dataKey="precoMedio" 
+                          stroke="hsl(var(--chart-2))" 
+                          fill="hsl(var(--chart-2))" 
+                          fillOpacity={0.2}
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ChartContainer>
+                  ) : (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground">Nenhum dado disponível para os últimos 30 dias</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -420,15 +632,21 @@ export default function PortfolioManager() {
                 <CardDescription>Ranking de solicitantes por volume</CardDescription>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={chartConfig}>
-                  <BarChart data={topRequestersData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" />
-                    <YAxis dataKey="nome" type="category" width={150} />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="solicitacoes" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ChartContainer>
+                {topRequestersData.length > 0 ? (
+                  <ChartContainer config={chartConfig}>
+                    <BarChart data={topRequestersData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" />
+                      <YAxis dataKey="nome" type="category" width={150} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="solicitacoes" fill="hsl(var(--chart-1))" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">Nenhum dado de solicitantes disponível</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -441,15 +659,21 @@ export default function PortfolioManager() {
                 <CardDescription>Top 10 aprovadores por margem média</CardDescription>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={chartConfig}>
-                  <BarChart data={averageMarginData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="pessoa" angle={-45} textAnchor="end" height={100} />
-                    <YAxis />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="margemMedia" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ChartContainer>
+                {averageMarginData.length > 0 ? (
+                  <ChartContainer config={chartConfig}>
+                    <BarChart data={averageMarginData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="pessoa" angle={-45} textAnchor="end" height={100} />
+                      <YAxis />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="margemMedia" fill="hsl(var(--chart-3))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">Nenhum dado de margens disponível</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -462,25 +686,31 @@ export default function PortfolioManager() {
                 <CardDescription>Volume de aprovações por tipo de produto</CardDescription>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={chartConfig}>
-                  <PieChart>
-                    <Pie
-                      data={productDistributionData}
-                      dataKey="quantidade"
-                      nameKey="produto"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={120}
-                      label={({ produto, quantidade }) => `${produto}: ${quantidade}`}
-                    >
-                      {productDistributionData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <ChartLegend />
-                  </PieChart>
-                </ChartContainer>
+                {productDistributionData.length > 0 ? (
+                  <ChartContainer config={chartConfig}>
+                    <RechartsPieChart>
+                      <Pie
+                        data={productDistributionData}
+                        dataKey="quantidade"
+                        nameKey="produto"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        label={({ produto, quantidade }) => `${produto}: ${quantidade}`}
+                      >
+                        {productDistributionData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <ChartLegend />
+                    </RechartsPieChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">Nenhum dado de produtos disponível</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -493,15 +723,21 @@ export default function PortfolioManager() {
                 <CardDescription>Top 8 clientes por volume de aprovações</CardDescription>
               </CardHeader>
               <CardContent>
-                <ChartContainer config={chartConfig}>
-                  <BarChart data={clientVolumeData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="cliente" angle={-45} textAnchor="end" height={100} />
-                    <YAxis />
-                    <ChartTooltip content={<ChartTooltipContent />} />
-                    <Bar dataKey="volume" fill="hsl(var(--chart-5))" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ChartContainer>
+                {clientVolumeData.length > 0 ? (
+                  <ChartContainer config={chartConfig}>
+                    <BarChart data={clientVolumeData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="cliente" angle={-45} textAnchor="end" height={100} />
+                      <YAxis />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="volume" fill="hsl(var(--chart-5))" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ChartContainer>
+                ) : (
+                  <div className="text-center py-12">
+                    <p className="text-muted-foreground">Nenhum dado de clientes disponível</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

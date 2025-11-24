@@ -14,6 +14,8 @@ import { ArrowLeft, Save, CheckCircle, Building2, MapPin, X, Search, Upload, Dol
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { createWorker } from 'tesseract.js';
+import { validateWithSchema, getValidationErrors, referenceRegistrationSchema } from '@/lib/validations';
+import { logger } from '@/lib/logger';
 
 export default function ReferenceRegistration() {
   const navigate = useNavigate();
@@ -65,7 +67,7 @@ useEffect(() => {
       
       setSuggestedStations(data || []);
     } catch (error) {
-      console.error('Erro ao buscar concorrentes:', error);
+      logger.error('Erro ao buscar concorrentes:', error);
       setSuggestedStations([]);
     } finally {
       setSearchingStations(false);
@@ -92,7 +94,7 @@ useEffect(() => {
     setFormData(prev => ({ ...prev, station_id: String(station.id_posto) }));
     setStationSearch("");
     setSuggestedStations([]);
-    console.log('✅ Posto selecionado:', station.razao_social);
+    logger.log('✅ Posto selecionado:', station.razao_social);
   };
 
   const handleClearStation = () => {
@@ -104,8 +106,12 @@ useEffect(() => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.station_id || !formData.product || !formData.reference_price) {
-      toast.error("Por favor, preencha todos os campos obrigatórios");
+    // Validação com Zod
+    const validation = validateWithSchema(referenceRegistrationSchema, formData);
+    if (!validation.success) {
+      const errors = getValidationErrors(validation.errors);
+      const firstError = Object.values(errors)[0];
+      toast.error(firstError || "Por favor, preencha todos os campos obrigatórios");
       return;
     }
 
@@ -125,7 +131,7 @@ useEffect(() => {
             .from('concorrentes')
             .select('latitude, longitude, uf, municipio')
             .eq('id_posto', stationIdNum)
-            .maybeSingle() as any;
+            .maybeSingle();
           
           if (!concError && concMatch) {
             latitude = typeof concMatch?.latitude === 'string' ? parseFloat(concMatch.latitude) : concMatch?.latitude ?? null;
@@ -135,20 +141,7 @@ useEffect(() => {
           }
         }
       } catch (geoErr) {
-        console.warn('⚠️ Não foi possível obter coordenadas do posto:', geoErr);
-      }
-
-      // Validar que produto e preço estão preenchidos
-      if (!formData.product) {
-        toast.error("Por favor, selecione o produto antes de salvar");
-        setLoading(false);
-        return;
-      }
-      
-      if (!formData.reference_price || parseFloat(formData.reference_price) <= 0) {
-        toast.error("Por favor, informe o preço de referência antes de salvar");
-        setLoading(false);
-        return;
+        logger.warn('⚠️ Não foi possível obter coordenadas do posto:', geoErr);
       }
 
       const referenceData = {
@@ -167,9 +160,9 @@ useEffect(() => {
         cidade: cidade,
       };
 
-      console.log('🔍 Dados da referência a serem salvos:', referenceData);
-      console.log('📦 Produto:', referenceData.produto);
-      console.log('💰 Preço de referência:', referenceData.preco_referencia);
+      logger.log('🔍 Dados da referência a serem salvos:', referenceData);
+      logger.log('📦 Produto:', referenceData.produto);
+      logger.log('💰 Preço de referência:', referenceData.preco_referencia);
 
       // Tentar inserir com latitude/longitude; se a coluna não existir, tentar sem elas
       let insertResult: any = null;
@@ -196,7 +189,7 @@ useEffect(() => {
       if (error) {
         // Se a tabela referencias não existir, tentar salvar como price_suggestion
         if (error.message.includes('referencias')) {
-          console.log('Tabela referencias não encontrada, salvando como price_suggestion...');
+          logger.log('Tabela referencias não encontrada, salvando como price_suggestion...');
           const suggestionData = {
             station_id: formData.station_id,
             client_id: null,
@@ -269,7 +262,7 @@ useEffect(() => {
       setAttachments([]);
     } catch (error) {
       toast.error("Erro inesperado ao salvar referência");
-      console.error("Reference registration error:", error);
+      logger.error("Reference registration error:", error);
     } finally {
       setLoading(false);
     }

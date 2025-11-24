@@ -153,33 +153,25 @@ export default function MapView() {
 
   const fetchSisEmpresaStations = async () => {
     try {
-      console.log('🔍 Buscando estações da tabela sis_empresa...');
+      console.log('🔍 Buscando estações da tabela sis_empresa via RPC...');
       
-      // Buscar diretamente da tabela para ter acesso ao campo UF (mais confiável)
-      const { data: directData, error: directError } = await supabase
-        .from('sis_empresa' as any)
-        .select('nome_empresa, cnpj_cpf, latitude, longitude, bandeira, rede, municipio, uf, registro_ativo')
-        .not('latitude', 'is', null)
-        .not('longitude', 'is', null);
+      // Usar função RPC para buscar empresas do schema cotacao
+      const { data: rpcData, error: rpcError } = await supabase.rpc('get_sis_empresa_stations');
       
-      if (!directError && directData && directData.length > 0) {
-        console.log('✅ Estações encontradas diretamente:', directData.length);
-        setSisEmpresaStations(directData || []);
+      if (!rpcError && rpcData && rpcData.length > 0) {
+        // Filtrar apenas estações com coordenadas
+        const stationsWithCoords = rpcData.filter((station: any) => 
+          station.latitude != null && station.longitude != null
+        );
+        console.log('✅ Estações encontradas via RPC:', stationsWithCoords.length, 'de', rpcData.length, 'total');
+        setSisEmpresaStations(stationsWithCoords || []);
       } else {
-        if (directError) {
-          console.error('❌ Erro ao buscar estações diretamente:', directError);
-          // Fallback: tentar RPC se busca direta falhar
-          const { data: rpcData, error: rpcError } = await supabase.rpc('get_sis_empresa_stations');
-          if (!rpcError && rpcData && rpcData.length > 0) {
-            console.log('✅ Estações encontradas via RPC (fallback):', rpcData.length);
-            setSisEmpresaStations(rpcData || []);
-          } else {
-            setSisEmpresaStations([]);
-          }
+        if (rpcError) {
+          console.error('❌ Erro ao buscar estações via RPC:', rpcError);
         } else {
-          console.warn('⚠️ Nenhuma estação encontrada na tabela sis_empresa');
-          setSisEmpresaStations([]);
+          console.warn('⚠️ Nenhuma estação encontrada');
         }
+        setSisEmpresaStations([]);
       }
     } catch (err) {
       console.error('❌ Erro ao buscar estações de sis_empresa:', err);
@@ -578,10 +570,25 @@ export default function MapView() {
               </div>
               
               <LeafletMap
-                  stations={allStations.map(station => {
+                  stations={allStations.map((station, index) => {
                     console.log('🗺️ Enviando estação para o mapa:', station);
+                    // Criar ID único e válido: combinar hash do ID original com índice
+                    // Isso garante que nunca será NaN e sempre será único
+                    const createUniqueId = (id: string, idx: number): number => {
+                      // Criar hash do ID original
+                      const hash = id.split('').reduce((acc, char) => {
+                        const charCode = char.charCodeAt(0);
+                        return ((acc << 5) - acc) + charCode;
+                      }, 0);
+                      // Combinar hash com índice para garantir unicidade
+                      // Usar número positivo grande para evitar colisões
+                      return Math.abs(hash) * 1000000 + idx;
+                    };
+                    
+                    const uniqueId = createUniqueId(station.id, index);
+                    
                     return {
-                      id: parseInt(station.id.replace(/\D/g, '')), // Extract numeric ID
+                      id: uniqueId,
                       name: station.name,
                       lat: station.lat,
                       lng: station.lng,
@@ -593,7 +600,14 @@ export default function MapView() {
                     };
                   })}
                   selectedStation={selectedStation ? {
-                    id: parseInt(selectedStation.id.replace(/\D/g, '')),
+                    id: (() => {
+                      // Criar hash único para selectedStation também
+                      const hash = selectedStation.id.split('').reduce((acc, char) => {
+                        const charCode = char.charCodeAt(0);
+                        return ((acc << 5) - acc) + charCode;
+                      }, 0);
+                      return Math.abs(hash) * 1000000;
+                    })(),
                     name: selectedStation.name,
                     lat: selectedStation.lat,
                     lng: selectedStation.lng,

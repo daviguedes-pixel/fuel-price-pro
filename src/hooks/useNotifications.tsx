@@ -78,11 +78,27 @@ export const NotificationsProvider = ({ children }: { children: ReactNode }) => 
           read: n.read, 
           type: n.type, 
           title: n.title,
-          user_id: (n as any).user_id 
+          user_id: (n as any).user_id,
+          hasData: !!(n as any).data,
+          dataType: typeof (n as any).data,
+          data: (n as any).data
         }))
       });
       
-      setNotifications(data || []);
+      // Processar notificações para garantir que data seja um objeto
+      const processedNotifications = (data || []).map((n: any) => {
+        // Se data é uma string, tentar fazer parse
+        if (n.data && typeof n.data === 'string') {
+          try {
+            n.data = JSON.parse(n.data);
+          } catch (e) {
+            console.warn('⚠️ Erro ao fazer parse do campo data:', e, n.data);
+          }
+        }
+        return n;
+      });
+      
+      setNotifications(processedNotifications);
     } catch (error) {
       console.error('❌ Erro ao carregar notificações:', error);
       setNotifications([]);

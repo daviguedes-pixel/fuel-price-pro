@@ -14,7 +14,7 @@ import { FileUploader } from "@/components/FileUploader";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
 import { EditRequestModal } from "@/components/EditRequestModal";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { parseBrazilianDecimal, formatBrazilianCurrency, formatIntegerToPrice, parsePriceToInteger, generateUUID } from "@/lib/utils";
+import { parseBrazilianDecimal, formatBrazilianCurrency, formatIntegerToPrice, parsePriceToInteger, generateUUID, mapProductToEnum } from "@/lib/utils";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -309,6 +309,7 @@ export default function PriceRequest() {
     stationName: string;
     stationCode: string;
     location: string;
+    bandeira?: string;
     netResult: number;
     suggestionId: string;
     expanded: boolean;
@@ -922,12 +923,20 @@ export default function PriceRequest() {
     // console.log('🔄 Condição (!formData.product):', !formData.product);
 
     const fetchLowestCostAndFreight = async () => {
+      console.log('🚀 ===== INICIANDO BUSCA DE CUSTO =====');
+      console.log('🚀 station_id:', formData.station_id);
+      console.log('🚀 product:', formData.product);
+      console.log('🚀 lastSearchedStation:', lastSearchedStation);
+      console.log('🚀 lastSearchedProduct:', lastSearchedProduct);
+      
       // Só buscar se mudou o posto ou o produto
       if (formData.station_id === lastSearchedStation && formData.product === lastSearchedProduct) {
+        console.log('⏭️ Pulando busca - mesmo posto e produto');
         return;
       }
       
       if (!formData.station_id || !formData.product) {
+        console.log('⏭️ Pulando busca - falta station_id ou product');
         return;
       }
       
@@ -937,6 +946,7 @@ export default function PriceRequest() {
       
       try {
         const today = new Date().toISOString().split('T')[0];
+        console.log('📅 Data de hoje:', today);
         
         // Get the posto_id from the selected station
         const selectedStation = stations.find(s => s.id === formData.station_id);
@@ -947,6 +957,28 @@ export default function PriceRequest() {
         
         const rawId = selectedStation.code || selectedStation.id;
         const cleanedId = rawId.replace(/-\d+\.\d+$/, '');
+        
+        // Verificar se o posto é bandeira branca
+        let isBandeiraBranca = false;
+        try {
+          const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
+          if (cot) {
+            const { data: empresaInfo } = await cot
+              .from('sis_empresa')
+              .select('bandeira, nome_empresa')
+              .or(`nome_empresa.ilike.%${selectedStation.name}%,cnpj_cpf.eq.${cleanedId},cnpj_cpf.eq.${rawId}`)
+              .limit(1)
+              .maybeSingle();
+            
+            if (empresaInfo) {
+              const bandeiraUpper = (empresaInfo.bandeira || '').toUpperCase().trim();
+              isBandeiraBranca = !bandeiraUpper || bandeiraUpper === '' || bandeiraUpper === 'BANDEIRA BRANCA';
+              console.log('🏢 Bandeira do posto:', empresaInfo.bandeira, '| É branca?', isBandeiraBranca);
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ Erro ao verificar bandeira do posto:', err);
+        }
         
         // Mapear produto para termos usados na base de cotação
         const productMap: Record<string, string> = {
@@ -992,98 +1024,105 @@ export default function PriceRequest() {
           
           if (!e && d && Array.isArray(d) && d.length > 0) {
             resultData = d;
-            // Buscar bandeira da base_fornecedor se tiver base_id
-            if (resultData[0]?.base_id) {
-              try {
-                const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
-                if (cot) {
-                  const { data: baseInfo } = await cot
-                    .from('base_fornecedor')
-                    .select('bandeira,nome')
-                    .eq('id_base_fornecedor', resultData[0].base_id)
-                    .maybeSingle();
-                  
-                  if (baseInfo) {
-                    // Função auxiliar para extrair bandeira
-                    const extractBandeiraFromName = (nome: string, bandeira?: string | null): string => {
-                      if (bandeira && bandeira.trim() !== '') {
-                        const bandeiraUpper = bandeira.trim().toUpperCase();
-                        if (bandeiraUpper.includes('IPIRANGA') || bandeiraUpper.includes('IPP')) return 'IPIRANGA';
-                        if (bandeiraUpper.includes('RAIZEN') || bandeiraUpper.includes('RAÍZEN')) return 'RAÍZEN';
-                        if (bandeiraUpper.includes('PETROBRAS') || bandeiraUpper.includes('BR ')) return 'PETROBRAS';
-                        return bandeiraUpper;
-                      }
-                      
-                      const nomeUpper = nome.toUpperCase();
-                      const bandeiras = [
-                        { nome: 'VIBRA', patterns: ['VIBRA'] },
-                        { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
-                        { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
-                        { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
-                        { nome: 'SHELL', patterns: ['SHELL'] },
-                        { nome: 'COOP', patterns: ['COOP'] },
-                        { nome: 'UNO', patterns: ['UNO'] },
-                        { nome: 'ATEM', patterns: ['ATEM'] },
-                        { nome: 'ALE', patterns: ['ALE'] }
-                      ];
-                      
-                      for (const bandeiraItem of bandeiras) {
-                        for (const pattern of bandeiraItem.patterns) {
-                          if (nomeUpper.includes(pattern)) {
-                            return bandeiraItem.nome;
+            // A bandeira agora vem diretamente da função SQL (base_bandeira)
+            // Se não veio, buscar diretamente da tabela base_fornecedor
+            if (!resultData[0]?.base_bandeira || resultData[0].base_bandeira === '' || resultData[0].base_bandeira === 'N/A') {
+              if (resultData[0]?.base_id) {
+                try {
+                  console.log('🔍 Buscando bandeira diretamente da tabela base_fornecedor para base_id:', resultData[0].base_id);
+                  const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
+                  if (cot) {
+                    const { data: baseInfo, error: baseError } = await cot
+                      .from('base_fornecedor')
+                      .select('bandeira, nome')
+                      .eq('id_base_fornecedor', resultData[0].base_id)
+                      .maybeSingle();
+                    
+                    console.log('🔍 Resultado da busca na base_fornecedor:', { baseInfo, baseError });
+                    
+                    if (!baseError && baseInfo) {
+                      if (baseInfo.bandeira && baseInfo.bandeira.trim() !== '') {
+                        const bandeiraUpper = baseInfo.bandeira.trim().toUpperCase();
+                        // Se for bandeira branca, usar "BANDEIRA BRANCA"
+                        if (bandeiraUpper === 'BANDEIRA BRANCA' || bandeiraUpper === '' || !bandeiraUpper) {
+                          resultData[0].base_bandeira = 'BANDEIRA BRANCA';
+                        } else {
+                          resultData[0].base_bandeira = baseInfo.bandeira.trim();
+                        }
+                        console.log('✅ Bandeira encontrada na tabela:', resultData[0].base_bandeira);
+                      } else if (isBandeiraBranca) {
+                        // Se o posto é bandeira branca e a base não tem bandeira, usar "BANDEIRA BRANCA"
+                        resultData[0].base_bandeira = 'BANDEIRA BRANCA';
+                        console.log('✅ Posto é bandeira branca, usando BANDEIRA BRANCA');
+                      } else if (baseInfo.nome) {
+                        // Tentar extrair do nome
+                        console.log('🔍 Bandeira vazia, tentando extrair do nome:', baseInfo.nome);
+                        const nomeUpper = (baseInfo.nome || '').toUpperCase();
+                        const bandeiras = [
+                          { nome: 'VIBRA', patterns: ['VIBRA'] },
+                          { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                          { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                          { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO', 'BRASILIA'] },
+                          { nome: 'SHELL', patterns: ['SHELL'] },
+                          { nome: 'COOP', patterns: ['COOP'] },
+                          { nome: 'UNO', patterns: ['UNO'] },
+                          { nome: 'ATEM', patterns: ['ATEM'] },
+                          { nome: 'ALE', patterns: ['ALE'] }
+                        ];
+                        
+                        for (const bandeiraItem of bandeiras) {
+                          for (const pattern of bandeiraItem.patterns) {
+                            if (nomeUpper.includes(pattern)) {
+                              resultData[0].base_bandeira = bandeiraItem.nome;
+                              console.log('✅ Bandeira extraída do nome:', resultData[0].base_bandeira);
+                              break;
+                            }
                           }
+                          if (resultData[0].base_bandeira && resultData[0].base_bandeira !== 'N/A') break;
                         }
                       }
-                      return 'N/A';
-                    };
-                    
-                    resultData[0].base_bandeira = extractBandeiraFromName(baseInfo.nome || resultData[0].base_nome || '', baseInfo.bandeira);
-                  } else if (resultData[0]?.base_nome) {
-                    // Se não encontrou na tabela, tentar extrair do nome
-                    const nomeUpper = (resultData[0].base_nome || '').toUpperCase();
-                    const bandeiras = [
-                      { nome: 'VIBRA', patterns: ['VIBRA'] },
-                      { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
-                      { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
-                      { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
-                      { nome: 'SHELL', patterns: ['SHELL'] },
-                      { nome: 'COOP', patterns: ['COOP'] },
-                      { nome: 'UNO', patterns: ['UNO'] },
-                      { nome: 'ATEM', patterns: ['ATEM'] },
-                      { nome: 'ALE', patterns: ['ALE'] }
-                    ];
-                    
-                    for (const bandeiraItem of bandeiras) {
-                      for (const pattern of bandeiraItem.patterns) {
-                        if (nomeUpper.includes(pattern)) {
-                          resultData[0].base_bandeira = bandeiraItem.nome;
-                          break;
-                        }
+                    }
+                  }
+                } catch (err) {
+                  console.warn('⚠️ Erro ao buscar bandeira da tabela:', err);
+                }
+              }
+              
+              // Se ainda não encontrou, verificar se é bandeira branca
+              if (!resultData[0].base_bandeira || resultData[0].base_bandeira === '' || resultData[0].base_bandeira === 'N/A') {
+                if (isBandeiraBranca) {
+                  resultData[0].base_bandeira = 'BANDEIRA BRANCA';
+                  console.log('✅ Posto é bandeira branca, usando BANDEIRA BRANCA');
+                } else if (resultData[0]?.base_nome) {
+                  console.log('🔍 Tentando extrair bandeira do nome:', resultData[0].base_nome);
+                  const nomeUpper = (resultData[0].base_nome || '').toUpperCase();
+                  const bandeiras = [
+                    { nome: 'VIBRA', patterns: ['VIBRA'] },
+                    { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                    { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                    { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO', 'BRASILIA'] },
+                    { nome: 'SHELL', patterns: ['SHELL'] },
+                    { nome: 'COOP', patterns: ['COOP'] },
+                    { nome: 'UNO', patterns: ['UNO'] },
+                    { nome: 'ATEM', patterns: ['ATEM'] },
+                    { nome: 'ALE', patterns: ['ALE'] }
+                  ];
+                  
+                  for (const bandeiraItem of bandeiras) {
+                    for (const pattern of bandeiraItem.patterns) {
+                      if (nomeUpper.includes(pattern)) {
+                        resultData[0].base_bandeira = bandeiraItem.nome;
+                        console.log('✅ Bandeira extraída do nome (fallback):', resultData[0].base_bandeira);
+                        break;
                       }
-                      if (resultData[0].base_bandeira) break;
                     }
-                    
-                    if (!resultData[0].base_bandeira) {
-                      resultData[0].base_bandeira = 'N/A';
-                    }
+                    if (resultData[0].base_bandeira && resultData[0].base_bandeira !== 'N/A') break;
                   }
                 }
-              } catch (err) {
-                console.log('⚠️ Erro ao buscar bandeira:', err);
-                // Tentar extrair do nome como fallback
-                if (resultData[0]?.base_nome) {
-                  const nomeUpper = (resultData[0].base_nome || '').toUpperCase();
-                  if (nomeUpper.includes('IPIRANGA') || nomeUpper.includes('IPP')) {
-                    resultData[0].base_bandeira = 'IPIRANGA';
-                  } else if (nomeUpper.includes('RAIZEN') || nomeUpper.includes('RAÍZEN')) {
-                    resultData[0].base_bandeira = 'RAÍZEN';
-                  } else if (nomeUpper.includes('PETROBRAS') || nomeUpper.includes('BR ') || nomeUpper.includes('PETRO')) {
-                    resultData[0].base_bandeira = 'PETROBRAS';
-                  } else if (nomeUpper.includes('VIBRA')) {
-                    resultData[0].base_bandeira = 'VIBRA';
-                  } else {
-                    resultData[0].base_bandeira = 'N/A';
-                  }
+                
+                if (!resultData[0].base_bandeira || resultData[0].base_bandeira === '') {
+                  resultData[0].base_bandeira = 'N/A';
+                  console.log('⚠️ Bandeira não encontrada, usando N/A');
                 }
               }
             }
@@ -1244,7 +1283,29 @@ export default function PriceRequest() {
 
                   if (best) {
                     resultData = [best];
-                    console.log('✅ Fallback cotacao encontrou melhor custo:', best);
+                    const dataRef = best.data_referencia 
+                      ? new Date(best.data_referencia).toLocaleDateString('pt-BR', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                      : 'N/A';
+                    console.log('✅ Fallback cotacao encontrou melhor custo:', {
+                      base_id: best.base_id,
+                      base_nome: best.base_nome,
+                      base_codigo: best.base_codigo,
+                      base_uf: best.base_uf,
+                      base_bandeira: best.base_bandeira || 'N/A',
+                      forma_entrega: best.forma_entrega,
+                      data_referencia: dataRef,
+                      data_referencia_raw: best.data_referencia,
+                      custo: best.custo.toFixed(4),
+                      frete: best.frete.toFixed(4),
+                      custo_total: best.custo_total.toFixed(4),
+                      produto: produtoBusca
+                    });
                   }
                 }
               }
@@ -1265,6 +1326,16 @@ export default function PriceRequest() {
             .limit(1);
           const refArr = (ref as any[]) || [];
           if (refArr.length > 0) {
+            const dataRef = refArr[0].created_at 
+              ? new Date(refArr[0].created_at).toLocaleDateString('pt-BR', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })
+              : 'N/A';
+            
             resultData = [{
               base_codigo: refArr[0].posto_id,
               base_id: refArr[0].posto_id,
@@ -1277,13 +1348,33 @@ export default function PriceRequest() {
               forma_entrega: 'FOB',
               data_referencia: refArr[0].created_at
             }];
+            
+            console.log('✅ Referência manual encontrada:', {
+              base_nome: 'Referência',
+              base_codigo: refArr[0].posto_id,
+              base_bandeira: 'N/A',
+              forma_entrega: 'FOB',
+              data_referencia: dataRef,
+              data_referencia_raw: refArr[0].created_at,
+              custo: Number(refArr[0].preco_referencia).toFixed(4),
+              frete: '0.0000',
+              custo_total: Number(refArr[0].preco_referencia).toFixed(4),
+              produto: produtoBusca
+            });
           }
         }
 
         const data = resultData;
         const error = null;
 
-        console.log('📊 Resposta da função (com fallback):', { data, error });
+        console.log('📊 ===== RESPOSTA DA FUNÇÃO (COM FALLBACK) =====');
+        console.log('📊 data:', data);
+        console.log('📊 error:', error);
+        console.log('📊 data é array?', Array.isArray(data));
+        console.log('📊 data.length:', data?.length);
+        if (data && Array.isArray(data) && data.length > 0) {
+          console.log('📊 Primeiro item:', data[0]);
+        }
 
         if (error) {
           console.error('❌ Erro ao buscar menor custo:', error);
@@ -1293,14 +1384,140 @@ export default function PriceRequest() {
         }
 
         if (data && Array.isArray(data) && data.length > 0) {
+          console.log('✅ ===== PROCESSANDO RESULTADO =====');
           const result = data[0];
-          console.log('✅ Resultado encontrado:', result);
+          console.log('✅ result completo:', result);
           
           const custo = Number(result.custo || 0);
           const frete = Number(result.frete || 0);
           const custoTotal = Number(result.custo_total || 0);
           
-          console.log('💰 Valores convertidos:', { custo, frete, custoTotal });
+          console.log('💰 Valores numéricos:', { custo, frete, custoTotal });
+          
+          // Formatar data para exibição
+          const dataReferencia = result.data_referencia 
+            ? new Date(result.data_referencia).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : 'N/A';
+          
+          console.log('📅 Data formatada:', dataReferencia);
+          console.log('📅 Data raw:', result.data_referencia);
+          
+          // Verificar se a bandeira veio vazia e tentar extrair do nome
+          let bandeiraFinal = result.base_bandeira || '';
+          console.log('🚩 Bandeira original do banco:', bandeiraFinal);
+          
+          // Normalizar bandeira branca
+          if (bandeiraFinal) {
+            const bandeiraUpper = bandeiraFinal.toUpperCase().trim();
+            if (bandeiraUpper === '' || bandeiraUpper === 'BANDEIRA BRANCA') {
+              bandeiraFinal = 'BANDEIRA BRANCA';
+              console.log('🚩 Bandeira normalizada para BANDEIRA BRANCA');
+            }
+          }
+          
+          if (!bandeiraFinal || bandeiraFinal === '' || bandeiraFinal === 'N/A') {
+            // Verificar se o posto é bandeira branca
+            let isBandeiraBranca = false;
+            try {
+              const selectedStation = stations.find(s => s.id === formData.station_id);
+              if (selectedStation) {
+                const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
+                if (cot) {
+                  const { data: empresaInfo } = await cot
+                    .from('sis_empresa')
+                    .select('bandeira')
+                    .ilike('nome_empresa', `%${selectedStation.name}%`)
+                    .limit(1)
+                    .maybeSingle();
+                  
+                  if (empresaInfo) {
+                    const bandeiraUpper = (empresaInfo.bandeira || '').toUpperCase().trim();
+                    isBandeiraBranca = !bandeiraUpper || bandeiraUpper === '' || bandeiraUpper === 'BANDEIRA BRANCA';
+                  }
+                }
+              }
+            } catch (err) {
+              console.warn('⚠️ Erro ao verificar bandeira do posto:', err);
+            }
+            
+            if (isBandeiraBranca) {
+              bandeiraFinal = 'BANDEIRA BRANCA';
+              console.log('🚩 Posto é bandeira branca, usando BANDEIRA BRANCA');
+            } else if (result.base_nome) {
+              console.log('🚩 Bandeira vazia, tentando extrair do nome:', result.base_nome);
+              const nomeUpper = (result.base_nome || '').toUpperCase();
+              const bandeiras = [
+                { nome: 'VIBRA', patterns: ['VIBRA'] },
+                { nome: 'IPIRANGA', patterns: ['IPIRANGA', 'IPP'] },
+                { nome: 'RAÍZEN', patterns: ['RAIZEN', 'RAÍZEN'] },
+                { nome: 'PETROBRAS', patterns: ['PETROBRAS', 'BR ', ' BR', 'BR-', 'PETRO'] },
+                { nome: 'SHELL', patterns: ['SHELL'] },
+                { nome: 'COOP', patterns: ['COOP'] },
+                { nome: 'UNO', patterns: ['UNO'] },
+                { nome: 'ATEM', patterns: ['ATEM'] },
+                { nome: 'ALE', patterns: ['ALE'] }
+              ];
+              
+              for (const bandeiraItem of bandeiras) {
+                for (const pattern of bandeiraItem.patterns) {
+                  if (nomeUpper.includes(pattern)) {
+                    bandeiraFinal = bandeiraItem.nome;
+                    console.log('🚩 Bandeira extraída:', bandeiraFinal, 'do padrão:', pattern);
+                    break;
+                  }
+                }
+                if (bandeiraFinal && bandeiraFinal !== '') break;
+              }
+            }
+            
+            if (!bandeiraFinal || bandeiraFinal === '') {
+              bandeiraFinal = 'N/A';
+              console.log('🚩 Bandeira não encontrada, usando N/A');
+            }
+          }
+          
+          // Log detalhado com todas as informações
+          console.log('✅ ===== RESULTADO FINAL =====');
+          console.log('✅ base_id:', result.base_id);
+          console.log('✅ base_nome:', result.base_nome || 'N/A');
+          console.log('✅ base_codigo:', result.base_codigo || 'N/A');
+          console.log('✅ base_uf:', result.base_uf || 'N/A');
+          console.log('✅ base_bandeira:', bandeiraFinal);
+          console.log('✅ forma_entrega:', result.forma_entrega || 'N/A');
+          console.log('✅ data_referencia:', dataReferencia);
+          console.log('✅ data_referencia_raw:', result.data_referencia);
+          console.log('✅ custo:', custo.toFixed(4));
+          console.log('✅ frete:', frete.toFixed(4));
+          console.log('✅ custo_total:', custoTotal.toFixed(4));
+          console.log('✅ produto:', formData.product);
+          
+          // Log como objeto também
+          console.log('✅ Resultado completo (objeto):', {
+            base_id: result.base_id,
+            base_nome: result.base_nome || 'N/A',
+            base_codigo: result.base_codigo || 'N/A',
+            base_uf: result.base_uf || 'N/A',
+            base_bandeira: bandeiraFinal,
+            forma_entrega: result.forma_entrega || 'N/A',
+            data_referencia: dataReferencia,
+            data_referencia_raw: result.data_referencia,
+            custo: custo.toFixed(4),
+            frete: frete.toFixed(4),
+            custo_total: custoTotal.toFixed(4),
+            produto: formData.product
+          });
+          
+          console.log('💰 Valores convertidos:', { 
+            custo: custo.toFixed(4), 
+            frete: frete.toFixed(4), 
+            custoTotal: custoTotal.toFixed(4) 
+          });
           
           if (custoTotal > 0) {
             setFormData(prev => ({
@@ -1312,8 +1529,9 @@ export default function PriceRequest() {
             // Armazenar informações sobre a origem do preço
             setPriceOrigin({
               base_nome: result.base_nome || '',
-              base_bandeira: result.base_bandeira || 'N/A',
-              forma_entrega: result.forma_entrega || ''
+              base_bandeira: result.base_bandeira || result.base_bandeira || 'N/A',
+              forma_entrega: result.forma_entrega || '',
+              base_codigo: result.base_codigo || ''
             });
 
             const refDateIso = result.data_referencia ? new Date(result.data_referencia).toISOString().split('T')[0] : null;
@@ -1354,16 +1572,18 @@ export default function PriceRequest() {
                 if (!arlaData) {
                   console.log('🔄 Fallback: buscando ARLA direto na tabela cotacao.cotacao_arla...');
                   try {
-                    // Primeiro, resolver id_empresa
+                    // Primeiro, resolver id_empresa usando RPC
                     let resolvedIdEmpresa: number | null = null;
                     try {
-                      const { data: emp } = await (supabase as any).schema('cotacao')
-                        .from('sis_empresa')
-                        .select('id_empresa')
-                        .ilike('nome_empresa', `%${selectedStation.name}%`)
-                        .limit(1);
-                      resolvedIdEmpresa = (emp as any[])?.[0]?.id_empresa as number | undefined || null;
-                    } catch {}
+                      const { data: emp, error: empError } = await supabase.rpc('get_sis_empresa_id_by_name', {
+                        p_nome_empresa: selectedStation.name
+                      });
+                      if (!empError && emp && emp.length > 0) {
+                        resolvedIdEmpresa = emp[0].id_empresa as number | null;
+                      }
+                    } catch (err) {
+                      console.error('⚠️ Erro ao buscar id_empresa por nome:', err);
+                    }
                     
                     if (resolvedIdEmpresa) {
                       const cot: any = (supabase as any).schema ? (supabase as any).schema('cotacao') : null;
@@ -1551,13 +1771,20 @@ export default function PriceRequest() {
           product: formData.product
         });
         
+        // Mapear produto para valor válido do enum
+        const mappedProduct = mapProductToEnum(formData.product);
+        if (!mappedProduct) {
+          console.warn('⚠️ Produto não mapeado para enum:', formData.product);
+          return;
+        }
+        
         // Buscar último preço aprovado para essa combinação
         const { data, error } = await supabase
           .from('price_suggestions')
           .select('final_price, created_at')
           .eq('station_id', formData.station_id)
           .eq('client_id', formData.client_id)
-          .eq('product', formData.product)
+          .eq('product', mappedProduct)
           .eq('status', 'approved')
           .order('created_at', { ascending: false })
           .limit(1)
@@ -1904,10 +2131,34 @@ export default function PriceRequest() {
   };
 
   const handleSubmit = async (isDraft: boolean = false) => {
-    // Só validar campos obrigatórios se não for rascunho
-    if (!isDraft && ((!formData.station_id || formData.station_id === 'none') || !formData.client_id || !formData.product || !formData.suggested_price)) {
-      toast.error("Por favor, preencha todos os campos obrigatórios");
-      return;
+    // Validação com Zod (apenas se não for rascunho)
+    if (!isDraft) {
+      const { validateWithSchema, getValidationErrors, priceSuggestionSchema } = await import('@/lib/validations');
+      
+      // Normalizar dados do formulário para strings (schema espera strings)
+      const normalizedFormData = {
+        station_id: formData.station_id ? String(formData.station_id) : '',
+        client_id: formData.client_id ? String(formData.client_id) : '',
+        product: formData.product ? String(formData.product) : '',
+        suggested_price: formData.suggested_price ? String(formData.suggested_price) : '',
+        current_price: formData.current_price ? String(formData.current_price) : '',
+        purchase_cost: formData.purchase_cost ? String(formData.purchase_cost) : '',
+        freight_cost: formData.freight_cost ? String(formData.freight_cost) : '',
+        payment_method_id: formData.payment_method_id ? String(formData.payment_method_id) : undefined,
+        reference_id: formData.reference_id ? String(formData.reference_id) : undefined,
+        observations: formData.observations ? String(formData.observations) : undefined,
+        batch_name: formData.batch_name ? String(formData.batch_name) : undefined,
+      };
+      
+      const validation = validateWithSchema(priceSuggestionSchema, normalizedFormData);
+      
+      if (!validation.success) {
+        const errors = getValidationErrors(validation.errors);
+        console.error('❌ Erros de validação:', errors);
+        const firstError = Object.values(errors)[0];
+        toast.error(firstError || "Por favor, preencha todos os campos obrigatórios");
+        return;
+      }
     }
 
     setLoading(true);
@@ -1967,39 +2218,71 @@ export default function PriceRequest() {
         payment_method_id: paymentMethodIdToSave
       });
       
+      // Mapear produto para valor válido do enum
+      const mappedProduct = mapProductToEnum(formData.product);
+      if (!mappedProduct) {
+        toast.error('Produto inválido. Por favor, selecione um produto válido.');
+        return;
+      }
+      
+      // Garantir que valores numéricos sejam válidos
+      const safeCurrentPrice = (currentPrice && !isNaN(currentPrice) && isFinite(currentPrice)) ? currentPrice : null;
+      const safeSuggestedPrice = (suggestedPrice && !isNaN(suggestedPrice) && isFinite(suggestedPrice)) ? suggestedPrice : null;
+      const safeFinalPrice = (finalPrice && !isNaN(finalPrice) && isFinite(finalPrice)) ? finalPrice : 0;
+      const safeCostPrice = (costPrice && !isNaN(costPrice) && isFinite(costPrice)) ? costPrice : null;
+      const safeMargin = (margin && !isNaN(margin) && isFinite(margin)) ? Math.round(margin) : 0;
+
       const requestData = {
         station_id: stationIdToSave,
         // station_ids removido - coluna não existe na tabela
         client_id: clientIdToSave,
-        product: formData.product as any,
-        current_price: currentPrice,
-        suggested_price: suggestedPrice,
-        final_price: finalPrice ?? 0,
+        product: mappedProduct as any,
+        current_price: safeCurrentPrice,
+        suggested_price: safeSuggestedPrice,
+        final_price: safeFinalPrice,
         reference_id: referenceIdToSave,
         payment_method_id: paymentMethodIdToSave,
         observations: formData.observations || null,
-        attachments: attachments,
+        attachments: attachments.length > 0 ? attachments : null,
         requested_by: user?.id ? String(user.id) : (user?.email || ''),
         created_by: user?.id ? String(user.id) : (user?.email || ''),
-        margin_cents: margin, // Margem já está em centavos
-        cost_price: costPrice,
+        margin_cents: safeMargin, // Margem já está em centavos
+        cost_price: safeCostPrice,
         status: 'draft' as any, // Sempre salvar como draft ao adicionar
         // Dados de cálculo para análise
-        purchase_cost: parseBrazilianDecimal(formData.purchase_cost) || null,
-        freight_cost: parseBrazilianDecimal(formData.freight_cost) || null,
-        volume_made: parseBrazilianDecimal(formData.volume_made) || null,
-        volume_projected: parseBrazilianDecimal(formData.volume_projected) || null,
-        arla_purchase_price: (parsePriceToInteger(formData.arla_purchase_price) / 100) || null,
-        arla_cost_price: parseBrazilianDecimal(formData.arla_cost_price) || null,
+        purchase_cost: (() => {
+          const val = parseBrazilianDecimal(formData.purchase_cost);
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
+        freight_cost: (() => {
+          const val = parseBrazilianDecimal(formData.freight_cost);
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
+        volume_made: (() => {
+          const val = parseBrazilianDecimal(formData.volume_made);
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
+        volume_projected: (() => {
+          const val = parseBrazilianDecimal(formData.volume_projected);
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
+        arla_purchase_price: (() => {
+          const val = parsePriceToInteger(formData.arla_purchase_price) / 100;
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
+        arla_cost_price: (() => {
+          const val = parseBrazilianDecimal(formData.arla_cost_price);
+          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+        })(),
         // Origem do preço
         price_origin_base: priceOrigin?.base_nome || null,
         price_origin_bandeira: priceOrigin?.base_bandeira || null,
         price_origin_delivery: priceOrigin?.forma_entrega || null,
         // Aprovação multinível - usar configurações dinâmicas baseadas em margem
-        approval_level: 1, // Será ajustado pela regra se necessário
-        total_approvers: 3, // Será ajustado pela regra se necessário
-        approvals_count: 0,
-        rejections_count: 0
+        approval_level: 1 as number, // Será ajustado pela regra se necessário
+        total_approvers: 3 as number, // Será ajustado pela regra se necessário
+        approvals_count: 0 as number,
+        rejections_count: 0 as number
       };
 
       // Buscar regra de aprovação baseada na margem
@@ -2066,8 +2349,8 @@ export default function PriceRequest() {
       
       // Atualizar requestData com os valores finais
       // SEMPRE começar no nível 1, independentemente da regra
-      requestData.approval_level = 1;
-      requestData.total_approvers = finalTotalApprovers;
+      requestData.approval_level = Number(1);
+      requestData.total_approvers = Number(finalTotalApprovers) || 3;
 
       // REGRA CLARA:
       // - Se é a primeira solicitação (addedCards.length === 0) E não há múltiplos postos → NÃO gerar batch_id (singular)
@@ -2150,25 +2433,49 @@ export default function PriceRequest() {
           const station = stations.find(s => s.id === stationId || s.code === stationId);
           
           // Criar dados específicos para este posto
+          // Garantir valores numéricos válidos para este posto
+          const stationPurchaseCost = stationCost ? stationCost.purchase_cost : parseBrazilianDecimal(formData.purchase_cost);
+          const stationFreightCost = stationCost ? stationCost.freight_cost : parseBrazilianDecimal(formData.freight_cost);
+          const stationCostPrice = stationCost ? (stationCost.purchase_cost + stationCost.freight_cost) : costPrice;
+          const stationMargin = stationCost && stationCost.margin_cents !== undefined && !isNaN(stationCost.margin_cents)
+            ? Math.round(stationCost.margin_cents)
+            : safeMargin;
+
           const stationRequestData = {
             ...requestData,
             station_id: String(stationId),
             // Usar custos específicos deste posto se disponíveis
-            purchase_cost: stationCost ? stationCost.purchase_cost : parseBrazilianDecimal(formData.purchase_cost) || null,
-            freight_cost: stationCost ? stationCost.freight_cost : parseBrazilianDecimal(formData.freight_cost) || null,
-            cost_price: stationCost ? (stationCost.purchase_cost + stationCost.freight_cost) : costPrice,
+            purchase_cost: (stationPurchaseCost && !isNaN(stationPurchaseCost) && isFinite(stationPurchaseCost)) ? stationPurchaseCost : null,
+            freight_cost: (stationFreightCost && !isNaN(stationFreightCost) && isFinite(stationFreightCost)) ? stationFreightCost : null,
+            cost_price: (stationCostPrice && !isNaN(stationCostPrice) && isFinite(stationCostPrice)) ? stationCostPrice : null,
             // Recalcular margem para este posto
-            margin_cents: stationCost && stationCost.margin_cents !== undefined 
-              ? stationCost.margin_cents 
-              : margin,
+            margin_cents: stationMargin,
             batch_id: batchIdToUse // Todas as solicitações do mesmo lote terão o mesmo batch_id
           };
           
-          console.log(`📝 Criando solicitação para posto ${station?.name || stationId}:`, stationRequestData);
+          // Sanitizar dados antes do insert
+          const sanitizedStationData = {
+            ...stationRequestData,
+            station_id: String(stationRequestData.station_id),
+            client_id: stationRequestData.client_id ? String(stationRequestData.client_id) : null,
+            product: String(stationRequestData.product),
+            reference_id: stationRequestData.reference_id ? String(stationRequestData.reference_id) : null,
+            payment_method_id: stationRequestData.payment_method_id ? String(stationRequestData.payment_method_id) : null,
+            requested_by: String(stationRequestData.requested_by || ''),
+            created_by: String(stationRequestData.created_by || ''),
+            observations: stationRequestData.observations ? String(stationRequestData.observations) : null,
+            // Garantir que campos numéricos sejam números válidos
+            approval_level: Number(stationRequestData.approval_level) || 1,
+            total_approvers: Number(stationRequestData.total_approvers) || 3,
+            approvals_count: Number(stationRequestData.approvals_count) || 0,
+            rejections_count: Number(stationRequestData.rejections_count) || 0,
+          };
+          
+          console.log(`📝 Criando solicitação para posto ${station?.name || stationId}:`, sanitizedStationData);
           
           return supabase
             .from('price_suggestions')
-            .insert([stationRequestData])
+            .insert([sanitizedStationData])
             .select()
             .single();
         });
@@ -2203,21 +2510,52 @@ export default function PriceRequest() {
             const stationId = data.station_id;
             let stationData = null;
             
+            let bandeira = '';
             if (stationId) {
               try {
                 const station = stations.find(s => s.id === stationId || s.code === stationId);
                 if (station) {
                   stationData = { name: station.name, code: station.code || station.id };
+                  // Tentar buscar bandeira via RPC
+                  try {
+                    const { data: stationInfo } = await supabase.rpc('get_sis_empresa_by_ids', {
+                      p_ids: [String(stationId)]
+                    });
+                    if (stationInfo && stationInfo.length > 0) {
+                      bandeira = stationInfo[0].bandeira || '';
+                    }
+                  } catch (rpcErr) {
+                    console.warn('Erro ao buscar bandeira via RPC:', rpcErr);
+                  }
                 } else {
-                  // Tentar buscar do banco
-                  const { data: seByCnpj } = await supabase
-                    .from('sis_empresa' as any)
-                    .select('nome_empresa, cnpj_cpf')
-                    .eq('cnpj_cpf', stationId)
-                    .maybeSingle();
-                  
-                  if (seByCnpj) {
-                    stationData = { name: (seByCnpj as any).nome_empresa, code: (seByCnpj as any).cnpj_cpf };
+                  // Tentar buscar do banco via RPC
+                  try {
+                    const { data: stationInfo } = await supabase.rpc('get_sis_empresa_by_ids', {
+                      p_ids: [String(stationId)]
+                    });
+                    if (stationInfo && stationInfo.length > 0) {
+                      stationData = { 
+                        name: stationInfo[0].nome_empresa || stationId, 
+                        code: stationInfo[0].id_empresa || stationId 
+                      };
+                      bandeira = stationInfo[0].bandeira || '';
+                    }
+                  } catch (rpcErr) {
+                    console.warn('Erro ao buscar posto via RPC:', rpcErr);
+                    // Fallback para busca direta
+                    const { data: seByCnpj } = await supabase
+                      .from('sis_empresa' as any)
+                      .select('nome_empresa, cnpj_cpf, bandeira')
+                      .eq('cnpj_cpf', stationId)
+                      .maybeSingle();
+                    
+                    if (seByCnpj) {
+                      stationData = { 
+                        name: (seByCnpj as any).nome_empresa, 
+                        code: (seByCnpj as any).cnpj_cpf 
+                      };
+                      bandeira = (seByCnpj as any).bandeira || '';
+                    }
                   }
                 }
               } catch (err) {
@@ -2277,6 +2615,7 @@ export default function PriceRequest() {
               stationName: stationName,
               stationCode: stationCode,
               location: '',
+              bandeira: bandeira,
               netResult: netResult,
               suggestionId: data.id,
               expanded: false,
@@ -2322,9 +2661,45 @@ export default function PriceRequest() {
       // Código para um único posto (comportamento original)
       (requestData as any).batch_id = batchIdToUse;
       
+      // Garantir que campos TEXT sejam strings e campos NUMERIC sejam números
+      const sanitizedRequestData = {
+        ...requestData,
+        station_id: requestData.station_id ? String(requestData.station_id) : null,
+        client_id: requestData.client_id ? String(requestData.client_id) : null,
+        product: String(requestData.product),
+        reference_id: requestData.reference_id ? String(requestData.reference_id) : null,
+        payment_method_id: requestData.payment_method_id ? String(requestData.payment_method_id) : null,
+        requested_by: String(requestData.requested_by || ''),
+        created_by: String(requestData.created_by || ''),
+        observations: requestData.observations ? String(requestData.observations) : null,
+        // Campos numéricos devem ser números válidos ou null
+        current_price: safeCurrentPrice,
+        suggested_price: safeSuggestedPrice,
+        final_price: safeFinalPrice,
+        margin_cents: safeMargin,
+        cost_price: safeCostPrice,
+        approval_level: Number(requestData.approval_level) || 1,
+        total_approvers: Number(requestData.total_approvers) || 3,
+        approvals_count: Number(requestData.approvals_count) || 0,
+        rejections_count: Number(requestData.rejections_count) || 0,
+      };
+      
+      // Log detalhado dos dados antes do insert
+      console.log('📤 Dados a serem inseridos:', JSON.stringify(sanitizedRequestData, null, 2));
+      console.log('📤 Tipos dos dados:', {
+        station_id: typeof sanitizedRequestData.station_id,
+        client_id: typeof sanitizedRequestData.client_id,
+        product: typeof sanitizedRequestData.product,
+        current_price: typeof sanitizedRequestData.current_price,
+        suggested_price: typeof sanitizedRequestData.suggested_price,
+        final_price: typeof sanitizedRequestData.final_price,
+        margin_cents: typeof sanitizedRequestData.margin_cents,
+        cost_price: typeof sanitizedRequestData.cost_price,
+      });
+      
       const { data, error } = await supabase
         .from('price_suggestions')
-        .insert([requestData])
+        .insert([sanitizedRequestData])
         .select()
         .single();
 
@@ -2359,38 +2734,61 @@ export default function PriceRequest() {
       console.log('clients disponíveis:', clients.length);
       
       // Buscar posto - tentar vários campos
+      let bandeira = '';
       if (stationIdToSave) {
         try {
-          // Tentar por cnpj_cpf primeiro
-          const { data: seByCnpj, error: cnpjError } = await supabase
-            .from('sis_empresa' as any)
-            .select('nome_empresa, cnpj_cpf')
-            .eq('cnpj_cpf', stationIdToSave)
-            .maybeSingle();
+          // Tentar buscar via RPC primeiro (mais confiável)
+          try {
+            const { data: stationInfo } = await supabase.rpc('get_sis_empresa_by_ids', {
+              p_ids: [String(stationIdToSave)]
+            });
+            if (stationInfo && stationInfo.length > 0) {
+              stationData = { 
+                name: stationInfo[0].nome_empresa || stationIdToSave, 
+                code: stationInfo[0].id_empresa || stationIdToSave 
+              };
+              bandeira = stationInfo[0].bandeira || '';
+              console.log('✅ Posto encontrado via RPC:', stationData.name, 'Bandeira:', bandeira);
+            }
+          } catch (rpcErr) {
+            console.warn('Erro ao buscar posto via RPC:', rpcErr);
+          }
           
-          if (!cnpjError && seByCnpj) {
-            stationData = { name: (seByCnpj as any).nome_empresa, code: (seByCnpj as any).cnpj_cpf };
-            console.log('✅ Posto encontrado por CNPJ:', stationData.name);
-          } else {
-            // Tentar como UUID direto
-            const { data: seById, error: idError } = await supabase
+          // Se não encontrou via RPC, tentar outros métodos
+          if (!stationData) {
+            // Tentar por cnpj_cpf
+            const { data: seByCnpj, error: cnpjError } = await supabase
               .from('sis_empresa' as any)
-              .select('nome_empresa, cnpj_cpf')
-              .eq('id', stationIdToSave)
+              .select('nome_empresa, cnpj_cpf, bandeira')
+              .eq('cnpj_cpf', stationIdToSave)
               .maybeSingle();
             
-            if (!idError && seById) {
-              stationData = { name: (seById as any).nome_empresa, code: (seById as any).cnpj_cpf || stationIdToSave };
-              console.log('✅ Posto encontrado por ID:', stationData.name);
+            if (!cnpjError && seByCnpj) {
+              stationData = { name: (seByCnpj as any).nome_empresa, code: (seByCnpj as any).cnpj_cpf };
+              bandeira = (seByCnpj as any).bandeira || '';
+              console.log('✅ Posto encontrado por CNPJ:', stationData.name, 'Bandeira:', bandeira);
             } else {
-              // Buscar da lista de stations que já temos carregada
-              const foundStation = stations.find(s => s.id === stationIdToSave || s.code === stationIdToSave);
-              if (foundStation) {
-                stationData = { name: foundStation.name, code: foundStation.code || foundStation.id };
-                console.log('✅ Posto encontrado na lista:', stationData.name);
+              // Tentar como UUID direto
+              const { data: seById, error: idError } = await supabase
+                .from('sis_empresa' as any)
+                .select('nome_empresa, cnpj_cpf, bandeira')
+                .eq('id', stationIdToSave)
+                .maybeSingle();
+              
+              if (!idError && seById) {
+                stationData = { name: (seById as any).nome_empresa, code: (seById as any).cnpj_cpf || stationIdToSave };
+                bandeira = (seById as any).bandeira || '';
+                console.log('✅ Posto encontrado por ID:', stationData.name, 'Bandeira:', bandeira);
               } else {
-                console.warn('⚠️ Posto não encontrado para:', stationIdToSave);
-                console.warn('IDs disponíveis:', stations.map(s => ({ id: s.id, code: s.code })));
+                // Buscar da lista de stations que já temos carregada
+                const foundStation = stations.find(s => s.id === stationIdToSave || s.code === stationIdToSave);
+                if (foundStation) {
+                  stationData = { name: foundStation.name, code: foundStation.code || foundStation.id };
+                  console.log('✅ Posto encontrado na lista:', stationData.name);
+                } else {
+                  console.warn('⚠️ Posto não encontrado para:', stationIdToSave);
+                  console.warn('IDs disponíveis:', stations.map(s => ({ id: s.id, code: s.code })));
+                }
               }
             }
           }
@@ -2498,6 +2896,7 @@ export default function PriceRequest() {
           stationName: stationName,
           stationCode: stationCode,
           location: location || 'N/A',
+          bandeira: bandeira,
           netResult: netResult,
           suggestionId: data.id,
           expanded: false,
@@ -3037,18 +3436,53 @@ export default function PriceRequest() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Nenhum</SelectItem>
-                        {(stationPaymentMethods.filter(m => m.TAXA != null).length > 0 ? 
-                          stationPaymentMethods.filter(m => m.TAXA != null) : 
-                          paymentMethods?.filter(m => m.TAXA != null) || []
-                        ).map((method, index) => {
-                          // Use ID_POSTO as the value, or id if available
-                          const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
-                          return (
-                            <SelectItem key={`payment-${index}`} value={String(methodId)}>
-                              {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
-                            </SelectItem>
-                          );
-                        })}
+                        {(() => {
+                          // Se tem posto selecionado, usar métodos do posto (já agrupados por posto)
+                          if (stationPaymentMethods.length > 0) {
+                            // Agrupar por CARTAO e ID_POSTO para evitar duplicatas
+                            const grouped = new Map<string, any>();
+                            stationPaymentMethods
+                              .filter(m => m.TAXA != null)
+                              .forEach(method => {
+                                const key = `${method.CARTAO}_${method.ID_POSTO || 'all'}`;
+                                if (!grouped.has(key)) {
+                                  grouped.set(key, method);
+                                }
+                              });
+                            return Array.from(grouped.values()).map((method, index) => {
+                              const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
+                              return (
+                                <SelectItem key={`payment-station-${index}-${methodId}`} value={String(methodId)}>
+                                  {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
+                                </SelectItem>
+                              );
+                            });
+                          }
+                          
+                          // Se não tem posto selecionado, agrupar por nome (CARTAO) e mostrar apenas 1 de cada
+                          if (paymentMethods && paymentMethods.length > 0) {
+                            // Agrupar por CARTAO - pegar apenas o primeiro de cada tipo
+                            const groupedByName = new Map<string, any>();
+                            paymentMethods
+                              .filter(m => m.TAXA != null)
+                              .forEach(method => {
+                                const cardName = method.CARTAO;
+                                if (cardName && !groupedByName.has(cardName)) {
+                                  groupedByName.set(cardName, method);
+                                }
+                              });
+                            return Array.from(groupedByName.values()).map((method, index) => {
+                              const methodId = method.CARTAO; // Usar CARTAO como ID quando não tem posto
+                              return (
+                                <SelectItem key={`payment-all-${index}-${methodId}`} value={String(methodId)}>
+                                  {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
+                                </SelectItem>
+                              );
+                            });
+                          }
+                          
+                          return [];
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
@@ -3261,11 +3695,59 @@ export default function PriceRequest() {
                       onWheel={(e) => e.currentTarget.blur()}
                       className="h-9 bg-slate-100 dark:bg-slate-700 cursor-not-allowed"
                     />
-                    {priceOrigin && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        📍 {priceOrigin.base_bandeira} - {priceOrigin.base_nome} | {priceOrigin.forma_entrega}
-                      </p>
-                    )}
+                    {/* Visualização de Custo e Origem */}
+                    <div className="mt-2 space-y-2">
+                      {priceOrigin && (
+                        <div className="p-2 bg-slate-50 dark:bg-slate-800 rounded-md border border-slate-200 dark:border-slate-700">
+                          <div className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                            Origem do Custo:
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 space-y-0.5">
+                            {priceOrigin.base_bandeira && priceOrigin.base_bandeira !== 'N/A' && (
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium">🚩 Bandeira:</span>
+                                <span>{priceOrigin.base_bandeira}</span>
+                              </div>
+                            )}
+                            {priceOrigin.base_nome && (
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium">📍 Base:</span>
+                                <span>{priceOrigin.base_nome}</span>
+                                {priceOrigin.base_codigo && (
+                                  <span className="text-slate-500">({priceOrigin.base_codigo})</span>
+                                )}
+                              </div>
+                            )}
+                            {priceOrigin.forma_entrega && (
+                              <div className="flex items-center gap-1">
+                                <span className="font-medium">🚚 Entrega:</span>
+                                <span>{priceOrigin.forma_entrega}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {/* Custo Total */}
+                      {formData.purchase_cost && formData.freight_cost && (() => {
+                        const purchaseCost = parseFloat(String(formData.purchase_cost).replace(',', '.')) || 0;
+                        const freightCost = parseFloat(String(formData.freight_cost).replace(',', '.')) || 0;
+                        const totalCost = purchaseCost + freightCost;
+                        return totalCost > 0 ? (
+                          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 rounded-md border border-blue-200 dark:border-blue-800">
+                            <div className="text-xs font-semibold text-blue-700 dark:text-blue-300 mb-1">
+                              Custo Total:
+                            </div>
+                            <div className="text-sm font-bold text-blue-900 dark:text-blue-100">
+                              {formatBrazilianCurrency(totalCost)}
+                            </div>
+                            <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                              Custo: {formatBrazilianCurrency(purchaseCost)} + 
+                              Frete: {formatBrazilianCurrency(freightCost)}
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
+                    </div>
                     {fetchStatus && (
                       <Alert className="mt-2">
                         <AlertTitle>
@@ -3405,7 +3887,7 @@ export default function PriceRequest() {
                             </h3>
                           </div>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            {card.location}
+                            {card.bandeira || card.location || 'N/A'}
                           </p>
                         </div>
                         <div className="flex items-center gap-4">

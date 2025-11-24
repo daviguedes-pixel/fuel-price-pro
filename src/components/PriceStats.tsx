@@ -11,6 +11,7 @@ interface PriceStats {
   rejectedChanges: number;
   averageIncrease: number;
   averageDecrease: number;
+  averageMargin?: number;
   totalClients: number;
   totalStations: number;
   recentActivity: number; // changes in last 7 days
@@ -69,15 +70,23 @@ export function PriceStats({ stats }: PriceStatsProps) {
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-red-500" />
               <span className="text-sm font-medium text-red-600">
-                +{formatBrazilianCurrency(stats.averageIncrease)}
+                +{formatBrazilianCurrency(stats.averageIncrease || 0)}
               </span>
             </div>
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-green-500" />
               <span className="text-sm font-medium text-green-600">
-                -{formatBrazilianCurrency(stats.averageDecrease)}
+                -{formatBrazilianCurrency(stats.averageDecrease || 0)}
               </span>
             </div>
+            {stats.averageMargin > 0 && (
+              <div className="flex items-center gap-2 mt-2 pt-2 border-t">
+                <DollarSign className="h-4 w-4 text-blue-500" />
+                <span className="text-xs text-muted-foreground">
+                  Margem média: {formatBrazilianCurrency(stats.averageMargin)}
+                </span>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

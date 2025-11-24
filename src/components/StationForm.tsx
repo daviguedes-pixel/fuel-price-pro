@@ -21,7 +21,20 @@ export const StationForm = ({ onSuccess }: { onSuccess?: () => void }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.code) {
+    // Validação com Zod
+    const { validateWithSchema, getValidationErrors, stationSchema } = await import('@/lib/validations');
+    const validation = validateWithSchema(stationSchema, formData);
+    
+    if (!validation.success) {
+      const errors = getValidationErrors(validation.errors);
+      const firstError = Object.values(errors)[0];
+      // Usar toast se disponível, senão console.error
+      try {
+        const { toast } = await import('sonner');
+        toast.error(firstError || "Por favor, corrija os erros no formulário");
+      } catch {
+        console.error('Erros de validação:', errors);
+      }
       return;
     }
 

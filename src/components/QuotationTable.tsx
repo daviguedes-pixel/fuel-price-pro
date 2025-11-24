@@ -62,92 +62,173 @@ export default function QuotationTable({
     try {
       setLoading(true)
       
-      console.log('🔍 Iniciando carregamento...')
+      console.log('🔍 Iniciando carregamento...', { mode })
       
-      // AMBAS as abas (referencias e pesquisas) agora acessam a MESMA tabela competitor_research
-      // A diferença é que referencias filtra apenas concorrentes (station_type = 'concorrente')
-      // E pesquisas mostra todos (concorrentes + próprios)
+      let cotacoesArray: any[] = []
 
-      // Buscar pesquisas de preços públicos
-      // Na aba "pesquisas" mostra todos (concorrentes + próprios)
-      // Na aba "referências" mostra apenas concorrentes via filtro station_type
-      let query = supabase
-        .from('competitor_research')
-        .select(`
-          id,
-          product,
-          price,
-          created_at,
-          station_name,
-          address,
-          station_type,
-          notes,
-          attachments,
-          created_by
-        `)
+      if (mode === 'referencias') {
+        // Modo referências: buscar da tabela referencias (mesmo padrão do mapa)
+        console.log('🔍 Modo referências - buscando da tabela referencias')
+        
+        const { data: referencias, error: refError } = await supabase
+          .from('referencias')
+          .select('*')
+          .order('created_at', { ascending: false })
 
-      // Se estiver em modo pesquisas, mostrar todos (concorrentes + próprios)
-      // Se estiver em modo referências, filtrar apenas concorrentes (será tratado no modo referencias)
-      
-      const { data: pesquisas, error: pesqError } = await query.order('created_at', { ascending: false })
+        console.log('🔍 Referências encontradas:', referencias?.length || 0, 'erro:', refError)
+        console.log('🔍 Primeira referência (amostra):', referencias?.[0])
 
-      console.log('🔍 Pesquisas:', pesquisas?.length || 0, 'erro:', pesqError)
-      console.log('🔍 Dados das pesquisas:', pesquisas)
-
-      if (pesqError) {
-        console.error('Erro ao carregar pesquisas:', pesqError)
-        toast.error('Erro ao carregar pesquisas')
-        return
-      }
-
-      // Processar apenas pesquisas - manter apenas a mais recente por posto+produto
-      const cotacoesPesq = (pesquisas || [])
-        .filter(pesq => {
-          // No modo pesquisas: mostrar todos (concorrentes + próprios)
-          // No modo referências: mostrar apenas concorrentes
-          if (mode === 'referencias') {
-            const isConcorrente = pesq.station_type === 'concorrente';
-            console.log(`🔍 Filtro Referências - station_type: ${pesq.station_type}, é concorrente: ${isConcorrente}`);
-            return isConcorrente;
-          }
-          return true; // Mostrar todos em modo pesquisas
-        })
-        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()) // Ordenar por data mais recente primeiro
-        .reduce((acc, pesq) => {
-          const cidade = pesq.address ? pesq.address.split(',')[0]?.trim() : ''
-          const estado = pesq.address ? pesq.address.split(',')[1]?.trim() : ''
+        if (refError) {
+          console.error('Erro ao carregar referências:', refError)
+          toast.error('Erro ao carregar referências')
+        }
+        
+        // Processar mesmo se houver erro (pode ter dados parciais)
+        if (referencias && referencias.length > 0) {
+          // Buscar nomes dos postos dos concorrentes (mesmo padrão do mapa)
+          const uniqueIds = Array.from(new Set(referencias.map((r: any) => r.posto_id))).filter(Boolean)
           
-          const key = `${pesq.station_name}-${pesq.product}` // Chave única por posto+produto
+          let postoMap = new Map<string, string>()
+          let ufMap = new Map<string, string>()
+          let cidadeMap = new Map<string, string>()
           
-          // Se já não existe uma cotação para este posto+produto, adiciona
-          if (!acc[key]) {
-            acc[key] = {
-              id: pesq.id,
-              posto_nome: pesq.station_name || 'Posto Desconhecido',
-              posto_tipo: (pesq.station_type === 'concorrente' ? 'concorrente' : 'proprio') as 'proprio' | 'concorrente',
-              produto: pesq.product,
-              preco_referencia: 0,
-              preco_pesquisa: pesq.price,
-              cidade,
-              estado,
-              latitude: 0,
-              longitude: 0,
-              data_atualizacao: pesq.created_at,
-              fonte: 'pesquisa' as const,
-              expirado: false
+          if (uniqueIds.length > 0) {
+            // Tentar converter para números (id_posto é numérico)
+            const numericIds = uniqueIds.map((id: any) => Number(id)).filter((n: any) => !isNaN(n))
+            
+            // Buscar em concorrentes (mesmo padrão do mapa)
+            const { data: concorrentes, error: concErr } = await supabase
+              .from('concorrentes')
+              .select('id_posto, razao_social, municipio, uf')
+              .in('id_posto', (numericIds.length > 0 ? numericIds : uniqueIds) as any[])
+
+            if (!concErr && concorrentes) {
+              console.log('🔍 Concorrentes encontrados:', concorrentes.length)
+              concorrentes.forEach(conc => {
+                const idKey = String(conc.id_posto)
+                postoMap.set(idKey, conc.razao_social || 'Posto Desconhecido')
+                if (conc.uf) ufMap.set(idKey, conc.uf)
+                if (conc.municipio) cidadeMap.set(idKey, conc.municipio)
+              })
+            } else if (concErr) {
+              console.warn('⚠️ Erro ao buscar concorrentes:', concErr)
             }
           }
           
-          return acc
-        }, {} as Record<string, any>)
+          console.log('🔍 PostoMap criado com', postoMap.size, 'entradas')
+
+          // Processar referências - manter apenas a mais recente por posto+produto
+          const cotacoesRef = referencias
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+            .reduce((acc, ref: any) => {
+              const idKey = String(ref.posto_id)
+              const postoNome = postoMap.get(idKey) || ref.posto_id || 'Posto Desconhecido'
+              const estado = ref.uf || ufMap.get(idKey) || ''
+              const cidade = ref.cidade || cidadeMap.get(idKey) || ''
+              
+              const key = `${postoNome}-${ref.produto}`
+              
+              // Se já não existe uma cotação para este posto+produto, adiciona
+              if (!acc[key]) {
+                // Normalizar nome do produto
+                const produtoNormalizado = normalizeProduct(ref.produto)
+              
+                acc[key] = {
+                  id: ref.id,
+                  posto_nome: postoNome,
+                  posto_tipo: 'concorrente' as const,
+                  produto: ref.produto, // Manter original
+                  produto_normalizado: produtoNormalizado, // Versão normalizada
+                  preco_referencia: Number(ref.preco_referencia) || 0,
+                  preco_pesquisa: Number(ref.preco_referencia) || 0,
+                  cidade: cidade,
+                  estado: estado,
+                  latitude: ref.latitude || 0,
+                  longitude: ref.longitude || 0,
+                  data_atualizacao: ref.created_at,
+                  fonte: 'referencia' as const,
+                  expirado: false
+                }
+              }
+              
+              return acc
+            }, {} as Record<string, any>)
+          
+          cotacoesArray = Object.values(cotacoesRef)
+          console.log('🔍 Cotações de referências processadas:', cotacoesArray.length)
+          console.log('🔍 Amostra de cotações:', cotacoesArray.slice(0, 3))
+        } else {
+          console.warn('⚠️ Nenhuma referência encontrada na tabela referencias')
+        }
+      } else {
+        // Modo pesquisas: buscar de competitor_research
+        console.log('🔍 Modo pesquisas - buscando de competitor_research')
         
-      // Converter de objeto para array
-      const cotacoesPesqArray = Object.values(cotacoesPesq)
+        const { data: pesquisas, error: pesqError } = await supabase
+          .from('competitor_research')
+          .select(`
+            id,
+            product,
+            price,
+            created_at,
+            station_name,
+            address,
+            station_type,
+            notes,
+            attachments,
+            created_by
+          `)
+          .order('created_at', { ascending: false })
 
-      console.log('🔍 Cotações de pesquisa processadas:', cotacoesPesqArray.length)
-      console.log('🔍 Total de cotações:', cotacoesPesqArray.length)
+        console.log('🔍 Pesquisas:', pesquisas?.length || 0, 'erro:', pesqError)
 
-      setCotacoes(cotacoesPesqArray)
+        if (pesqError) {
+          console.error('Erro ao carregar pesquisas:', pesqError)
+          toast.error('Erro ao carregar pesquisas')
+          return
+        }
+
+        // Processar pesquisas - manter apenas a mais recente por posto+produto
+        const cotacoesPesq = (pesquisas || [])
+          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+          .reduce((acc, pesq) => {
+            const cidade = pesq.address ? pesq.address.split(',')[0]?.trim() : ''
+            const estado = pesq.address ? pesq.address.split(',')[1]?.trim() : ''
+            
+            const key = `${pesq.station_name}-${pesq.product}`
+            
+            if (!acc[key]) {
+              // Normalizar nome do produto usando a função normalizeProduct
+              const produtoNormalizado = normalizeProduct(pesq.product)
+              
+              acc[key] = {
+                id: pesq.id,
+                posto_nome: pesq.station_name || 'Posto Desconhecido',
+                posto_tipo: (pesq.station_type === 'concorrente' ? 'concorrente' : 'proprio') as 'proprio' | 'concorrente',
+                produto: pesq.product, // Manter original
+                produto_normalizado: produtoNormalizado, // Versão normalizada
+                preco_referencia: 0,
+                preco_pesquisa: pesq.price,
+                cidade,
+                estado,
+                latitude: 0,
+                longitude: 0,
+                data_atualizacao: pesq.created_at,
+                fonte: 'pesquisa' as const,
+                expirado: false
+              }
+            }
+            
+            return acc
+          }, {} as Record<string, any>)
+        
+        cotacoesArray = Object.values(cotacoesPesq)
+        console.log('🔍 Cotações de pesquisa processadas:', cotacoesArray.length)
+      }
+
+      console.log('🔍 Total de cotações:', cotacoesArray.length)
+
+      setCotacoes(cotacoesArray)
     } catch (error) {
       console.error('Erro ao carregar cotações:', error)
       toast.error('Erro ao carregar cotações')
@@ -160,8 +241,14 @@ export default function QuotationTable({
     loadCotacoes()
   }, [mode])
 
+  // Normalizar produtos nas cotações antes de filtrar
+  const cotacoesComNormalizacao = cotacoes.map(c => ({
+    ...c,
+    produto_normalizado: c.produto_normalizado || normalizeProduct(c.produto)
+  }))
+
   // Filtrar cotações com busca dinâmica (palavras parciais em qualquer ordem)
-  const filteredCotacoes = cotacoes.filter(cotacao => {
+  const filteredCotacoes = cotacoesComNormalizacao.filter(cotacao => {
     // Busca flexível: aceita palavras parciais em qualquer ordem
     if (searchTerm) {
       const searchWords = searchTerm.toLowerCase().split(/\s+/).filter(w => w.length > 0);
@@ -175,7 +262,10 @@ export default function QuotationTable({
     const matchesRegion = filterRegion === 'all' || 
                          (cotacao.estado || 'Sem UF').toLowerCase().includes(filterRegion.toLowerCase())
     
-    const matchesProduct = filterProduct === 'all' || cotacao.produto === filterProduct
+    // Usar produto_normalizado para filtro
+    const matchesProduct = filterProduct === 'all' || 
+                          cotacao.produto_normalizado === filterProduct ||
+                          cotacao.produto === filterProduct
     
     const matchesExpired = showExpired || !cotacao.expirado
     
@@ -186,8 +276,8 @@ export default function QuotationTable({
   const sortedCotacoes = [...filteredCotacoes].sort((a, b) => {
     // Primeiro ordenar por preço se especificado
     if (sortByPrice) {
-      const aValue = a.preco_pesquisa || 0
-      const bValue = b.preco_pesquisa || 0
+      const aValue = a.preco_pesquisa || a.preco_referencia || 0
+      const bValue = b.preco_pesquisa || b.preco_referencia || 0
       if (sortByPrice === 'asc') {
         if (aValue !== bValue) return aValue - bValue
       } else {
@@ -210,23 +300,51 @@ export default function QuotationTable({
     return new Date(b.data_atualizacao).getTime() - new Date(a.data_atualizacao).getTime()
   })
 
-  // Obter produtos únicos para colunas - ordem específica (ET, GC, GA, S10, S500)
-  const productOrder = ['etanol', 'gasolina_comum', 'gasolina_aditivada', 'diesel_s10', 'diesel_s500']
+  // Mapear produtos para nomes normalizados (baseado nos produtos da aba referências)
+  const normalizeProduct = (product: string): string => {
+    if (!product) return product
+    const productLower = product.toLowerCase().trim()
+    // Mapear variações para nomes padronizados da aba referências (valores exatos salvos)
+    if (productLower === 's10' || productLower === 'diesel_s10' || productLower === 's-10') return 's10'
+    if (productLower === 's10_aditivado' || productLower === 's10 aditivado' || productLower === 'diesel_s10_aditivado' || productLower === 's10-aditivado') return 's10_aditivado'
+    if (productLower === 'diesel_s500' || productLower === 's500' || productLower === 's-500') return 'diesel_s500'
+    if (productLower === 'diesel_s500_aditivado' || productLower === 's500_aditivado' || productLower === 's500 aditivado' || productLower === 's500-aditivado') return 'diesel_s500_aditivado'
+    if (productLower === 'arla32_granel' || productLower === 'arla' || productLower === 'arla 32' || productLower === 'arla32' || productLower === 'arla_32') return 'arla32_granel'
+    // Manter compatibilidade com produtos antigos (para modo pesquisas)
+    if (productLower === 'gasolina_comum' || productLower === 'gc') return 'gasolina_comum'
+    if (productLower === 'gasolina_aditivada' || productLower === 'ga') return 'gasolina_aditivada'
+    if (productLower === 'etanol' || productLower === 'et') return 'etanol'
+    return productLower
+  }
+
+  // Obter produtos únicos para colunas - ordem específica baseada na aba referências
+  // S10, S10 Aditivado, S500, S500 Aditivado, ARLA
+  // IMPORTANTE: Usar os valores exatos que são salvos na tabela referencias
+  const productOrder = ['s10', 's10_aditivado', 'diesel_s500', 'diesel_s500_aditivado', 'arla32_granel']
+  
+  // Normalizar produtos nas cotações antes de filtrar
+  // Se já tiver produto_normalizado, usar ele; senão, normalizar
+  const normalizedCotacoes = sortedCotacoes.map(c => ({
+    ...c,
+    produto_normalizado: c.produto_normalizado || normalizeProduct(c.produto)
+  }))
+  
+  // Produtos únicos encontrados (para filtro)
   const uniqueProducts = productOrder.filter(product => 
-    sortedCotacoes.some(c => c.produto === product)
+    normalizedCotacoes.some(c => c.produto_normalizado === product)
   )
   
   // Obter postos únicos para linhas
   const uniquePostos = Array.from(new Set(sortedCotacoes.map(c => c.posto_nome))).sort()
 
-  // Agrupar por posto para as linhas
-  const groupedByPosto = sortedCotacoes.reduce((acc, cotacao) => {
+  // Agrupar por posto para as linhas (usando produtos normalizados)
+  const groupedByPosto = normalizedCotacoes.reduce((acc, cotacao) => {
     if (!acc[cotacao.posto_nome]) {
       acc[cotacao.posto_nome] = []
     }
     acc[cotacao.posto_nome].push(cotacao)
     return acc
-  }, {} as Record<string, CotacaoItem[]>)
+  }, {} as Record<string, any[]>)
 
   // Função para ordenar
   const handleSort = (field: SortField) => {
@@ -253,15 +371,15 @@ export default function QuotationTable({
   // Obter UFs únicas para filtro
   const uniqueUFs = Array.from(new Set(cotacoes.map(c => c.estado || 'Sem UF'))).sort()
   
-  // Agrupar por UF (estado)
-  const groupedByUF = sortedCotacoes.reduce((acc, cotacao) => {
+  // Agrupar por UF (estado) usando produtos normalizados
+  const groupedByUF = normalizedCotacoes.reduce((acc, cotacao) => {
     const uf = cotacao.estado || 'Sem UF'
     if (!acc[uf]) {
       acc[uf] = []
     }
     acc[uf].push(cotacao)
     return acc
-  }, {} as Record<string, CotacaoItem[]>)
+  }, {} as Record<string, any[]>)
 
   console.log('🔍 Renderizando QuotationTable:', {
     loading,
@@ -364,13 +482,21 @@ export default function QuotationTable({
                       <TableHead key={product} className="text-center font-semibold min-w-[200px] p-3">
                         <div className="space-y-2">
                           <div className="text-lg font-bold" style={{ textDecoration: 'none' }}>
-                            {product.toUpperCase()}
+                            {product === 's10' ? 'S10' : 
+                             product === 's10_aditivado' ? 'S10 Aditivado' :
+                             product === 'diesel_s500' ? 'S500' :
+                             product === 'diesel_s500_aditivado' ? 'S500 Aditivado' :
+                             product === 'arla32_granel' ? 'ARLA 32' :
+                             product.toUpperCase()}
                           </div>
                           <div className="text-sm text-gray-600" style={{ textDecoration: 'none' }}>
-                            {product === 'gasolina_comum' ? 'GC' : 
-                             product === 'gasolina_aditivada' ? 'GA' :
-                             product === 'diesel_s10' ? 'S10' :
+                            {product === 's10' ? 'S10' : 
+                             product === 's10_aditivado' ? 'S10 Aditivado' :
                              product === 'diesel_s500' ? 'S500' :
+                             product === 'diesel_s500_aditivado' ? 'S500 Aditivado' :
+                             product === 'arla32_granel' ? 'ARLA' :
+                             product === 'gasolina_comum' ? 'GC' : 
+                             product === 'gasolina_aditivada' ? 'GA' :
                              product === 'etanol' ? 'ET' : product}
                           </div>
                           <div className="flex justify-center gap-1">
@@ -418,8 +544,8 @@ export default function QuotationTable({
                           <div className="space-y-3">
                             {Object.entries(groupedByUF).map(([uf, ufCotacoes]) => {
                               const productCotacoes = ufCotacoes
-                                .filter(c => c.produto === product)
-                                .sort((a, b) => a.preco_pesquisa - b.preco_pesquisa)
+                                .filter(c => c.produto_normalizado === product)
+                                .sort((a, b) => (a.preco_pesquisa || a.preco_referencia || 0) - (b.preco_pesquisa || b.preco_referencia || 0))
                               
                               if (productCotacoes.length === 0) return null
                               
@@ -444,7 +570,7 @@ export default function QuotationTable({
                         </span>
                       </div>
                                       <span className="text-sm font-semibold">
-                                        R$ {cotacao.preco_pesquisa.toFixed(4)}
+                                        R$ {(cotacao.preco_pesquisa || cotacao.preco_referencia || 0).toFixed(4)}
                         </span>
                                     </div>
                                   ))}

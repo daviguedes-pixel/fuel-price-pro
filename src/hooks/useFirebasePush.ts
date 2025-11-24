@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { requestNotificationPermission, onMessageListener, initFirebase } from '@/lib/firebase';
+import { useState, useEffect, useRef } from 'react';
+import { requestNotificationPermission, onMessageListener, initFirebase, getCurrentToken } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -18,6 +18,8 @@ export const useFirebasePush = () => {
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [fcmToken, setFcmToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const tokenCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastKnownTokenRef = useRef<string | null>(null);
 
   // Verificar suporte e permissão
   useEffect(() => {
@@ -78,6 +80,59 @@ export const useFirebasePush = () => {
     }
   }, [user]);
 
+  // Verificar e atualizar token automaticamente (a cada 5 minutos)
+  useEffect(() => {
+    if (!isSupported || !user || Notification.permission !== 'granted') {
+      return;
+    }
+
+    console.log('🔄 Iniciando verificação automática de tokens...');
+    console.log('   Intervalo: 5 minutos');
+    console.log('   Objetivo: Manter tokens sempre atualizados');
+
+    const checkAndUpdateToken = async () => {
+      try {
+        const currentToken = await getCurrentToken();
+        
+        if (!currentToken) {
+          console.warn('⚠️ Não foi possível obter token atual');
+          return;
+        }
+
+        // Se o token mudou, atualizar no banco
+        if (currentToken !== lastKnownTokenRef.current) {
+          console.log('');
+          console.log('🔄 TOKEN FCM MUDOU! Atualizando automaticamente...');
+          console.log('   Token antigo:', lastKnownTokenRef.current ? lastKnownTokenRef.current.substring(0, 30) + '...' : 'N/A');
+          console.log('   Token novo:', currentToken.substring(0, 30) + '...');
+          
+          lastKnownTokenRef.current = currentToken;
+          setFcmToken(currentToken);
+          
+          // Atualizar token no banco de dados
+          await updateTokenInDatabase(currentToken);
+        } else {
+          console.log('✅ Token FCM ainda é o mesmo, sem necessidade de atualização');
+        }
+      } catch (error) {
+        console.error('❌ Erro ao verificar token:', error);
+      }
+    };
+
+    // Verificar imediatamente
+    checkAndUpdateToken();
+
+    // Configurar verificação periódica (a cada 5 minutos)
+    tokenCheckIntervalRef.current = setInterval(checkAndUpdateToken, 5 * 60 * 1000);
+
+    return () => {
+      if (tokenCheckIntervalRef.current) {
+        clearInterval(tokenCheckIntervalRef.current);
+        tokenCheckIntervalRef.current = null;
+      }
+    };
+  }, [isSupported, user]);
+
   // Escutar mensagens quando app está em primeiro plano
   useEffect(() => {
     if (!isSupported || !user) return;
@@ -115,6 +170,7 @@ export const useFirebasePush = () => {
       if (token) {
         setFcmToken(token);
         setPermission(Notification.permission);
+        lastKnownTokenRef.current = token;
         
         // Salvar token no banco de dados
         await saveTokenToDatabase(token);
@@ -131,22 +187,29 @@ export const useFirebasePush = () => {
     }
   };
 
-  // Salvar token no banco de dados
-  const saveTokenToDatabase = async (token: string) => {
+  // Atualizar token no banco de dados (substitui tokens antigos)
+  const updateTokenInDatabase = async (newToken: string) => {
     if (!user) {
-      console.warn('⚠️ Usuário não autenticado, não é possível salvar token');
+      console.warn('⚠️ Usuário não autenticado, não é possível atualizar token');
       return;
     }
 
-    console.log('💾 Salvando token FCM no banco de dados...');
+    console.log('💾 Atualizando token FCM no banco de dados...');
 
     try {
-      // Verificar se já existe token para este usuário
+      const deviceInfo = {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        updatedAt: new Date().toISOString()
+      };
+
+      // Verificar se já existe este token exato
       const { data: existing, error: checkError } = await supabase
         .from('push_subscriptions' as any)
-        .select('id')
+        .select('id, fcm_token')
         .eq('user_id', user.id)
-        .eq('fcm_token', token)
+        .eq('fcm_token', newToken)
         .maybeSingle();
 
       if (checkError && checkError.code !== 'PGRST205') {
@@ -154,19 +217,40 @@ export const useFirebasePush = () => {
       }
 
       if (!existing) {
-        // Inserir novo token
-        const deviceInfo = {
-          userAgent: navigator.userAgent,
-          platform: navigator.platform,
-          language: navigator.language
-        };
+        // Buscar todos os tokens antigos do usuário
+        const { data: oldTokens, error: fetchError } = await supabase
+          .from('push_subscriptions' as any)
+          .select('id, fcm_token')
+          .eq('user_id', user.id);
 
+        if (fetchError && fetchError.code !== 'PGRST205') {
+          console.warn('⚠️ Erro ao buscar tokens antigos:', fetchError);
+        }
+
+        // Se houver tokens antigos do mesmo dispositivo, remover antes de inserir o novo
+        if (oldTokens && oldTokens.length > 0) {
+          console.log(`🧹 Removendo ${oldTokens.length} token(s) antigo(s) do mesmo usuário...`);
+          
+          const oldTokenIds = oldTokens.map(t => t.id);
+          const { error: deleteError } = await supabase
+            .from('push_subscriptions' as any)
+            .delete()
+            .in('id', oldTokenIds);
+
+          if (deleteError && deleteError.code !== 'PGRST205') {
+            console.warn('⚠️ Erro ao remover tokens antigos:', deleteError);
+          } else {
+            console.log(`✅ ${oldTokens.length} token(s) antigo(s) removido(s)`);
+          }
+        }
+
+        // Inserir novo token
         console.log('📝 Inserindo novo token no banco...');
         const { data, error } = await supabase
           .from('push_subscriptions' as any)
           .insert({
             user_id: user.id,
-            fcm_token: token,
+            fcm_token: newToken,
             device_info: deviceInfo
           })
           .select();
@@ -181,14 +265,21 @@ export const useFirebasePush = () => {
           throw error;
         }
 
-        console.log('✅ Token FCM salvo no banco de dados:', data);
+        console.log('✅ Token FCM atualizado no banco de dados:', data);
+        lastKnownTokenRef.current = newToken;
       } else {
-        console.log('ℹ️ Token já existe no banco de dados');
+        console.log('ℹ️ Token já existe no banco de dados, sem necessidade de atualização');
+        lastKnownTokenRef.current = newToken;
       }
     } catch (error) {
-      console.error('❌ Erro ao salvar token no banco:', error);
+      console.error('❌ Erro ao atualizar token no banco:', error);
       console.error('Detalhes:', error);
     }
+  };
+
+  // Salvar token no banco de dados (mantém compatibilidade)
+  const saveTokenToDatabase = async (token: string) => {
+    await updateTokenInDatabase(token);
   };
 
   // Remover token (quando usuário desativa notificações)

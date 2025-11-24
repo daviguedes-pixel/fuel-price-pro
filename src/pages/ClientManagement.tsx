@@ -188,9 +188,21 @@ export default function ClientManagementWithTabs() {
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (!formData.nome.trim()) {
-      toast.error('Nome é obrigatório')
-      return
+    // Validação com Zod
+    const { validateWithSchema, getValidationErrors, clientSchema } = await import('@/lib/validations');
+    const validation = validateWithSchema(clientSchema, {
+      nome: formData.nome,
+      cnpj: formData.cnpj,
+      email: formData.contato_email,
+      telefone: formData.contato_telefone,
+      endereco: formData.endereco,
+    });
+    
+    if (!validation.success) {
+      const errors = getValidationErrors(validation.errors);
+      const firstError = Object.values(errors)[0];
+      toast.error(firstError || 'Por favor, corrija os erros no formulário');
+      return;
     }
 
     if (formData.cnpj && !validateCNPJ(formData.cnpj)) {

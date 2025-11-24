@@ -482,5 +482,31 @@ export const onMessageListener = () => {
   });
 };
 
+/**
+ * Obtém o token FCM atual (sem solicitar permissão novamente)
+ * Útil para verificar se o token mudou
+ */
+export const getCurrentToken = async (): Promise<string | null> => {
+  try {
+    const { messaging } = await initFirebase();
+    
+    if (!messaging) {
+      return null;
+    }
+
+    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || "";
+    
+    if (!vapidKey) {
+      return null;
+    }
+
+    const token = await getToken(messaging, { vapidKey });
+    return token;
+  } catch (error) {
+    console.error('❌ Erro ao obter token atual:', error);
+    return null;
+  }
+};
+
 export { app, messaging };
 

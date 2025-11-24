@@ -13,11 +13,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, Save, X } from "lucide-react";
 import { useDatabase } from "@/hooks/useDatabase";
+import { logger } from "@/lib/logger";
+import { PriceSuggestionWithRelations } from "@/types/price-suggestion";
 
 interface EditRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
-  request: any;
+  request: PriceSuggestionWithRelations;
   onSuccess: () => void;
 }
 
@@ -58,7 +60,7 @@ export const EditRequestModal = ({
         .eq('suggestion_id', suggestionId);
 
       if (error) {
-        console.error('Erro ao verificar histórico de aprovações:', error);
+        logger.error('Erro ao verificar histórico de aprovações:', error);
         return false;
       }
 
@@ -71,7 +73,7 @@ export const EditRequestModal = ({
       setHasApprovalHistory(hasBlockingAction);
       return hasBlockingAction;
     } catch (error) {
-      console.error('Erro ao verificar histórico:', error);
+      logger.error('Erro ao verificar histórico:', error);
       return false;
     } finally {
       setCheckingHistory(false);
@@ -124,13 +126,13 @@ export const EditRequestModal = ({
           try {
             // Tentar buscar o cliente do banco
             const { data: clientData, error: clientError } = await supabase
-              .from('clientes' as any)
+              .from('clientes')
               .select('id_cliente, nome')
               .eq('id_cliente', clientId)
               .maybeSingle();
             
             if (clientData && !clientError) {
-              console.log('✅ Cliente encontrado no banco:', clientData);
+              logger.log('✅ Cliente encontrado no banco:', clientData);
               // O ClientCombobox vai encontrar pelo ID quando a lista de clients carregar
               // Forçar atualização do formData para garantir que o ID está correto
               setFormData(prev => ({ 
@@ -138,18 +140,18 @@ export const EditRequestModal = ({
                 client_id: String(clientData.id_cliente) 
               }));
             } else {
-              console.warn('⚠️ Cliente não encontrado no banco com ID:', clientId, clientError);
+              logger.warn('⚠️ Cliente não encontrado no banco com ID:', clientId, clientError);
             }
           } catch (error) {
-            console.error('❌ Erro ao buscar cliente:', error);
+            logger.error('❌ Erro ao buscar cliente:', error);
           }
         } else {
-          console.warn('⚠️ clientId está vazio, não é possível buscar cliente');
+          logger.warn('⚠️ clientId está vazio, não é possível buscar cliente');
         }
       };
       
       // Log para debug
-      console.log('🔍 Carregando dados do request para edição:', {
+      logger.log('🔍 Carregando dados do request para edição:', {
         requestId: request.id,
         client_id: request.client_id,
         clients: request.clients,
@@ -215,7 +217,7 @@ export const EditRequestModal = ({
         }
       }
     } catch (error) {
-      console.error('Erro ao carregar métodos de pagamento:', error);
+      logger.error('Erro ao carregar métodos de pagamento:', error);
     }
   };
 
@@ -259,24 +261,14 @@ export const EditRequestModal = ({
   };
 
   const handleSave = async () => {
-    // Validações
-    if (!formData.station_id) {
-      toast.error("Selecione um posto");
-      return;
-    }
+    // Validação com Zod
+    const { validateWithSchema, getValidationErrors, editRequestSchema } = await import('@/lib/validations');
+    const validation = validateWithSchema(editRequestSchema, formData);
     
-    if (!formData.client_id) {
-      toast.error("Selecione um cliente");
-      return;
-    }
-    
-    if (!formData.product) {
-      toast.error("Selecione um produto");
-      return;
-    }
-    
-    if (!formData.payment_method_id) {
-      toast.error("Selecione um método de pagamento");
+    if (!validation.success) {
+      const errors = getValidationErrors(validation.errors);
+      const firstError = Object.values(errors)[0];
+      toast.error(firstError || "Por favor, corrija os erros no formulário");
       return;
     }
     
@@ -511,27 +503,38 @@ export const EditRequestModal = ({
                 } />
               </SelectTrigger>
               <SelectContent>
-                {stationPaymentMethods.map((method: any, index: number) => {
-                  // Criar ID único combinando ID_POSTO e CARTAO para garantir unicidade
-                  // Se não tiver ID_POSTO, usar CARTAO ou criar um índice único
-                  const methodId = method.ID_POSTO && method.CARTAO
-                    ? `${method.ID_POSTO}_${method.CARTAO}`
-                    : method.ID_POSTO
-                    ? String(method.ID_POSTO)
-                    : method.CARTAO
-                    ? method.CARTAO
-                    : `method_${index}`;
+                {(() => {
+                  // Agrupar por CARTAO e ID_POSTO para evitar duplicatas
+                  const grouped = new Map<string, any>();
+                  stationPaymentMethods.forEach(method => {
+                    const cardName = method.CARTAO || method.name || 'Método';
+                    const postoId = method.ID_POSTO || 'all';
+                    const key = `${cardName}_${postoId}`;
+                    if (!grouped.has(key)) {
+                      grouped.set(key, method);
+                    }
+                  });
                   
-                  const methodName = method.CARTAO || method.name || 'Método de Pagamento';
-                  const taxa = method.TAXA ? ` (${method.TAXA}%)` : '';
-                  
-                  // Usar índice no key para garantir unicidade do React
-                  return (
-                    <SelectItem key={`payment-${index}-${methodId}`} value={String(methodId)}>
-                      {methodName}{taxa}
-                    </SelectItem>
-                  );
-                })}
+                  return Array.from(grouped.values()).map((method: any, index: number) => {
+                    // Criar ID único combinando ID_POSTO e CARTAO para garantir unicidade
+                    const methodId = method.ID_POSTO && method.CARTAO
+                      ? `${method.ID_POSTO}_${method.CARTAO}`
+                      : method.ID_POSTO
+                      ? String(method.ID_POSTO)
+                      : method.CARTAO
+                      ? method.CARTAO
+                      : `method_${index}`;
+                    
+                    const methodName = method.CARTAO || method.name || 'Método de Pagamento';
+                    const taxa = method.TAXA ? ` (${method.TAXA}%)` : '';
+                    
+                    return (
+                      <SelectItem key={`payment-${index}-${methodId}`} value={String(methodId)}>
+                        {methodName}{taxa}
+                      </SelectItem>
+                    );
+                  });
+                })()}
               </SelectContent>
             </Select>
           </div>

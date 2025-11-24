@@ -30,9 +30,13 @@ import {
   RefreshCw
 } from "lucide-react";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
+import { ApprovalStats } from "@/components/ApprovalStats";
+import { ApprovalHeader } from "@/components/ApprovalHeader";
 import { formatBrazilianCurrency, parseBrazilianDecimal } from "@/lib/utils";
+import { getCache, setCache } from "@/lib/cache";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
+import { useMemo, useCallback } from "react";
 
 export default function Approvals() {
   const navigate = useNavigate();
@@ -85,12 +89,17 @@ export default function Approvals() {
     loadSuggestions(true); // Usar cache por padrão
   }, []);
   
+  // Memoizar função de aplicar filtros para evitar recriações desnecessárias
+  const applyFiltersMemoized = useCallback((filterValues: typeof filters) => {
+    applyFilters(filterValues);
+  }, [suggestions]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Aplicar filtros sempre que suggestions ou filters mudarem
   useEffect(() => {
     if (suggestions.length > 0) {
-      applyFilters(filters);
+      applyFiltersMemoized(filters);
     }
-  }, [suggestions, filters]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [suggestions, filters, applyFiltersMemoized]);
   
   // Tempo real para atualizar quando houver mudanças
   useEffect(() => {
@@ -210,6 +219,7 @@ export default function Approvals() {
       });
     
     return () => {
+      // Cleanup: limpar timeout e remover subscription
       if (reloadTimeout) {
         clearTimeout(reloadTimeout);
       }
@@ -382,29 +392,17 @@ export default function Approvals() {
           let rejected = 0;
           
           // Loop único para filtrar, agrupar e contar stats
+          // NOTA: Não filtrar aqui - deixar todos os dados disponíveis para applyFilters
+          // O filtro "Apenas minhas aprovações" será aplicado em applyFilters quando necessário
           for (const s of enrichedWithCurrentApprover) {
-            // Contar stats
+            // Contar stats de todas as sugestões (sem filtrar)
             if (s.status === 'pending') pending++;
             else if (s.status === 'approved') approved++;
             else if (s.status === 'rejected') rejected++;
             
-            // Filtrar para usuário
-            let shouldShow = false;
-            if (canViewAll) {
-              shouldShow = true;
-            } else {
-          if (s.status === 'price_suggested' || s.status === 'approved' || s.status === 'rejected') {
-                shouldShow = true;
-              } else if (s.status === 'pending') {
-                // Mostrar se for o turno do usuário OU se o usuário já aprovou (para acompanhar)
-                shouldShow = s.is_current_user_turn || s.user_already_approved;
-              }
-            }
-            
-            if (shouldShow) {
-              filteredForUser.push(s);
-              filteredIdsSet.add(s.id);
-            }
+            // Adicionar todas as sugestões (o filtro será aplicado depois em applyFilters)
+            filteredForUser.push(s);
+            filteredIdsSet.add(s.id);
             
             // Agrupar por batch_id
             const batchKey = s.batch_id || `individual_${s.id}`;
@@ -447,15 +445,12 @@ export default function Approvals() {
                   if (!firstClient) firstClient = req.clients || { name: 'N/A' };
                 }
                 
-                // Verificar status e visibilidade
-          if (req.status === 'pending') {
+                // Verificar status (sem filtrar por visibilidade aqui - isso será feito em applyFilters)
+                if (req.status === 'pending') {
                   pendingCount++;
                   pendingRequests.push(req);
-                  // Mostrar se for o turno do usuário OU se o usuário já aprovou (para acompanhar)
-                  if (req.is_current_user_turn || req.user_already_approved) {
-                    visibleCount++;
-                    visibleRequests.push(req);
-                  }
+                  visibleCount++;
+                  visibleRequests.push(req);
                 } else if (req.status === 'price_suggested' || req.status === 'approved' || req.status === 'rejected') {
                   visibleCount++;
                   visibleRequests.push(req);
@@ -513,6 +508,7 @@ export default function Approvals() {
           // IMPORTANTE: Não definir filteredSuggestions aqui, deixar para applyFilters aplicar os filtros
           setSuggestions(enrichedWithCurrentApprover);
           // setFilteredSuggestions será definido por applyFilters após processSuggestionsData
+          // O useEffect na linha 98-102 já chama applyFilters quando suggestions mudar
     setBatchApprovals(batches);
     setIndividualApprovals(individuals);
           setStats({ 
@@ -539,24 +535,13 @@ export default function Approvals() {
       // Verificar cache primeiro
       if (useCache) {
         const cacheKey = 'approvals_suggestions_cache';
-        const cacheTimestampKey = 'approvals_suggestions_cache_timestamp';
-        const cachedData = localStorage.getItem(cacheKey);
-        const cacheTimestamp = localStorage.getItem(cacheTimestampKey);
-        const cacheExpiry = 5 * 60 * 1000; // 5 minutos
+        const cachedData = getCache<any[]>(cacheKey);
         
-        if (cachedData && cacheTimestamp) {
-          const now = Date.now();
-          const timestamp = parseInt(cacheTimestamp, 10);
-          
-          if (now - timestamp < cacheExpiry) {
-            const parsedData = JSON.parse(cachedData);
-            // Processar dados do cache (já estão enriquecidos)
-            if (Array.isArray(parsedData) && parsedData.length > 0) {
-              await processSuggestionsData(parsedData);
-              setLoadingData(false);
-              return;
-            }
-          }
+        if (cachedData && Array.isArray(cachedData) && cachedData.length > 0) {
+          // Processar dados do cache (já estão enriquecidos)
+          await processSuggestionsData(cachedData);
+          setLoadingData(false);
+          return;
         }
       }
       
@@ -590,25 +575,16 @@ export default function Approvals() {
       
       // Tentar carregar do cache
       try {
-        const cachedStations = localStorage.getItem(stationsCacheKey);
-        const cachedClients = localStorage.getItem(clientsCacheKey);
-        const stationsTimestamp = localStorage.getItem(stationsCacheKey + '_ts');
-        const clientsTimestamp = localStorage.getItem(clientsCacheKey + '_ts');
+        // Usar cache com TTL (10 minutos para stations e clients)
+        const cachedStations = getCache<any[]>(stationsCacheKey);
+        const cachedClients = getCache<any[]>(clientsCacheKey);
         
-        if (cachedStations && stationsTimestamp) {
-          const now = Date.now();
-          const timestamp = parseInt(stationsTimestamp, 10);
-          if (now - timestamp < cacheExpiry) {
-            stationsRes = { data: JSON.parse(cachedStations) };
-          }
+        if (cachedStations) {
+          stationsRes = { data: cachedStations };
         }
         
-        if (cachedClients && clientsTimestamp) {
-          const now = Date.now();
-          const timestamp = parseInt(clientsTimestamp, 10);
-          if (now - timestamp < cacheExpiry) {
-            clientsRes = { data: JSON.parse(cachedClients) };
-          }
+        if (cachedClients) {
+          clientsRes = { data: cachedClients };
         }
       } catch {}
       
@@ -620,8 +596,8 @@ export default function Approvals() {
           supabase.rpc('get_sis_empresa_stations').then(res => {
             stationsRes = { data: res.data, error: res.error };
             try {
-              localStorage.setItem(stationsCacheKey, JSON.stringify(res.data));
-              localStorage.setItem(stationsCacheKey + '_ts', Date.now().toString());
+              // Salvar no cache com TTL de 10 minutos
+              setCache(stationsCacheKey, res.data, 10 * 60 * 1000);
             } catch {}
             return stationsRes;
           })
@@ -630,11 +606,11 @@ export default function Approvals() {
       
       if (!clientsRes.data) {
         loadPromises.push(
-          supabase.from('clientes' as any).select('id_cliente, nome').then(res => {
+          supabase.from('clientes').select('id_cliente, nome').then(res => {
             clientsRes = res;
             try {
-              localStorage.setItem(clientsCacheKey, JSON.stringify(res.data));
-              localStorage.setItem(clientsCacheKey + '_ts', Date.now().toString());
+              // Salvar no cache com TTL de 10 minutos
+              setCache(clientsCacheKey, res.data, 10 * 60 * 1000);
             } catch {}
             return clientsRes;
           })
@@ -643,7 +619,7 @@ export default function Approvals() {
       
       // Carregar métodos de pagamento (são poucos, não precisa cache)
       loadPromises.push(
-        supabase.from('tipos_pagamento' as any).select('CARTAO, TAXA, PRAZO, ID_POSTO').then(res => ({ data: res.data, error: res.error }))
+        supabase.from('tipos_pagamento').select('CARTAO, TAXA, PRAZO, ID_POSTO').then(res => ({ data: res.data, error: res.error }))
       );
       
       const results = await Promise.all(loadPromises);
@@ -655,7 +631,7 @@ export default function Approvals() {
       if (uniqueRequestedBy.length > 0) {
         // Tentar buscar por user_id primeiro
         const { data: byUserId } = await supabase
-          .from('user_profiles' as any)
+          .from('user_profiles')
           .select('user_id, email, nome')
           .in('user_id', uniqueRequestedBy);
         
@@ -846,8 +822,8 @@ export default function Approvals() {
       const cacheKey = 'approvals_suggestions_cache';
       const cacheTimestampKey = 'approvals_suggestions_cache_timestamp';
       try {
-        localStorage.setItem(cacheKey, JSON.stringify(enrichedWithCurrentApprover));
-        localStorage.setItem(cacheTimestampKey, Date.now().toString());
+        // Salvar no cache com TTL de 5 minutos
+        setCache(cacheKey, enrichedWithCurrentApprover, 5 * 60 * 1000);
       } catch (cacheError) {
         console.warn('Erro ao salvar cache:', cacheError);
       }
@@ -966,6 +942,24 @@ export default function Approvals() {
     }
 
     setFilteredSuggestions(filtered);
+    
+    // Calcular estatísticas de forma otimizada (sem múltiplos filters)
+    let pendingCount = 0;
+    let approvedCount = 0;
+    let rejectedCount = 0;
+    
+    for (const s of filtered) {
+      if (s.status === 'pending') pendingCount++;
+      else if (s.status === 'approved') approvedCount++;
+      else if (s.status === 'rejected') rejectedCount++;
+    }
+    
+    setStats({
+      total: filtered.length,
+      pending: pendingCount,
+      approved: approvedCount,
+      rejected: rejectedCount
+    });
     
     // Recriar batchApprovals e individualApprovals a partir dos dados filtrados
     const filteredIdsSet = new Set(filtered.map(s => s.id));
@@ -1604,43 +1598,96 @@ export default function Approvals() {
       try {
         let requesterUserId: string | null = null;
         
-        // Tentar buscar user_id do solicitante
-        if (currentSuggestion.requested_by) {
+        // ESTRATÉGIA 1: Usar created_by diretamente (mais confiável)
+        if (currentSuggestion.created_by) {
+          const createdByUuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          if (createdByUuidRegex.test(currentSuggestion.created_by)) {
+            requesterUserId = currentSuggestion.created_by;
+            console.log('✅ Usando created_by como user_id (estratégia 1):', requesterUserId);
+          }
+        }
+        
+        // ESTRATÉGIA 2: Tentar buscar user_id do solicitante via requested_by
+        if (!requesterUserId && currentSuggestion.requested_by) {
+          console.log('🔍 Buscando user_id do solicitante via requested_by:', currentSuggestion.requested_by);
+          
           // Verificar se já é um UUID (user_id)
           const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           if (uuidRegex.test(currentSuggestion.requested_by)) {
             // Já é um user_id
             requesterUserId = currentSuggestion.requested_by;
+            console.log('✅ requested_by já é um UUID (user_id):', requesterUserId);
           } else {
             // É um email, buscar user_id correspondente
-            const { data: userProfile } = await supabase
+            console.log('📧 requested_by é um email, buscando user_id...');
+            
+            // Primeiro tentar buscar em user_profiles
+            const { data: userProfile, error: profileError } = await supabase
               .from('user_profiles')
-              .select('user_id')
+              .select('user_id, email')
               .eq('email', currentSuggestion.requested_by)
               .maybeSingle();
             
+            if (profileError) {
+              console.warn('⚠️ Erro ao buscar em user_profiles:', profileError);
+            }
+            
             if (userProfile?.user_id) {
               requesterUserId = userProfile.user_id;
+              console.log('✅ User ID encontrado em user_profiles:', requesterUserId);
             } else {
-              // Tentar buscar direto na tabela auth.users
-              const { data: authUser } = await supabase.auth.admin?.getUserByEmail(currentSuggestion.requested_by);
-              if (authUser?.user?.id) {
-                requesterUserId = authUser.user.id;
+              // Se ainda não encontrou, tentar buscar todos os user_profiles e fazer match manual
+              console.log('🔍 Tentando busca mais ampla em user_profiles...');
+              const { data: allProfiles } = await supabase
+                .from('user_profiles')
+                .select('user_id, email')
+                .ilike('email', `%${currentSuggestion.requested_by}%`);
+              
+              if (allProfiles && allProfiles.length > 0) {
+                const exactMatch = allProfiles.find(p => p.email?.toLowerCase() === currentSuggestion.requested_by.toLowerCase());
+                if (exactMatch?.user_id) {
+                  requesterUserId = exactMatch.user_id;
+                  console.log('✅ User ID encontrado na busca ampla:', requesterUserId);
+                }
               }
             }
           }
         }
         
-        // Criar notificação sempre que encontrar o user_id (mesmo se for o próprio usuário)
+        if (!requesterUserId) {
+          console.warn('');
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('⚠️ NÃO FOI POSSÍVEL ENCONTRAR USER_ID DO SOLICITANTE');
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('Requested By:', currentSuggestion.requested_by);
+          console.warn('Created By:', currentSuggestion.created_by);
+          console.warn('Current User ID:', user?.id);
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('');
+          console.warn('💡 Tentando usar current user como fallback...');
+          // Último recurso: usar o usuário atual (pode não ser ideal, mas melhor que nada)
+          requesterUserId = user?.id || null;
+        }
+        
+        // IMPORTANTE: Criar notificação SEMPRE, mesmo se for o próprio usuário que aprovou
+        // O usuário quer receber notificação mesmo quando aprova sua própria solicitação
         if (requesterUserId) {
-          console.log('🔔 Criando notificação:', {
-            requesterUserId,
-            currentUserId: user?.id,
-            requestedBy: currentSuggestion.requested_by,
-            isSameUser: requesterUserId === user?.id,
-            status: newStatus,
-            approverName
-          });
+          const isSameUser = requesterUserId === user?.id;
+          
+          console.log('');
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('🔔 CRIANDO NOTIFICAÇÃO DE APROVAÇÃO/REJEIÇÃO');
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('⚠️ IMPORTANTE: Notificação será criada MESMO se for o mesmo usuário!');
+          console.log('Requester User ID:', requesterUserId);
+          console.log('Current User ID:', user?.id);
+          console.log('É o mesmo usuário?', isSameUser);
+          console.log('Requested By:', currentSuggestion.requested_by);
+          console.log('Status:', newStatus);
+          console.log('Aprovador:', approverName);
+          console.log('Suggestion ID:', suggestionId);
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('');
           
           const { createNotification } = await import('@/lib/utils');
           
@@ -1648,38 +1695,83 @@ export default function Approvals() {
           const notificationData: any = {
             suggestion_id: suggestionId, // SEMPRE incluir suggestion_id
             approved_by: approverName,
-            url: '/approvals'
+            url: '/approvals',
+            is_self_approval: isSameUser // Flag para identificar auto-aprovação
           };
           
-          const result = await createNotification(
-            requesterUserId,
-            newStatus === 'approved' ? 'price_approved' : 'price_rejected',
-            newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
-            newStatus === 'approved' 
+          // Ajustar mensagem se for auto-aprovação
+          let notificationMessage: string;
+          if (isSameUser && newStatus === 'approved') {
+            notificationMessage = `Você aprovou sua própria solicitação de preço!`;
+          } else if (isSameUser && newStatus === 'rejected') {
+            notificationMessage = `Você rejeitou sua própria solicitação de preço.`;
+          } else {
+            notificationMessage = newStatus === 'approved' 
               ? `Sua solicitação de preço foi aprovada por ${approverName}!` 
-              : `Sua solicitação de preço foi rejeitada por ${approverName}.`,
-            notificationData
-          );
+              : `Sua solicitação de preço foi rejeitada por ${approverName}.`;
+          }
           
-          console.log('✅ Notificação criada com sucesso:', {
-            requesterUserId,
-            result,
-            isSameUser: requesterUserId === user?.id
+          console.log('📝 Dados da notificação:', {
+            userId: requesterUserId,
+            type: newStatus === 'approved' ? 'price_approved' : 'price_rejected',
+            title: newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
+            message: notificationMessage,
+            data: notificationData,
+            isSameUser: isSameUser
           });
+          
+          try {
+            const result = await createNotification(
+              requesterUserId,
+              newStatus === 'approved' ? 'price_approved' : 'price_rejected',
+              newStatus === 'approved' ? 'Preço Aprovado' : 'Preço Rejeitado',
+              notificationMessage,
+              notificationData
+            );
+            
+            console.log('');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('✅ NOTIFICAÇÃO CRIADA COM SUCESSO!');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('Result:', result);
+            console.log('Requester User ID:', requesterUserId);
+            console.log('É o mesmo usuário?', isSameUser);
+            console.log('✅ Notificação criada mesmo sendo o mesmo usuário!');
+            console.log('═══════════════════════════════════════════════════════');
+            console.log('');
+          } catch (notifError: any) {
+            console.error('');
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('❌ ERRO AO CRIAR NOTIFICAÇÃO');
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('Erro:', notifError);
+            console.error('Mensagem:', notifError?.message);
+            console.error('Stack:', notifError?.stack);
+            console.error('Requester User ID:', requesterUserId);
+            console.error('É o mesmo usuário?', isSameUser);
+            console.error('═══════════════════════════════════════════════════════');
+            console.error('');
+            // Não relançar o erro para não bloquear a aprovação
+          }
           
           // Disparar evento customizado para forçar refresh das notificações
           window.dispatchEvent(new CustomEvent('notification-created', { 
-            detail: { userId: requesterUserId } 
+            detail: { userId: requesterUserId, isSameUser } 
           }));
           
           // Também disparar via localStorage como fallback
           localStorage.setItem('notification-refresh', Date.now().toString());
           localStorage.removeItem('notification-refresh');
         } else {
-          console.warn('⚠️ Não foi possível encontrar user_id do solicitante:', {
-            requested_by: currentSuggestion.requested_by,
-            currentUserId: user?.id
-          });
+          console.warn('');
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('⚠️ NÃO FOI POSSÍVEL CRIAR NOTIFICAÇÃO');
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('Motivo: Não foi possível encontrar user_id do solicitante');
+          console.warn('Requested By:', currentSuggestion.requested_by);
+          console.warn('Current User ID:', user?.id);
+          console.warn('═══════════════════════════════════════════════════════');
+          console.warn('');
         }
       } catch (notifError) {
         console.error('❌ Erro ao criar notificação:', notifError);
@@ -2808,6 +2900,14 @@ export default function Approvals() {
 
     setLoading(true);
     try {
+      // Buscar todas as solicitações primeiro para ter informações do lote
+      const { data: suggestions, error: fetchError } = await supabase
+        .from('price_suggestions')
+        .select('*')
+        .in('id', pendingIds);
+      
+      if (fetchError) throw fetchError;
+      
       const idsArray = pendingIds;
       let successCount = 0;
       let errorCount = 0;
@@ -2824,6 +2924,78 @@ export default function Approvals() {
 
       if (successCount > 0) {
         toast.success(`${successCount} solicitação(ões) negada(s) com sucesso!`);
+        
+        // Criar notificações para rejeição em lote
+        try {
+          const { createNotification } = await import('@/lib/utils');
+          
+          // Buscar nome do rejeitador
+          let rejecterName = user?.email || 'Usuário';
+          try {
+            const { data: userProfile } = await supabase
+              .from('user_profiles')
+              .select('nome, email')
+              .eq('user_id', user?.id)
+              .single();
+            if (userProfile?.nome) {
+              rejecterName = userProfile.nome;
+            } else if (userProfile?.email) {
+              rejecterName = userProfile.email;
+            }
+          } catch (err) {
+            console.warn('Erro ao buscar nome do rejeitador:', err);
+          }
+          
+          // Agrupar solicitações por usuário e por lote
+          const requestsByUserAndBatch = new Map<string, Map<string, any[]>>();
+          suggestions?.forEach(req => {
+            const userId = req.requested_by || req.created_by;
+            const batchKey = req.batch_id || `individual_${req.id}`;
+            if (userId) {
+              if (!requestsByUserAndBatch.has(userId)) {
+                requestsByUserAndBatch.set(userId, new Map());
+              }
+              const userBatches = requestsByUserAndBatch.get(userId)!;
+              if (!userBatches.has(batchKey)) {
+                userBatches.set(batchKey, []);
+              }
+              userBatches.get(batchKey)!.push(req);
+            }
+          });
+          
+          // Criar notificação para cada usuário e lote
+          const notificationPromises: Promise<any>[] = [];
+          requestsByUserAndBatch.forEach((userBatches, userId) => {
+            userBatches.forEach((requests, batchKey) => {
+              const batchName = requests[0]?.batch_name || 'Lote';
+              const count = requests.length;
+              const message = count === 1
+                ? `Sua solicitação do lote "${batchName}" foi rejeitada por ${rejecterName}.`
+                : `${count} solicitações do lote "${batchName}" foram rejeitadas por ${rejecterName}.`;
+              
+              notificationPromises.push(
+                createNotification(
+                  userId,
+                  'price_rejected',
+                  'Lote Rejeitado',
+                  message,
+                  {
+                    batch_id: batchKey,
+                    batch_name: batchName,
+                    rejected_by: rejecterName,
+                    rejected_count: count,
+                    url: '/approvals'
+                  }
+                )
+              );
+            });
+          });
+          
+          await Promise.allSettled(notificationPromises);
+          console.log(`✅ Notificações de rejeição em lote criadas para ${requestsByUserAndBatch.size} usuário(s)`);
+        } catch (notifError) {
+          console.error('Erro ao criar notificações de rejeição em lote:', notifError);
+        }
       }
       if (errorCount > 0) {
         toast.error(`${errorCount} solicitação(ões) falharam ao negar`);
@@ -2934,49 +3106,15 @@ export default function Approvals() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-4 space-y-4">
-        {/* Header com gradiente moderno */}
-        <div className="relative overflow-hidden rounded-xl bg-gradient-to-r from-slate-800 via-slate-700 to-slate-800 p-3 sm:p-4 text-white shadow-xl">
-          <div className="absolute inset-0 bg-black/10"></div>
-          <div className="relative flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
-              <Button 
-                variant="secondary" 
-                onClick={() => navigate("/dashboard")}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm h-8 text-xs sm:text-sm"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Voltar ao Dashboard</span>
-                <span className="sm:hidden">Voltar</span>
-              </Button>
-              <div className="flex-1 sm:flex-none">
-                <h1 className="text-lg sm:text-xl font-bold mb-0.5 sm:mb-1">Aprovações de Preços</h1>
-                <p className="text-slate-200 text-xs sm:text-sm hidden sm:block">Gerencie e aprove as solicitações de alteração de preços</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-              {realtimeStatus === 'connected' && (
-                <div className="flex items-center gap-1 text-xs text-green-200">
-                  <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span className="hidden sm:inline">Atualização automática ativa</span>
-                  <span className="sm:hidden">Ativo</span>
-                </div>
-              )}
-            <Button 
-              variant="secondary"
-              size="sm"
-                onClick={() => {
-                  setIsRefreshing(true);
-                  loadSuggestions(false).then(() => setIsRefreshing(false)).catch(() => setIsRefreshing(false));
-                }}
-                disabled={isRefreshing}
-                className="flex items-center gap-1 sm:gap-2 bg-white/20 hover:bg-white/30 text-white border-white/30 backdrop-blur-sm h-8 text-xs sm:text-sm px-2 sm:px-3"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 sm:h-4 sm:w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span className="hidden sm:inline">{isRefreshing ? 'Atualizando...' : 'Atualizar'}</span>
-            </Button>
-            </div>
-          </div>
-        </div>
+        {/* Header */}
+        <ApprovalHeader 
+          realtimeStatus={realtimeStatus}
+          isRefreshing={isRefreshing}
+          onRefresh={() => {
+            setIsRefreshing(true);
+            loadSuggestions(false).then(() => setIsRefreshing(false)).catch(() => setIsRefreshing(false));
+          }}
+        />
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -4346,35 +4484,47 @@ export default function Approvals() {
                     
                     // Validar todas as solicitações em PARALELO (muito mais rápido)
                     const validationPromises = pendingRequests.map(req => 
-                      canUserApproveSuggestion(req).then(validation => ({ req, validation }))
+                      canUserApproveSuggestion(req)
+                        .then(validation => ({ req, validation, success: true }))
+                        .catch(error => ({ req, validation: { canApprove: false, reason: error.message }, success: false, error }))
                     );
-                    const validationResults = await Promise.all(validationPromises);
+                    const validationResults = await Promise.allSettled(validationPromises);
                     
                     // Separar válidas e inválidas
                     const validRequests: any[] = [];
                     const invalidRequests: Array<{ id: string; reason: string }> = [];
                     
-                    validationResults.forEach(({ req, validation }) => {
-                      if (validation.canApprove) {
+                    validationResults.forEach((result) => {
+                      if (result.status === 'rejected') {
+                        console.error('❌ Erro na validação:', result.reason);
+                        // Em caso de erro, não adicionar nem como válida nem inválida
+                        return;
+                      }
+                      
+                      const { req, validation } = result.value;
+                      if (validation && validation.canApprove) {
                         validRequests.push(req);
                       } else {
-                        invalidRequests.push({ id: req.id, reason: validation.reason || 'Não autorizado' });
+                        invalidRequests.push({ id: req.id, reason: validation?.reason || 'Não autorizado' });
                       }
                     });
                     
-                    // Se houver solicitações inválidas, bloquear TODA a aprovação do lote
-                    if (invalidRequests.length > 0) {
-                      const reasons = invalidRequests.map(r => r.reason).join('; ');
-                      toast.error(`${invalidRequests.length} solicitação(ões) do lote não podem ser aprovadas: ${reasons}. Aprovação do lote cancelada.`);
+                    // Se não há solicitações válidas pendentes, avisar e retornar
+                    if (validRequests.length === 0) {
+                      if (invalidRequests.length > 0) {
+                        const reasons = invalidRequests.map(r => r.reason).filter((r, i, arr) => arr.indexOf(r) === i).join('; ');
+                        toast.error(`Nenhuma solicitação pode ser aprovada. Motivos: ${reasons}`);
+                      } else {
+                        toast.error("Nenhuma solicitação pendente válida para aprovar neste lote.");
+                      }
                       setLoading(false);
                       return;
                     }
                     
-                    // Se não há solicitações válidas pendentes, avisar
-                    if (validRequests.length === 0) {
-                      toast.error("Nenhuma solicitação pendente válida para aprovar neste lote.");
-                      setLoading(false);
-                      return;
+                    // Se houver solicitações inválidas, avisar mas continuar com as válidas
+                    if (invalidRequests.length > 0) {
+                      const reasons = invalidRequests.map(r => r.reason).filter((r, i, arr) => arr.indexOf(r) === i).join('; ');
+                      toast.warning(`${invalidRequests.length} solicitação(ões) do lote não podem ser aprovadas: ${reasons}. Aprovando apenas as ${validRequests.length} válidas...`);
                     }
                     
                     // Aprovar todas as solicitações em PARALELO (muito mais rápido)
@@ -4385,13 +4535,91 @@ export default function Approvals() {
                           return { success: false, id: req.id, error };
                         })
                     );
-                    const approveResults = await Promise.all(approvePromises);
+                    // Usar Promise.allSettled para não falhar completamente se uma aprovação falhar
+                    const approveResults = await Promise.allSettled(approvePromises);
                     
-                    const successCount = approveResults.filter(r => r.success).length;
-                    const errorCount = approveResults.filter(r => !r.success).length;
+                    const successCount = approveResults.filter(r => 
+                      r.status === 'fulfilled' && r.value.success
+                    ).length;
+                    const errorCount = approveResults.filter(r => 
+                      r.status === 'rejected' || (r.status === 'fulfilled' && !r.value.success)
+                    ).length;
+                    
+                    // Logar erros rejeitados
+                    approveResults.forEach((result, index) => {
+                      if (result.status === 'rejected') {
+                        console.error(`❌ Erro ao aprovar solicitação ${index}:`, result.reason);
+                      }
+                    });
                     
                     if (successCount > 0) {
-                      toast.success(`${successCount} solicitação(ões) do lote aprovada(s) com sucesso!`);
+                      let successMessage = `${successCount} solicitação(ões) do lote aprovada(s) com sucesso!`;
+                      if (invalidRequests.length > 0) {
+                        successMessage += ` (${invalidRequests.length} não puderam ser aprovadas)`;
+                      }
+                      toast.success(successMessage);
+                      
+                      // Criar notificações para aprovação em lote
+                      try {
+                        const { createNotification } = await import('@/lib/utils');
+                        
+                        // Buscar nome do aprovador
+                        let approverName = user?.email || 'Usuário';
+                        try {
+                          const { data: userProfile } = await supabase
+                            .from('user_profiles')
+                            .select('nome, email')
+                            .eq('user_id', user?.id)
+                            .single();
+                          if (userProfile?.nome) {
+                            approverName = userProfile.nome;
+                          } else if (userProfile?.email) {
+                            approverName = userProfile.email;
+                          }
+                        } catch (err) {
+                          console.warn('Erro ao buscar nome do aprovador:', err);
+                        }
+                        
+                        // Agrupar solicitações por usuário para evitar notificações duplicadas
+                        const requestsByUser = new Map<string, any[]>();
+                        validRequests.forEach(req => {
+                          const userId = req.requested_by || req.created_by;
+                          if (userId) {
+                            if (!requestsByUser.has(userId)) {
+                              requestsByUser.set(userId, []);
+                            }
+                            requestsByUser.get(userId)!.push(req);
+                          }
+                        });
+                        
+                        // Criar notificação para cada usuário único
+                        const batchName = batch.requests[0]?.batch_name || 'Lote';
+                        const notificationPromises = Array.from(requestsByUser.entries()).map(async ([userId, userRequests]) => {
+                          const count = userRequests.length;
+                          const message = count === 1
+                            ? `Sua solicitação do lote "${batchName}" foi aprovada por ${approverName}!`
+                            : `${count} solicitações do lote "${batchName}" foram aprovadas por ${approverName}!`;
+                          
+                          await createNotification(
+                            userId,
+                            'price_approved',
+                            'Lote Aprovado',
+                            message,
+                            {
+                              batch_id: batch.batchKey,
+                              batch_name: batchName,
+                              approved_by: approverName,
+                              approved_count: count,
+                              url: '/approvals'
+                            }
+                          );
+                        });
+                        
+                        await Promise.allSettled(notificationPromises);
+                        console.log(`✅ Notificações de lote criadas para ${requestsByUser.size} usuário(s)`);
+                      } catch (notifError) {
+                        console.error('Erro ao criar notificações de lote:', notifError);
+                      }
                     }
                     if (errorCount > 0) {
                       toast.error(`${errorCount} solicitação(ões) falharam ao aprovar`);

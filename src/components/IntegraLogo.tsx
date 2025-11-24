@@ -46,7 +46,7 @@ export function IntegraLogo({ className = "", variant = 'full' }: IntegraLogoPro
           console.log('Logo carregada com sucesso');
         }}
       />
-      <span className="font-light tracking-tight font-righteous text-foreground text-lg -ml-2">
+      <span className="font-light tracking-tight font-righteous text-white text-lg -ml-2">
         Integra
       </span>
     </div>

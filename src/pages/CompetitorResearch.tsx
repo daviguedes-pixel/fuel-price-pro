@@ -497,19 +497,32 @@ export default function PublicPriceResearch() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="">Nenhum</SelectItem>
-                            {stationPaymentMethods.length > 0 ? (
-                              stationPaymentMethods.map((method, index) => {
+                            {(() => {
+                              if (stationPaymentMethods.length === 0) {
+                                return <SelectItem value="outro" disabled>Nenhum método cadastrado</SelectItem>;
+                              }
+                              
+                              // Agrupar por CARTAO e ID_POSTO para evitar duplicatas
+                              const grouped = new Map<string, any>();
+                              stationPaymentMethods.forEach(method => {
+                                const cardName = method.CARTAO || method.POSTO || 'Método';
+                                const postoId = method.ID_POSTO || 'all';
+                                const key = `${cardName}_${postoId}`;
+                                if (!grouped.has(key)) {
+                                  grouped.set(key, method);
+                                }
+                              });
+                              
+                              return Array.from(grouped.values()).map((method, index) => {
                                 const paymentName = method.CARTAO || method.POSTO || `Método ${index + 1}`;
                                 const taxa = method.TAXA ? `(${method.TAXA}%)` : '';
                                 return (
-                                  <SelectItem key={`method-${index}`} value={paymentName}>
+                                  <SelectItem key={`method-${index}-${method.ID_POSTO || 'all'}-${paymentName}`} value={paymentName}>
                                     {paymentName} {taxa}
                                   </SelectItem>
                                 );
-                              })
-                            ) : (
-                              <SelectItem value="outro" disabled>Nenhum método cadastrado</SelectItem>
-                            )}
+                              });
+                            })()}
                           </SelectContent>
                         </Select>
                       </div>

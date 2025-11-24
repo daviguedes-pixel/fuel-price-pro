@@ -214,7 +214,18 @@ export const useDatabase = () => {
         return [];
       }
       
-      return (data || []) as any[];
+      // Agrupar por CARTAO e ID_POSTO para evitar duplicatas
+      const grouped = new Map<string, any>();
+      (data || []).forEach((method: any) => {
+        const cardName = method.CARTAO || method.name || 'Método';
+        const postoId = method.ID_POSTO || 'all';
+        const key = `${cardName}_${postoId}`;
+        if (!grouped.has(key)) {
+          grouped.set(key, method);
+        }
+      });
+      
+      return Array.from(grouped.values()) as any[];
       
     } catch (error) {
       console.error('❌ Erro em getPaymentMethodsForStation:', error);
@@ -224,122 +235,180 @@ export const useDatabase = () => {
 
   const loadPriceHistoryFunc = async () => {
     try {
-      const { data, error } = await supabase
-        .from('price_history')
-        .select(`
-          *,
-          stations(name),
-          clients(name),
-          price_suggestions(status, station_id, client_id)
-        `)
+      console.log('🔍 Carregando histórico de price_suggestions aprovadas...');
+      
+      // SEMPRE buscar de price_suggestions aprovadas
+      const { data: approvedSuggestions, error: suggestionsError } = await supabase
+          .from('price_suggestions')
+          .select('*')
+          .eq('status', 'approved')
         .order('created_at', { ascending: false })
-        .limit(100);
+          .limit(1000);
+        
+      if (suggestionsError) {
+        console.error('❌ Erro ao carregar price_suggestions:', suggestionsError);
+        setPriceHistory([]);
+        return;
+      }
       
-      if (error) throw error;
+      if (!approvedSuggestions || approvedSuggestions.length === 0) {
+        console.log('⚠️ Nenhuma sugestão aprovada encontrada');
+        setPriceHistory([]);
+        return;
+      }
       
-      // Enriquecer dados com nomes de postos e clientes se não vieram das foreign keys
-      const enrichedData = await Promise.all((data || []).map(async (item: any) => {
-        // Se não tem nome do posto, buscar na price_suggestions ou sis_empresa
-        if (!item.stations?.name && item.station_id) {
-          try {
-            // Tentar buscar na price_suggestions primeiro
-            if (item.price_suggestions?.station_id) {
-              const { data: suggestionData } = await supabase
-                .from('price_suggestions')
-                .select('station_id')
-                .eq('id', item.suggestion_id)
-                .single();
-              
-              if (suggestionData?.station_id) {
-                // Tentar buscar na tabela stations
-                const { data: stationData } = await supabase
-                  .from('stations')
-                  .select('name')
-                  .eq('id', suggestionData.station_id)
-                  .single();
-                
-                if (stationData?.name) {
-                  item.stations = { name: stationData.name };
-                }
-              }
-            }
+      console.log('✅ Encontradas', approvedSuggestions.length, 'sugestões aprovadas');
+      
+      // Buscar todos os IDs únicos de postos, clientes e aprovadores
+      const stationIds = [...new Set((approvedSuggestions || []).map((s: any) => s.station_id).filter(Boolean))];
+      const clientIds = [...new Set((approvedSuggestions || []).map((s: any) => s.client_id).filter(Boolean))];
+      
+      console.log('📊 IDs únicos encontrados:');
+      console.log('  📍 Postos:', stationIds.length, stationIds);
+      console.log('  👤 Clientes:', clientIds.length, clientIds);
+      
+      // Extrair UUIDs de aprovadores
+      const approverIds = [...new Set((approvedSuggestions || [])
+        .map((s: any) => s.approved_by)
+        .filter(Boolean)
+        .filter((id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+      )];
+      
+      // Buscar nomes dos postos em sis_empresa
+      const stationsMap = new Map<string, string>();
+      if (stationIds.length > 0) {
+        console.log('🔍 Buscando nomes de', stationIds.length, 'postos em sis_empresa...');
+        console.log('  📋 IDs originais:', stationIds);
+        
+        // Converter IDs para strings (id_empresa na tabela é text/varchar)
+        const stringIds = stationIds.map(id => String(id)).filter(Boolean);
+        
+        console.log('  📋 IDs convertidos para strings:', stringIds);
+        
+        if (stringIds.length > 0) {
+          console.log('  🔍 Executando RPC get_sis_empresa_by_ids com', stringIds.length, 'IDs...');
+          // Usar função RPC para buscar empresas do schema cotacao
+          const { data: sisEmpresaData, error: sisError } = await supabase.rpc('get_sis_empresa_by_ids', {
+            p_ids: stringIds
+          });
+          
+          if (sisError) {
+            console.error('❌ Erro ao buscar postos em sis_empresa via RPC:', sisError);
+            console.error('  Query:', 'id_empresa IN', stringIds);
+          } else {
+            console.log('  📊 Resultado da query RPC:', { 
+              encontrados: sisEmpresaData?.length || 0, 
+              esperados: stringIds.length,
+              dados: sisEmpresaData 
+            });
             
-            // Se ainda não tem, tentar buscar diretamente pelo station_id
-            if (!item.stations?.name) {
-              const { data: stationData } = await supabase
-                .from('stations')
-                .select('name')
-                .eq('id', item.station_id)
-                .single();
-              
-              if (stationData?.name) {
-                item.stations = { name: stationData.name };
-              }
+            if (sisEmpresaData && sisEmpresaData.length > 0) {
+              console.log('✅ Encontrados', sisEmpresaData.length, 'postos em sis_empresa');
+              sisEmpresaData.forEach((e: any) => {
+                const stationId = String(e.id_empresa);
+                const stationName = e.nome_empresa || 'Posto Desconhecido';
+                stationsMap.set(stationId, stationName);
+                console.log('  📍 Posto mapeado:', stationId, '->', stationName);
+              });
+            } else {
+              console.warn('⚠️ Nenhum posto encontrado em sis_empresa para os IDs:', stringIds);
             }
-          } catch (err) {
-            console.warn('Erro ao buscar nome do posto:', err);
+          }
+        } else {
+          console.warn('⚠️ Nenhum ID válido para buscar postos');
+        }
+      }
+        
+      // Buscar nomes dos clientes em clientes (os IDs são numéricos, não UUIDs)
+      const clientsMap = new Map<string, string>();
+      if (clientIds.length > 0) {
+        console.log('🔍 Buscando nomes de', clientIds.length, 'clientes em clientes...');
+        // Converter IDs para números se necessário
+        const numericIds = clientIds.map(id => {
+          const numId = typeof id === 'string' ? parseInt(id, 10) : id;
+          return isNaN(numId) ? null : numId;
+        }).filter(Boolean);
+        
+        if (numericIds.length > 0) {
+          const { data: clientesData, error: clientesError } = await supabase
+            .from('clientes' as any)
+            .select('id_cliente, nome')
+            .in('id_cliente', numericIds);
+          
+          if (clientesError) {
+            console.error('❌ Erro ao buscar clientes:', clientesError);
+          } else if (clientesData) {
+            console.log('✅ Encontrados', clientesData.length, 'clientes na tabela clientes');
+            clientesData.forEach((c: any) => {
+              const clientId = String(c.id_cliente);
+              clientsMap.set(clientId, c.nome);
+              console.log('  👤 Cliente:', clientId, '->', c.nome);
+            });
           }
         }
-        
-        // Se não tem nome do cliente, buscar na price_suggestions ou clientes
-        if (!item.clients?.name && item.client_id) {
-          try {
-            // Tentar buscar na price_suggestions primeiro
-            if (item.price_suggestions?.client_id) {
-              const { data: suggestionData } = await supabase
-                .from('price_suggestions')
-                .select('client_id')
-                .eq('id', item.suggestion_id)
-                .single();
-              
-              if (suggestionData?.client_id) {
-                // Tentar buscar na tabela clients
-                const { data: clientData } = await supabase
-                  .from('clients')
-                  .select('name')
-                  .eq('id', suggestionData.client_id)
-                  .single();
-                
-                if (clientData?.name) {
-                  item.clients = { name: clientData.name };
-                }
-              }
-            }
-            
-            // Se ainda não tem, tentar buscar diretamente pelo client_id
-            if (!item.clients?.name) {
-              const { data: clientData } = await supabase
-                .from('clients')
-                .select('name')
-                .eq('id', item.client_id)
-                .single();
-              
-              if (clientData?.name) {
-                item.clients = { name: clientData.name };
-              } else {
-                // Tentar buscar na tabela clientes (formato antigo)
-                const { data: clientesData } = await supabase
-                  .from('clientes' as any)
-                  .select('nome')
-                  .eq('id_cliente', item.client_id)
-                  .single();
-                
-                if (clientesData?.nome) {
-                  item.clients = { name: clientesData.nome };
-                }
-              }
-            }
-          } catch (err) {
-            console.warn('Erro ao buscar nome do cliente:', err);
-          }
-        }
-        
-        return item;
-      }));
+      }
       
-      setPriceHistory(enrichedData);
+      // Buscar nomes dos aprovadores
+      const approversMap = new Map<string, string>();
+      if (approverIds.length > 0) {
+        const { data: approversData } = await supabase
+          .from('user_profiles')
+          .select('user_id, nome, email')
+          .in('user_id', approverIds);
+        
+        if (approversData) {
+          approversData.forEach((a: any) => {
+            approversMap.set(a.user_id, a.nome || a.email);
+          });
+        }
+      }
+      
+      // Converter price_suggestions aprovadas para formato de price_history com nomes
+      // Usar nomes do JOIN se disponível, senão usar do mapa
+      const convertedHistory = approvedSuggestions.map((suggestion: any) => ({
+          id: suggestion.id,
+          suggestion_id: suggestion.id,
+          station_id: suggestion.station_id,
+          client_id: suggestion.client_id,
+          product: suggestion.product,
+          old_price: null, // Não temos old_price em price_suggestions
+          new_price: suggestion.final_price >= 100 ? suggestion.final_price / 100 : suggestion.final_price,
+          margin_cents: suggestion.margin_cents || 0,
+          approved_by: (() => {
+            const approverId = suggestion.approved_by;
+            if (!approverId) return 'Sistema';
+            // Se for UUID, buscar nome do mapa
+            if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(approverId)) {
+              return approversMap.get(approverId) || approverId;
+            }
+            // Se não for UUID, pode ser email ou nome direto
+            return approverId;
+          })(),
+          change_type: null,
+          created_at: suggestion.approved_at || suggestion.created_at,
+          stations: suggestion.station_id ? (() => {
+            const stationId = String(suggestion.station_id);
+            const stationName = stationsMap.get(stationId);
+            if (!stationName) {
+              console.warn('⚠️ Posto não encontrado no mapa:', stationId, 'Mapa tem:', Array.from(stationsMap.keys()));
+            }
+            return { name: stationName || 'Posto Desconhecido' };
+          })() : null,
+          clients: suggestion.client_id ? (() => {
+            const clientId = String(suggestion.client_id);
+            const clientName = clientsMap.get(clientId);
+            if (!clientName) {
+              console.warn('⚠️ Cliente não encontrado no mapa:', clientId, 'Mapa tem:', Array.from(clientsMap.keys()));
+            }
+            return { name: clientName || 'Cliente Desconhecido' };
+          })() : null,
+          price_suggestions: suggestion
+        }));
+        
+      console.log('✅ Histórico carregado de price_suggestions:', convertedHistory.length, 'registros');
+      setPriceHistory(convertedHistory);
     } catch (error) {
-      console.error('Error loading price history:', error);
+      console.error('❌ Error loading price history:', error);
       setPriceHistory([]);
     }
   };

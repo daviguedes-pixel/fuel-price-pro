@@ -39,6 +39,16 @@ async function getAccessToken(): Promise<string> {
     console.log('🔍 Verificando configuração...');
     console.log('   FIREBASE_SERVICE_ACCOUNT_JSON:', serviceAccountJson ? `✅ Configurado (${serviceAccountJson.length} caracteres)` : '❌ Não configurado');
     
+    if (serviceAccountJson) {
+      // Verificar se parece ser um JSON válido (começa com { e termina com })
+      const trimmed = serviceAccountJson.trim();
+      if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        console.warn('⚠️ Service Account JSON pode estar mal formatado (não começa/termina com {})');
+        console.warn('   Primeiros 50 caracteres:', trimmed.substring(0, 50));
+        console.warn('   Últimos 50 caracteres:', trimmed.substring(Math.max(0, trimmed.length - 50)));
+      }
+    }
+    
     if (!serviceAccountJson) {
       // Fallback: tentar usar Access Token direto (se configurado)
       const directToken = Deno.env.get('FIREBASE_ACCESS_TOKEN');
@@ -55,28 +65,55 @@ async function getAccessToken(): Promise<string> {
     // Validar se o JSON é válido
     let serviceAccount: any;
     try {
-      serviceAccount = JSON.parse(serviceAccountJson);
+      // Tentar limpar o JSON (remover espaços extras, quebras de linha no início/fim)
+      const cleanedJson = serviceAccountJson.trim();
+      serviceAccount = JSON.parse(cleanedJson);
       console.log('✅ Service Account JSON parseado com sucesso');
-      console.log('   Client Email:', serviceAccount.client_email || 'não encontrado');
-      console.log('   Project ID:', serviceAccount.project_id || 'não encontrado');
+      console.log('   Client Email:', serviceAccount.client_email || '❌ não encontrado');
+      console.log('   Project ID:', serviceAccount.project_id || '❌ não encontrado');
+      console.log('   Private Key:', serviceAccount.private_key ? `✅ (${serviceAccount.private_key.length} caracteres)` : '❌ não encontrado');
+      console.log('   Type:', serviceAccount.type || 'não encontrado');
     } catch (parseError: any) {
-      console.error('❌ Erro ao fazer parse do Service Account JSON:', parseError.message);
+      console.error('❌ Erro ao fazer parse do Service Account JSON');
+      console.error('   Mensagem:', parseError.message);
+      console.error('   Posição do erro:', parseError.message?.match(/position (\d+)/)?.[1] || 'N/A');
+      console.error('   Primeiros 200 caracteres do JSON:', serviceAccountJson.substring(0, 200));
+      console.error('   Últimos 200 caracteres do JSON:', serviceAccountJson.substring(Math.max(0, serviceAccountJson.length - 200)));
       throw new Error(`Service Account JSON inválido: ${parseError.message}`);
     }
 
     // Validar campos obrigatórios
-    if (!serviceAccount.client_email || !serviceAccount.private_key) {
-      console.error('❌ Service Account JSON está incompleto');
-      console.error('   Campos obrigatórios: client_email, private_key');
-      throw new Error('Service Account JSON está incompleto (faltam client_email ou private_key)');
+    if (!serviceAccount.client_email) {
+      console.error('❌ Service Account JSON está incompleto: client_email não encontrado');
+      throw new Error('Service Account JSON está incompleto: client_email é obrigatório');
+    }
+    
+    if (!serviceAccount.private_key) {
+      console.error('❌ Service Account JSON está incompleto: private_key não encontrado');
+      throw new Error('Service Account JSON está incompleto: private_key é obrigatório');
+    }
+    
+    // Verificar se a private_key está no formato correto
+    if (!serviceAccount.private_key.includes('BEGIN PRIVATE KEY') || !serviceAccount.private_key.includes('END PRIVATE KEY')) {
+      console.warn('⚠️ Private key pode estar em formato incorreto (deve conter BEGIN/END PRIVATE KEY)');
     }
 
     console.log('🔑 Gerando novo Access Token do Service Account...');
 
     // Criar JWT para autenticação
-    const jwt = await createJWT(serviceAccount);
+    console.log('🔐 Criando JWT do Service Account...');
+    let jwt: string;
+    try {
+      jwt = await createJWT(serviceAccount);
+      console.log('✅ JWT criado com sucesso (tamanho:', jwt.length, 'caracteres)');
+    } catch (jwtError: any) {
+      console.error('❌ Erro ao criar JWT:', jwtError.message);
+      console.error('   Stack:', jwtError.stack);
+      throw new Error(`Erro ao criar JWT: ${jwtError.message}`);
+    }
     
     // Trocar JWT por Access Token
+    console.log('🔄 Trocando JWT por Access Token no Google OAuth2...');
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
@@ -89,8 +126,29 @@ async function getAccessToken(): Promise<string> {
     });
 
     if (!tokenResponse.ok) {
-      const error = await tokenResponse.text();
-      throw new Error(`Erro ao obter Access Token: ${error}`);
+      const errorText = await tokenResponse.text();
+      console.error('❌ Erro ao obter Access Token do Google OAuth2');
+      console.error('   Status:', tokenResponse.status);
+      console.error('   Status Text:', tokenResponse.statusText);
+      console.error('   Resposta:', errorText);
+      
+      // Tentar parsear o erro como JSON
+      let errorDetails: any = null;
+      try {
+        errorDetails = JSON.parse(errorText);
+        console.error('   Erro detalhado:', JSON.stringify(errorDetails, null, 2));
+        
+        if (errorDetails.error === 'invalid_grant') {
+          console.error('');
+          console.error('🔴 ERRO: invalid_grant - Service Account pode estar desabilitado ou chave inválida');
+          console.error('💡 Verifique no Firebase Console se o Service Account está ativo');
+          console.error('');
+        }
+      } catch {
+        // Não é JSON
+      }
+      
+      throw new Error(`Erro ao obter Access Token (${tokenResponse.status}): ${errorText}`);
     }
 
     const tokenData = await tokenResponse.json();
@@ -128,8 +186,20 @@ async function createJWT(serviceAccount: any): Promise<string> {
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
   // Importar chave privada
+  console.log('🔑 Processando chave privada...');
   const privateKeyPem = serviceAccount.private_key
     .replace(/\\n/g, '\n');
+  
+  // Verificar se a chave privada está no formato correto
+  if (!privateKeyPem.includes('BEGIN PRIVATE KEY')) {
+    console.error('❌ Chave privada não contém "BEGIN PRIVATE KEY"');
+    throw new Error('Chave privada em formato inválido: não contém BEGIN PRIVATE KEY');
+  }
+  
+  if (!privateKeyPem.includes('END PRIVATE KEY')) {
+    console.error('❌ Chave privada não contém "END PRIVATE KEY"');
+    throw new Error('Chave privada em formato inválido: não contém END PRIVATE KEY');
+  }
 
   // Converter PEM para ArrayBuffer
   const pemHeader = '-----BEGIN PRIVATE KEY-----';
@@ -139,26 +209,57 @@ async function createJWT(serviceAccount: any): Promise<string> {
     .replace(pemFooter, '')
     .replace(/\s/g, '');
   
-  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+  if (pemContents.length === 0) {
+    console.error('❌ Chave privada está vazia após remover headers');
+    throw new Error('Chave privada está vazia');
+  }
+  
+  console.log('   Tamanho da chave (base64):', pemContents.length, 'caracteres');
+  
+  let binaryDer: Uint8Array;
+  try {
+    binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
+    console.log('   Tamanho da chave (binário):', binaryDer.length, 'bytes');
+  } catch (base64Error: any) {
+    console.error('❌ Erro ao decodificar chave privada (base64):', base64Error.message);
+    throw new Error(`Chave privada inválida (erro base64): ${base64Error.message}`);
+  }
 
   // Importar chave usando Web Crypto API
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryDer,
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      hash: 'SHA-256',
-    },
-    false,
-    ['sign']
-  );
+  console.log('🔐 Importando chave privada usando Web Crypto API...');
+  let key: CryptoKey;
+  try {
+    key = await crypto.subtle.importKey(
+      'pkcs8',
+      binaryDer,
+      {
+        name: 'RSASSA-PKCS1-v1_5',
+        hash: 'SHA-256',
+      },
+      false,
+      ['sign']
+    );
+    console.log('✅ Chave privada importada com sucesso');
+  } catch (importError: any) {
+    console.error('❌ Erro ao importar chave privada:', importError.message);
+    console.error('   Isso geralmente indica que a chave privada está em formato incorreto');
+    throw new Error(`Erro ao importar chave privada: ${importError.message}`);
+  }
 
   // Assinar
-  const signature = await crypto.subtle.sign(
-    { name: 'RSASSA-PKCS1-v1_5' },
-    key,
-    new TextEncoder().encode(signatureInput)
-  );
+  console.log('✍️ Assinando JWT...');
+  let signature: ArrayBuffer;
+  try {
+    signature = await crypto.subtle.sign(
+      { name: 'RSASSA-PKCS1-v1_5' },
+      key,
+      new TextEncoder().encode(signatureInput)
+    );
+    console.log('✅ JWT assinado com sucesso');
+  } catch (signError: any) {
+    console.error('❌ Erro ao assinar JWT:', signError.message);
+    throw new Error(`Erro ao assinar JWT: ${signError.message}`);
+  }
 
   // Codificar assinatura em base64url
   const encodedSignature = base64UrlEncode(
@@ -299,6 +400,30 @@ serve(async (req) => {
     console.log('📋 Título:', notification.title);
     console.log('📋 Corpo:', notification.body);
 
+    // FCM exige que todos os valores em 'data' sejam strings
+    // Converter todos os valores para strings
+    const convertDataToStrings = (obj: Record<string, any>): Record<string, string> => {
+      const result: Record<string, string> = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (value !== null && value !== undefined) {
+          // Converter para string (booleans, numbers, objects, etc)
+          result[key] = typeof value === 'string' ? value : JSON.stringify(value);
+        }
+      }
+      return result;
+    };
+
+    // Preparar dados convertendo todos os valores para strings
+    const dataForFcm = convertDataToStrings({
+      title: notification.title,
+      body: notification.body,
+      ...(data || {}),
+      url: data?.url || '/dashboard',
+      tag: data?.tag || 'notification',
+    });
+
+    console.log('📋 Data convertido para strings:', dataForFcm);
+
     // Enviar via FCM V1 API (recomendado)
     const fcmResponse = await fetch(FCM_V1_ENDPOINT, {
       method: 'POST',
@@ -313,13 +438,7 @@ serve(async (req) => {
             title: notification.title,
             body: notification.body,
           },
-          data: {
-            title: notification.title,
-            body: notification.body,
-            ...data,
-            url: data?.url || '/dashboard',
-            tag: data?.tag || 'notification',
-          },
+          data: dataForFcm,
           webpush: {
             notification: {
               title: notification.title,
@@ -342,18 +461,56 @@ serve(async (req) => {
       console.error('📋 Resposta completa:', errorText);
       
       // Tentar parsear como JSON para ver detalhes
+      let errorJson: any = null;
+      let isTokenInvalid = false;
       try {
-        const errorJson = JSON.parse(errorText);
+        errorJson = JSON.parse(errorText);
         console.error('📋 Erro detalhado:', JSON.stringify(errorJson, null, 2));
+        
+        // Verificar se é erro de token inválido
+        const errorMessage = JSON.stringify(errorJson).toLowerCase();
+        const errorCode = errorJson?.error?.status || errorJson?.error?.code || '';
+        const errorReason = errorJson?.error?.message || '';
+        
+        // Códigos de erro do FCM que indicam token inválido
+        isTokenInvalid = 
+          errorCode === 'INVALID_ARGUMENT' ||
+          errorCode === 'NOT_FOUND' ||
+          errorCode === 'UNREGISTERED' ||
+          errorMessage.includes('registration-token-not-registered') ||
+          errorMessage.includes('invalid registration token') ||
+          errorMessage.includes('token is not registered') ||
+          errorReason.includes('registration-token-not-registered') ||
+          errorReason.includes('invalid registration token') ||
+          errorReason.includes('token is not registered');
+        
+        if (isTokenInvalid) {
+          console.error('');
+          console.error('🔴 TOKEN FCM INVÁLIDO OU EXPIRADO DETECTADO!');
+          console.error('📋 Código de erro:', errorCode);
+          console.error('📋 Motivo:', errorReason);
+          console.error('💡 Este token deve ser removido do banco de dados');
+          console.error('');
+        }
       } catch {
         // Não é JSON, apenas texto
+        const errorTextLower = errorText.toLowerCase();
+        isTokenInvalid = 
+          errorTextLower.includes('invalid') && errorTextLower.includes('token') ||
+          errorTextLower.includes('registration-token-not-registered') ||
+          errorTextLower.includes('token is not registered');
       }
       
       return new Response(
         JSON.stringify({ 
-          error: 'Erro ao enviar notificação push',
+          error: isTokenInvalid 
+            ? 'Token FCM inválido ou expirado' 
+            : 'Erro ao enviar notificação push',
           details: errorText,
-          status: fcmResponse.status
+          status: fcmResponse.status,
+          tokenInvalid: isTokenInvalid,
+          errorCode: errorJson?.error?.status || errorJson?.error?.code || null,
+          errorReason: errorJson?.error?.message || null
         }),
         { 
           status: fcmResponse.status, 

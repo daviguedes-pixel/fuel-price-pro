@@ -13,8 +13,21 @@ import {
   History,
   FileText,
   Users,
-  X
+  X,
+  ChevronDown,
+  ChevronRight,
+  TrendingUp,
+  Package,
+  Receipt,
+  Truck,
+  FileCheck,
+  Percent
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "./ui/collapsible";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNotifications } from "@/hooks/useNotifications";
@@ -40,17 +53,65 @@ const getProfileDisplayName = (perfil: string) => {
   return names[perfil as keyof typeof names] || perfil;
 };
 
-const allMenuItems = [
-  { icon: Home, label: "Início", href: "/dashboard", permission: "dashboard" },
-  { icon: DollarSign, label: "Solicitação de Preços", href: "/solicitacao-preco", permission: "price_request" },
-  { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
-  { icon: Map, label: "Mapa", href: "/map", permission: "map" },
-  { icon: History, label: "Histórico", href: "/price-history", permission: "price_history" },
-  { icon: BarChart3, label: "Gestor de Carteiras", href: "/portfolio-manager", permission: "price_history" },
-  { icon: FileText, label: "Referências", href: "/reference-registration", permission: "reference_registration" },
-  { icon: Users, label: "Gestão", href: "/gestao", permission: "gestao" },
-  { icon: Settings, label: "Configurações", href: "/settings", permission: "settings" },
+interface MenuItem {
+  icon: any;
+  label: string;
+  href: string;
+  permission: string;
+}
+
+interface SubGroup {
+  label: string;
+  items: MenuItem[];
+}
+
+interface MenuGroup {
+  label: string;
+  subgroups?: SubGroup[];
+  items?: MenuItem[];
+}
+
+const menuStructure: MenuGroup[] = [
+  {
+    label: "Comercial",
+    subgroups: [
+      {
+        label: "Precificação",
+        items: [
+          { icon: DollarSign, label: "Solicitações", href: "/solicitacao-preco", permission: "price_request" },
+          { icon: BarChart3, label: "Aprovações", href: "/approvals", permission: "approvals" },
+        ]
+      },
+      {
+        label: "Estrategia",
+        items: [
+          { icon: FileText, label: "Referencias", href: "/reference-registration", permission: "reference_registration" },
+          { icon: Map, label: "Mapa", href: "/map", permission: "map" },
+          { icon: History, label: "Historico", href: "/price-history", permission: "price_history" },
+          { icon: BarChart3, label: "Gestor de carteiras", href: "/portfolio-manager", permission: "price_history" },
+        ]
+      },
+      {
+        label: "Gestoria",
+        items: [
+          { icon: Users, label: "Gestão", href: "/gestao", permission: "gestao" },
+        ]
+      }
+    ]
+  },
+  {
+    label: "Pricing",
+    items: [
+      { icon: Percent, label: "Descontos Indevidos (Desenvolvimento)", href: "/descontos-indevidos", permission: "pricing" },
+      { icon: Map, label: "Mapa Contatos (Desenvolvimento)", href: "/mapa-contatos", permission: "pricing" },
+      { icon: Truck, label: "Cargas (Desenvolvimento)", href: "/cargas", permission: "pricing" },
+      { icon: FileCheck, label: "NFs Incorretas (Desenvolvimento)", href: "/nfs-incorretas", permission: "pricing" },
+      { icon: TrendingUp, label: "Paridade (Desenvolvimento)", href: "/paridade", permission: "pricing" },
+    ]
+  }
 ];
+
+const homeItem: MenuItem = { icon: Home, label: "Início", href: "/dashboard", permission: "dashboard" };
 
 function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -61,7 +122,23 @@ function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   
-  const menuItems = allMenuItems.filter(item => canAccess(item.permission));
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    "Comercial": true,
+    "Pricing": true
+  });
+  const [openSubGroups, setOpenSubGroups] = useState<Record<string, boolean>>({
+    "Precificação": true,
+    "Estrategia": true,
+    "Gestoria": true
+  });
+
+  const toggleGroup = useCallback((groupLabel: string) => {
+    setOpenGroups(prev => ({ ...prev, [groupLabel]: !prev[groupLabel] }));
+  }, []);
+
+  const toggleSubGroup = useCallback((subGroupLabel: string) => {
+    setOpenSubGroups(prev => ({ ...prev, [subGroupLabel]: !prev[subGroupLabel] }));
+  }, []);
 
   const handleLogout = useCallback(async () => {
     await signOut();
@@ -109,22 +186,114 @@ function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
-          {menuItems.map((item) => (
+        <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
+          {/* Início */}
+          {canAccess(homeItem.permission) && (
             <Button
-              key={item.href}
               variant="ghost"
-              className={`w-full justify-start gap-2 h-9 transition-all ${
-                location.pathname === item.href 
+              className={`w-full justify-start gap-2 h-9 transition-all mb-2 ${
+                location.pathname === homeItem.href 
                   ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
                   : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
-              } ${(item as any).testMode ? 'opacity-60 border-l-2 border-yellow-500/50' : ''}`}
-              onClick={() => handleMenuClick(item.href)}
+              }`}
+              onClick={() => handleMenuClick(homeItem.href)}
             >
-              <item.icon className="h-4 w-4 flex-shrink-0" />
-              <span className="text-xs">{item.label}</span>
+              <homeItem.icon className="h-4 w-4 flex-shrink-0" />
+              <span className="text-xs">{homeItem.label}</span>
             </Button>
-          ))}
+          )}
+
+          {/* Grupos */}
+          {menuStructure.map((group) => {
+            const hasAccessibleItems = group.subgroups 
+              ? group.subgroups.some(sub => sub.items.some(item => canAccess(item.permission)))
+              : group.items?.some(item => canAccess(item.permission));
+            
+            if (!hasAccessibleItems) return null;
+
+            return (
+              <Collapsible
+                key={group.label}
+                open={openGroups[group.label] ?? false}
+                onOpenChange={() => toggleGroup(group.label)}
+              >
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-between gap-2 h-8 px-2 text-sidebar-foreground/80 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 text-xs font-semibold"
+                  >
+                    <span>{group.label}</span>
+                    {openGroups[group.label] ? (
+                      <ChevronDown className="h-3 w-3" />
+                    ) : (
+                      <ChevronRight className="h-3 w-3" />
+                    )}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-0.5 pl-2">
+                  {group.subgroups?.map((subgroup) => {
+                    const accessibleItems = subgroup.items.filter(item => canAccess(item.permission));
+                    if (accessibleItems.length === 0) return null;
+
+                    return (
+                      <div key={subgroup.label} className="space-y-0.5">
+                        <Collapsible
+                          open={openSubGroups[subgroup.label] ?? false}
+                          onOpenChange={() => toggleSubGroup(subgroup.label)}
+                        >
+                          <CollapsibleTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              className="w-full justify-between gap-2 h-7 px-2 text-sidebar-foreground/60 hover:text-sidebar-foreground/80 hover:bg-sidebar-accent/30 text-[11px] font-medium"
+                            >
+                              <span>{subgroup.label}</span>
+                              {openSubGroups[subgroup.label] ? (
+                                <ChevronDown className="h-3 w-3" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3" />
+                              )}
+                            </Button>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="space-y-0.5 pl-3">
+                            {accessibleItems.map((item) => (
+                              <Button
+                                key={item.href}
+                                variant="ghost"
+                                className={`w-full justify-start gap-2 h-8 px-2 transition-all ${
+                                  location.pathname === item.href 
+                                    ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
+                                    : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
+                                }`}
+                                onClick={() => handleMenuClick(item.href)}
+                              >
+                                <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                                <span className="text-[11px]">{item.label}</span>
+                              </Button>
+                            ))}
+                          </CollapsibleContent>
+                        </Collapsible>
+                      </div>
+                    );
+                  })}
+                  {group.items?.filter(item => canAccess(item.permission)).map((item) => (
+                    <Button
+                      key={item.href}
+                      variant="ghost"
+                      className={`w-full justify-start gap-2 h-8 px-2 transition-all ${
+                        location.pathname === item.href 
+                          ? 'bg-sidebar-accent text-sidebar-foreground font-medium' 
+                          : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50'
+                      }`}
+                      onClick={() => handleMenuClick(item.href)}
+                    >
+                      <item.icon className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span className="text-[11px]">{item.label}</span>
+                    </Button>
+                  ))}
+                </CollapsibleContent>
+              </Collapsible>
+            );
+          })}
         </nav>
 
         {/* User Info at bottom */}
@@ -145,8 +314,8 @@ function Layout({ children }: LayoutProps) {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-screen overflow-hidden">
-        {/* Top Header */}
-        <header className="h-12 bg-card border-b border-border flex items-center justify-between px-3 lg:px-4 flex-shrink-0">
+        {/* Top Header - Manter branco */}
+        <header className="h-12 bg-white dark:bg-card border-b border-border flex items-center justify-between px-3 lg:px-4 flex-shrink-0">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"

@@ -3,8 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useFirebasePush } from '@/hooks/useFirebasePush';
 import { useAuth } from '@/hooks/useAuth';
-import { sendPushNotification } from '@/lib/pushNotification';
-import { Bell, BellOff, CheckCircle, XCircle, AlertCircle, Send, TestTube } from 'lucide-react';
+import { sendPushNotification, diagnosePushNotifications } from '@/lib/pushNotification';
+import { Bell, BellOff, CheckCircle, XCircle, AlertCircle, Send, TestTube, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -14,6 +14,7 @@ export function PushNotificationSetup() {
   const [isRequesting, setIsRequesting] = useState(false);
   const [isSendingTest, setIsSendingTest] = useState(false);
   const [isTestingEdgeFunction, setIsTestingEdgeFunction] = useState(false);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   const handleEnable = async () => {
     setIsRequesting(true);
@@ -92,6 +93,50 @@ export function PushNotificationSetup() {
       toast.error('Erro ao enviar notificação de teste');
     } finally {
       setIsSendingTest(false);
+    }
+  };
+
+  const handleDiagnose = async () => {
+    if (!user) {
+      toast.error('Você precisa estar autenticado');
+      return;
+    }
+
+    setIsDiagnosing(true);
+    try {
+      console.log('');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔍 INICIANDO DIAGNÓSTICO...');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+
+      const diagnosis = await diagnosePushNotifications(user.id);
+
+      console.log('');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('✅ DIAGNÓSTICO CONCLUÍDO');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+
+      if (diagnosis.issues.length > 0) {
+        toast.error('Problemas encontrados no sistema de notificações', {
+          description: `Encontrados ${diagnosis.issues.length} problema(s). Verifique o Console (F12) para detalhes.`,
+          duration: 10000
+        });
+      } else {
+        toast.success('Sistema de notificações está funcionando corretamente!', {
+          description: 'Todos os componentes estão OK.',
+          duration: 5000
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao executar diagnóstico:', error);
+      toast.error('Erro ao executar diagnóstico', {
+        description: 'Verifique o Console (F12) para detalhes',
+        duration: 10000
+      });
+    } finally {
+      setIsDiagnosing(false);
     }
   };
 
@@ -452,6 +497,15 @@ export function PushNotificationSetup() {
                 </Button>
               </div>
               <div className="space-y-2">
+                <Button
+                  onClick={handleDiagnose}
+                  disabled={isDiagnosing}
+                  variant="secondary"
+                  className="w-full"
+                >
+                  <Search className="h-4 w-4 mr-2" />
+                  {isDiagnosing ? 'Diagnosticando...' : '🔍 Diagnosticar Sistema'}
+                </Button>
                 <Button
                   onClick={handleTestEdgeFunction}
                   disabled={isTestingEdgeFunction}

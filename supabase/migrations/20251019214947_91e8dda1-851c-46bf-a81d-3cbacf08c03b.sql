@@ -1,6 +1,6 @@
 -- Ajustar função para restringir cotacao_geral_combustivel apenas para bandeira branca
 CREATE OR REPLACE FUNCTION public.get_lowest_cost_freight(p_posto_id text, p_produto text, p_date date DEFAULT CURRENT_DATE)
- RETURNS TABLE(base_id text, base_nome text, base_codigo text, base_uf text, custo numeric, frete numeric, custo_total numeric, forma_entrega text, data_referencia timestamp without time zone)
+ RETURNS TABLE(base_id text, base_nome text, base_codigo text, base_uf text, base_bandeira text, custo numeric, frete numeric, custo_total numeric, forma_entrega text, data_referencia timestamp without time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public', 'cotacao'
@@ -43,6 +43,7 @@ BEGIN
           COALESCE(bf.nome,'Base')::text AS base_nome,
           COALESCE(bf.codigo_base,'')::text AS base_codigo,
           COALESCE(bf.uf::text,'')::text AS base_uf,
+          COALESCE(bf.bandeira,'')::text AS base_bandeira,
           (cc.valor_unitario-COALESCE(cc.desconto_valor,0))::numeric AS custo,
           COALESCE(fe.frete_real,fe.frete_atual,0)::numeric AS frete,
           cc.forma_entrega::text AS forma_entrega,
@@ -62,6 +63,7 @@ BEGIN
           COALESCE(bf.nome,'Base')::text AS base_nome,
           COALESCE(bf.codigo_base,'')::text AS base_codigo,
           COALESCE(bf.uf::text,'')::text AS base_uf,
+          COALESCE(bf.bandeira,'')::text AS base_bandeira,
           (cg.valor_unitario-COALESCE(cg.desconto_valor,0))::numeric AS custo,
           COALESCE(fe.frete_real,fe.frete_atual,0)::numeric AS frete,
           cg.forma_entrega::text AS forma_entrega,
@@ -76,7 +78,7 @@ BEGIN
           AND (cg.forma_entrega != 'FOB' OR COALESCE(fe.frete_real,fe.frete_atual,0) > 0)
       )
       SELECT 
-        c.base_id, c.base_nome, c.base_codigo, c.base_uf, c.custo,
+        c.base_id, c.base_nome, c.base_codigo, c.base_uf, COALESCE(c.base_bandeira,'')::text AS base_bandeira, c.custo,
         CASE WHEN c.forma_entrega='FOB' THEN c.frete ELSE 0::numeric END AS frete,
         CASE WHEN c.forma_entrega='FOB' THEN c.custo + c.frete ELSE c.custo END AS custo_total,
         c.forma_entrega, c.data_referencia
@@ -98,6 +100,7 @@ BEGIN
               COALESCE(bf.nome,'Base')::text AS base_nome,
               COALESCE(bf.codigo_base,'')::text AS base_codigo,
               COALESCE(bf.uf::text,'')::text AS base_uf,
+              COALESCE(bf.bandeira,'')::text AS base_bandeira,
               (cc.valor_unitario-COALESCE(cc.desconto_valor,0))::numeric AS custo,
               COALESCE(fe.frete_real,fe.frete_atual,0)::numeric AS frete,
               cc.forma_entrega::text AS forma_entrega,
@@ -116,6 +119,7 @@ BEGIN
               COALESCE(bf.nome,'Base')::text AS base_nome,
               COALESCE(bf.codigo_base,'')::text AS base_codigo,
               COALESCE(bf.uf::text,'')::text AS base_uf,
+              COALESCE(bf.bandeira,'')::text AS base_bandeira,
               (cg.valor_unitario-COALESCE(cg.desconto_valor,0))::numeric AS custo,
               COALESCE(fe.frete_real,fe.frete_atual,0)::numeric AS frete,
               cg.forma_entrega::text AS forma_entrega,
@@ -130,7 +134,7 @@ BEGIN
               AND (cg.forma_entrega != 'FOB' OR COALESCE(fe.frete_real,fe.frete_atual,0) > 0)
           )
           SELECT 
-            c.base_id, c.base_nome, c.base_codigo, c.base_uf, c.custo,
+            c.base_id, c.base_nome, c.base_codigo, c.base_uf, COALESCE(c.base_bandeira,'')::text AS base_bandeira, c.custo,
             CASE WHEN c.forma_entrega='FOB' THEN c.frete ELSE 0::numeric END AS frete,
             CASE WHEN c.forma_entrega='FOB' THEN c.custo + c.frete ELSE c.custo END AS custo_total,
             c.forma_entrega, c.data_referencia
@@ -145,7 +149,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN QUERY
     SELECT 
-      r.posto_id::text, 'Referência'::text, r.posto_id::text, ''::text,
+      r.posto_id::text, 'Referência'::text, r.posto_id::text, ''::text, ''::text AS base_bandeira,
       r.preco_referencia::numeric, 0::numeric, r.preco_referencia::numeric,
       'FOB'::text, r.created_at::timestamp
     FROM public.referencias r

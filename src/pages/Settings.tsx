@@ -1,13 +1,161 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
-import { Users, UsersRound, Database, TrendingUp } from 'lucide-react';
+import { Users, UsersRound, Database, TrendingUp, Bell, TestTube } from 'lucide-react';
 import { PushNotificationSetup } from '@/components/PushNotificationSetup';
 import { FirebaseDebug } from '@/components/FirebaseDebug';
+import { useAuth } from '@/hooks/useAuth';
+import { createNotification } from '@/lib/utils';
+import { toast } from 'sonner';
 
 export default function Settings() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [isTestingNotification, setIsTestingNotification] = useState(false);
+
+  const handleTestApprovalNotification = async () => {
+    if (!user) {
+      toast.error('Você precisa estar autenticado para testar');
+      return;
+    }
+
+    setIsTestingNotification(true);
+    try {
+      console.log('');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🧪 TESTE DE NOTIFICAÇÃO DE APROVAÇÃO');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('User ID:', user.id);
+      console.log('User Email:', user.email);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+
+      // Buscar nome do usuário do perfil
+      const { supabase } = await import('@/integrations/supabase/client');
+      let approverName = user.email || 'Você';
+      
+      try {
+        const { data: userProfile } = await supabase
+          .from('user_profiles')
+          .select('nome, email')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        
+        if (userProfile?.nome) {
+          approverName = userProfile.nome;
+        } else if (userProfile?.email) {
+          approverName = userProfile.email;
+        }
+      } catch (err) {
+        console.warn('Erro ao buscar nome do usuário:', err);
+      }
+
+      // Criar notificação de teste de aprovação
+      const notificationData = {
+        suggestion_id: '00000000-0000-0000-0000-000000000000', // UUID de teste
+        approved_by: approverName,
+        url: '/approvals',
+        is_test: true
+      };
+
+      console.log('📝 Criando notificação de teste...');
+      const result = await createNotification(
+        user.id,
+        'price_approved',
+        'Preço Aprovado (Teste)',
+        `Sua solicitação de preço foi aprovada por ${approverName}! Esta é uma notificação de teste.`,
+        notificationData
+      );
+
+      console.log('');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('✅ NOTIFICAÇÃO DE TESTE CRIADA');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('Result:', result);
+      console.log('Aprovador:', approverName);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+      console.log('💡 Verifique:');
+      console.log('   1. Centro de notificações (sino no topo)');
+      console.log('   2. Push notification (se estiver ativada)');
+      console.log('   3. Console para logs detalhados');
+      console.log('');
+
+      // Verificar status da push notification após criar a notificação
+      console.log('');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('🔍 VERIFICANDO STATUS DA PUSH NOTIFICATION');
+      console.log('═══════════════════════════════════════════════════════');
+      
+      // Reutilizar supabase já importado acima
+      const { data: tokens, error: tokensError } = await supabase
+        .from('push_subscriptions' as any)
+        .select('fcm_token, id, created_at')
+        .eq('user_id', user.id);
+
+      console.log('Tokens encontrados:', tokens?.length || 0);
+      console.log('Erro ao buscar tokens:', tokensError);
+      
+      if (tokensError) {
+        console.error('❌ Erro ao buscar tokens FCM:', tokensError);
+      } else if (!tokens || tokens.length === 0) {
+        console.warn('⚠️ Nenhum token FCM encontrado no banco de dados');
+        console.warn('💡 Ação: Ative as notificações push em /settings primeiro');
+      } else {
+        console.log('✅ Tokens FCM encontrados:', tokens.length);
+        tokens.forEach((token: any, index: number) => {
+          console.log(`   ${index + 1}. Token: ${token.fcm_token?.substring(0, 30)}...`);
+        });
+      }
+      
+      console.log('═══════════════════════════════════════════════════════');
+      console.log('');
+
+      const hasTokens = tokens && tokens.length > 0;
+
+      if (hasTokens) {
+        toast.success('Notificação de teste criada!', {
+          description: `Notificação do site criada. Push notification tentou enviar para ${tokens.length} token(s). Verifique o console (F12) para detalhes.`,
+          duration: 12000
+        });
+      } else {
+        toast.warning('Notificação do site criada, mas push não enviou!', {
+          description: 'Nenhum token FCM encontrado. Ative as notificações push primeiro em /settings',
+          duration: 12000
+        });
+      }
+
+      // Disparar evento para refresh das notificações
+      window.dispatchEvent(new CustomEvent('notification-created', { 
+        detail: { userId: user.id } 
+      }));
+
+      // Também disparar via localStorage como fallback
+      localStorage.setItem('notification-refresh', Date.now().toString());
+      setTimeout(() => {
+        localStorage.removeItem('notification-refresh');
+      }, 100);
+
+    } catch (error: any) {
+      console.error('');
+      console.error('═══════════════════════════════════════════════════════');
+      console.error('❌ ERRO AO CRIAR NOTIFICAÇÃO DE TESTE');
+      console.error('═══════════════════════════════════════════════════════');
+      console.error('Erro:', error);
+      console.error('Mensagem:', error?.message);
+      console.error('Stack:', error?.stack);
+      console.error('═══════════════════════════════════════════════════════');
+      console.error('');
+      
+      toast.error('Erro ao criar notificação de teste', {
+        description: error?.message || 'Verifique o console para mais detalhes',
+        duration: 8000
+      });
+    } finally {
+      setIsTestingNotification(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-background dark:to-card">
@@ -116,6 +264,54 @@ export default function Settings() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Teste de Notificações */}
+        <Card className="mt-6">
+          <CardHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <TestTube className="h-6 w-6 text-purple-600" />
+              <CardTitle>Teste de Notificações</CardTitle>
+            </div>
+            <CardDescription>
+              Teste se as notificações do site e push estão funcionando corretamente
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-lg">
+              <p className="text-sm text-muted-foreground mb-4">
+                Este botão cria uma notificação de aprovação de teste para verificar se:
+              </p>
+              <ul className="text-sm text-muted-foreground space-y-2 list-disc list-inside mb-4">
+                <li>A notificação aparece no centro de notificações (sino no topo)</li>
+                <li>A notificação push é enviada (se estiver ativada)</li>
+                <li>O nome do aprovador é exibido corretamente</li>
+              </ul>
+            </div>
+            <Button 
+              onClick={handleTestApprovalNotification}
+              disabled={isTestingNotification || !user}
+              className="w-full"
+              variant="default"
+            >
+              {isTestingNotification ? (
+                <>
+                  <Bell className="h-4 w-4 mr-2 animate-pulse" />
+                  Criando notificação de teste...
+                </>
+              ) : (
+                <>
+                  <TestTube className="h-4 w-4 mr-2" />
+                  Testar Notificação de Aprovação
+                </>
+              )}
+            </Button>
+            {!user && (
+              <p className="text-xs text-muted-foreground text-center">
+                Você precisa estar autenticado para testar
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Notificações Push */}
         <div className="mt-6 space-y-4">
