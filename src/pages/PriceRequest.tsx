@@ -1,27 +1,32 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { SisEmpresaCombobox } from "@/components/SisEmpresaCombobox";
 import { ClientCombobox } from "@/components/ClientCombobox";
 import { ImageViewerModal } from "@/components/ImageViewerModal";
 import { FileUploader } from "@/components/FileUploader";
 import { ApprovalDetailsModal } from "@/components/ApprovalDetailsModal";
 import { EditRequestModal } from "@/components/EditRequestModal";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { parseBrazilianDecimal, formatBrazilianCurrency, formatIntegerToPrice, parsePriceToInteger, generateUUID, mapProductToEnum } from "@/lib/utils";
 import { useDatabase } from "@/hooks/useDatabase";
 import { useAuth } from "@/hooks/useAuth";
 import { usePermissions } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { ArrowLeft, Send, Save, TrendingUp, BarChart, MapPin, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText, ChevronDown, Plus, Download, Maximize2, Loader2, Edit, Trash2 } from "lucide-react";
+import { ArrowLeft, Send, Save, TrendingUp, BarChart, MapPin, CheckCircle, AlertCircle, Eye, DollarSign, Clock, Check, X, FileText, ChevronDown, Plus, Download, Maximize2, Loader2, Edit, Trash2, User } from "lucide-react";
 import { IntegraLogo } from "@/components/IntegraLogo";
+import { SaoRoqueLogo } from "@/components/SaoRoqueLogo";
 import { useNavigate } from "react-router-dom";
 
 interface Reference {
@@ -44,6 +49,53 @@ interface Reference {
 function ProposalFullView({ batch, proposalNumber, proposalDate, generalStatus, user }: any) {
   const firstRequest = batch[0];
   const client = firstRequest.clients;
+  const [requesterName, setRequesterName] = useState<string>('N/A');
+  
+  // Buscar nome do solicitante
+  useEffect(() => {
+    const fetchRequesterName = async () => {
+      const createdBy = firstRequest.created_by || firstRequest.requested_by;
+      if (createdBy) {
+        try {
+          // Tentar buscar em user_profiles
+          const { data: profileData } = await supabase
+            .from('user_profiles')
+            .select('nome, email')
+            .eq('user_id', createdBy)
+            .maybeSingle();
+          
+          if (profileData) {
+            setRequesterName(profileData.nome || profileData.email || 'N/A');
+            return;
+          }
+          
+          // Se não encontrou, tentar buscar por email
+          if (createdBy.includes('@')) {
+            const { data: emailProfileData } = await supabase
+              .from('user_profiles')
+              .select('nome, email')
+              .eq('email', createdBy)
+              .maybeSingle();
+            
+            if (emailProfileData) {
+              setRequesterName(emailProfileData.nome || emailProfileData.email || 'N/A');
+              return;
+            }
+          }
+          
+          // Fallback: usar o valor direto se for email
+          if (createdBy.includes('@')) {
+            setRequesterName(createdBy);
+          }
+        } catch (error) {
+          console.error('Erro ao buscar solicitante:', error);
+          setRequesterName(createdBy?.includes('@') ? createdBy : 'N/A');
+        }
+      }
+    };
+    
+    fetchRequesterName();
+  }, [firstRequest.created_by, firstRequest.requested_by]);
   
   // Formatação com 4 casas decimais para valores unitários (custo/L, preço/L)
   const formatPrice4Decimals = (price: number) => {
@@ -86,7 +138,7 @@ function ProposalFullView({ batch, proposalNumber, proposalDate, generalStatus, 
       {/* Cabeçalho com Logo */}
       <div className="flex items-center justify-between mb-6 print:mb-2 print:flex-row">
         <div className="flex items-center gap-3 print:gap-2">
-          <IntegraLogo className="h-12 w-auto print:h-6" />
+          <SaoRoqueLogo className="h-12 w-auto print:h-6" />
         </div>
         <button
           onClick={() => {
@@ -128,6 +180,10 @@ function ProposalFullView({ batch, proposalNumber, proposalDate, generalStatus, 
           <div>
             <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide print:text-[9px] print:font-normal">Vendedor:</Label>
             <p className="text-base font-semibold text-slate-900 dark:text-slate-100 mt-1 print:text-[10px] print:mt-0 print:font-normal">{sellerName}</p>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide print:text-[9px] print:font-normal">Quem Solicitou:</Label>
+            <p className="text-base font-semibold text-slate-900 dark:text-slate-100 mt-1 print:text-[10px] print:mt-0 print:font-normal">{requesterName}</p>
           </div>
         </div>
         <div className="space-y-2 print:space-y-1">
@@ -295,6 +351,31 @@ export default function PriceRequest() {
   const [stationPaymentMethods, setStationPaymentMethods] = useState<any[]>([]);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("my-requests");
+  
+  // Estados para a aba Teste
+  const [testeRequestMode, setTesteRequestMode] = useState<'single_station_multi_client' | 'single_client_multi_station'>('single_station_multi_client');
+  const [testeFixedEntityId, setTesteFixedEntityId] = useState<string>("");
+  const [testeFixedEntityName, setTesteFixedEntityName] = useState<string>("");
+  const [testeItems, setTesteItems] = useState<Array<{
+    id: string;
+    targetId: string;
+    targetName: string;
+    product: string;
+    volume: string;
+    costPrice: string;
+    margin: string;
+    suggestedPrice: string;
+    paymentMethod: string;
+    observation: string;
+  }>>([]);
+  const [testeTempTargetId, setTesteTempTargetId] = useState("");
+  const [testeTempTargetName, setTesteTempTargetName] = useState("");
+  const [testeTempProduct, setTesteTempProduct] = useState("");
+  const [testeTempVolume, setTesteTempVolume] = useState("");
+  const [testeTempPrice, setTesteTempPrice] = useState("");
+  const [testeTempMargin, setTesteTempMargin] = useState("");
+  const [testeTempPayment, setTesteTempPayment] = useState("a_vista");
+  const [testeIsPreviewOpen, setTesteIsPreviewOpen] = useState(false);
   const [myRequests, setMyRequests] = useState<any[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
   const [showRequestDetails, setShowRequestDetails] = useState(false);
@@ -1836,6 +1917,10 @@ export default function PriceRequest() {
       // Formata com vírgula fixa (ex: 350 -> "3,50")
       const formatted = formatIntegerToPrice(numbersOnly);
       setFormData(prev => ({ ...prev, [field]: formatted }));
+    } else if (field === 'payment_method_id') {
+      // Garantir que payment_method_id seja sempre uma string única, nunca um array
+      const singleValue = Array.isArray(value) ? value[0] : String(value);
+      setFormData(prev => ({ ...prev, [field]: singleValue }));
     } else {
       setFormData(prev => ({ ...prev, [field]: value }));
     }
@@ -1850,6 +1935,29 @@ export default function PriceRequest() {
       }
     }
   };
+
+  // Função auxiliar para buscar método de pagamento pelo ID
+  const getPaymentMethodById = useCallback((methodId: string) => {
+    if (!methodId || methodId === 'none') return null;
+    
+    // Buscar primeiro nos métodos do posto pelo ID
+    const stationMethod = stationPaymentMethods.find(pm => {
+      const pmId = String((pm as any).id || String((pm as any).ID_POSTO) + '_' + pm.CARTAO);
+      return pmId === String(methodId);
+    });
+    
+    if (stationMethod) {
+      return stationMethod;
+    }
+    
+    // Se não encontrou no posto, buscar nos métodos gerais pelo ID ou CARTAO
+    const defaultMethod = paymentMethods.find(pm => {
+      const pmId = String((pm as any).id || pm.CARTAO);
+      return pmId === String(methodId) || pm.CARTAO === methodId;
+    });
+    
+    return defaultMethod || null;
+  }, [stationPaymentMethods, paymentMethods]);
 
   const calculateMargin = useCallback(() => {
     try {
@@ -1876,17 +1984,8 @@ export default function PriceRequest() {
       
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-        const stationMethod = stationPaymentMethods.find(pm => {
-          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-        });
-        
-        if (stationMethod) {
-          feePercentage = stationMethod.TAXA || 0;
-        } else {
-          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-          feePercentage = defaultMethod?.TAXA || 0;
-        }
+        const method = getPaymentMethodById(formData.payment_method_id);
+        feePercentage = method?.TAXA || 0;
       }
       
       const finalCost = baseCost * (1 + feePercentage / 100);
@@ -1906,7 +2005,7 @@ export default function PriceRequest() {
       setCalculatedPrice(0);
       setMargin(0);
     }
-  }, [formData.suggested_price, formData.current_price, formData.purchase_cost, formData.freight_cost, formData.payment_method_id, paymentMethods, stationPaymentMethods]);
+  }, [formData.suggested_price, formData.current_price, formData.purchase_cost, formData.freight_cost, formData.payment_method_id, getPaymentMethodById]);
 
   const calculateCosts = useCallback(() => {
     try {
@@ -1926,17 +2025,8 @@ export default function PriceRequest() {
       // Buscar taxa específica do posto ou taxa padrão
       let feePercentage = 0;
       if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-        const stationMethod = stationPaymentMethods.find(pm => {
-          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-        });
-        
-        if (stationMethod) {
-          feePercentage = stationMethod.TAXA || 0;
-        } else {
-          const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-          feePercentage = defaultMethod?.TAXA || 0;
-        }
+        const method = getPaymentMethodById(formData.payment_method_id);
+        feePercentage = method?.TAXA || 0;
       }
       
       // Calcular base cost em R$/L
@@ -2060,8 +2150,7 @@ export default function PriceRequest() {
     formData.payment_method_id,
     formData.station_ids,
     stationCosts,
-    stationPaymentMethods,
-    paymentMethods,
+    getPaymentMethodById,
     calculateMargin
   ]);
 
@@ -2080,8 +2169,7 @@ export default function PriceRequest() {
     formData.arla_purchase_price,
     formData.product,
     formData.payment_method_id,
-    stationPaymentMethods,
-    paymentMethods
+    getPaymentMethodById
   ]);
 
   const getFilteredReferences = () => {
@@ -2166,8 +2254,16 @@ export default function PriceRequest() {
       // Converter preços de formato com vírgula fixa para reais
       const suggestedPriceNum = parsePriceToInteger(formData.suggested_price) / 100;
       const currentPriceNum = parsePriceToInteger(formData.current_price) / 100;
-      const purchaseCostNum = parseBrazilianDecimal(formData.purchase_cost);
-      const freightCostNum = parseBrazilianDecimal(formData.freight_cost);
+      
+      // Usar valores originais de stationCosts se disponíveis (mais precisos)
+      // Caso contrário, converter do formData
+      const stationCost = formData.station_id ? stationCosts[formData.station_id] : null;
+      const purchaseCostNum = stationCost 
+        ? stationCost.purchase_cost 
+        : parseBrazilianDecimal(formData.purchase_cost);
+      const freightCostNum = stationCost 
+        ? stationCost.freight_cost 
+        : parseBrazilianDecimal(formData.freight_cost);
       
       // Salvar valores em REAIS (o banco espera numeric(10,4) que já aceita decimais)
       const finalPrice = isNaN(suggestedPriceNum) ? null : suggestedPriceNum;
@@ -2249,14 +2345,14 @@ export default function PriceRequest() {
         margin_cents: safeMargin, // Margem já está em centavos
         cost_price: safeCostPrice,
         status: 'draft' as any, // Sempre salvar como draft ao adicionar
-        // Dados de cálculo para análise
+        // Dados de cálculo para análise - usar os valores já calculados acima
         purchase_cost: (() => {
-          const val = parseBrazilianDecimal(formData.purchase_cost);
-          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+          // Usar purchaseCostNum que já foi calculado corretamente acima
+          return (purchaseCostNum && !isNaN(purchaseCostNum) && isFinite(purchaseCostNum)) ? purchaseCostNum : null;
         })(),
         freight_cost: (() => {
-          const val = parseBrazilianDecimal(formData.freight_cost);
-          return (val && !isNaN(val) && isFinite(val)) ? val : null;
+          // Usar freightCostNum que já foi calculado corretamente acima
+          return (freightCostNum && !isNaN(freightCostNum) && isFinite(freightCostNum)) ? freightCostNum : null;
         })(),
         volume_made: (() => {
           const val = parseBrazilianDecimal(formData.volume_made);
@@ -2577,17 +2673,8 @@ export default function PriceRequest() {
             
             let feePercentage = 0;
             if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-              const stationMethod = stationPaymentMethods.find(pm => {
-                const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-                return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-              });
-              
-              if (stationMethod) {
-                feePercentage = stationMethod.TAXA || 0;
-              } else {
-                const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-                feePercentage = defaultMethod?.TAXA || 0;
-              }
+              const method = getPaymentMethodById(formData.payment_method_id);
+              feePercentage = method?.TAXA || 0;
             }
             
             const finalCost = baseCost * (1 + feePercentage / 100);
@@ -2829,10 +2916,7 @@ export default function PriceRequest() {
         ...data,
         stations: stationData || { name: formData.station_id, code: formData.station_id },
         clients: clientData || { name: formData.client_id, code: formData.client_id },
-        payment_methods: stationPaymentMethods.find(pm => {
-          const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-          return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-        }) || paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id) || null
+        payment_methods: getPaymentMethodById(formData.payment_method_id) || null
       };
       
       console.log('📊 Dados enriquecidos:', enrichedData);
@@ -2858,17 +2942,8 @@ export default function PriceRequest() {
         
         let feePercentage = 0;
         if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-          const stationMethod = stationPaymentMethods.find(pm => {
-            const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-            return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-          });
-          
-          if (stationMethod) {
-            feePercentage = stationMethod.TAXA || 0;
-          } else {
-            const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-            feePercentage = defaultMethod?.TAXA || 0;
-          }
+          const method = getPaymentMethodById(formData.payment_method_id);
+          feePercentage = method?.TAXA || 0;
         }
         
         const finalCost = baseCost * (1 + feePercentage / 100);
@@ -3322,36 +3397,16 @@ export default function PriceRequest() {
           </div>
         </div>
 
-        {/* Header com botão de Nova Solicitação */}
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-bold text-slate-800 dark:text-slate-200">
-            {activeTab === 'new' ? 'Nova Solicitação de Preço' : 'Minhas Solicitações'}
-          </h2>
-          <div className="flex gap-3">
-            {activeTab === 'my-requests' && (
-              <Button
-                onClick={() => setActiveTab('new')}
-                className="flex items-center gap-2"
-              >
-                <DollarSign className="h-4 w-4" />
-                Nova Solicitação
-              </Button>
-            )}
-            {activeTab === 'new' && (
-              <Button
-                onClick={() => setActiveTab('my-requests')}
-                variant="outline"
-                className="flex items-center gap-2"
-              >
-                <FileText className="h-4 w-4" />
-                Minhas Solicitações
-              </Button>
-            )}
-          </div>
-        </div>
+        {/* Tabs Navigation */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid w-full grid-cols-3 lg:w-[600px] mb-6">
+            <TabsTrigger value="new">Nova Solicitação</TabsTrigger>
+            <TabsTrigger value="my-requests">Minhas Solicitações</TabsTrigger>
+            <TabsTrigger value="teste">Teste</TabsTrigger>
+          </TabsList>
 
         {/* Conteúdo baseado na aba ativa */}
-        {activeTab === 'new' && (
+        <TabsContent value="new" className="mt-0">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Main Form */}
         <div className="lg:col-span-2">
@@ -3430,29 +3485,53 @@ export default function PriceRequest() {
                       </svg>
                       Tipo de Pagamento
                     </Label>
-                    <Select value={formData.payment_method_id} onValueChange={(value) => handleInputChange("payment_method_id", value)}>
+                    <Select 
+                      value={formData.payment_method_id} 
+                      onValueChange={(value) => {
+                        // Garantir que apenas um valor seja selecionado
+                        if (value && value !== 'none') {
+                          handleInputChange("payment_method_id", value);
+                        } else {
+                          handleInputChange("payment_method_id", "none");
+                        }
+                      }}
+                    >
                       <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Selecione o tipo de pagamento" />
+                        <SelectValue placeholder="Selecione o tipo de pagamento">
+                          {formData.payment_method_id && formData.payment_method_id !== 'none' ? (() => {
+                            const method = getPaymentMethodById(formData.payment_method_id);
+                            return method ? `${method.CARTAO}${method.TAXA ? ` (${method.TAXA}%)` : ''}` : 'Selecione o tipo de pagamento';
+                          })() : 'Selecione o tipo de pagamento'}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">Nenhum</SelectItem>
                         {(() => {
-                          // Se tem posto selecionado, usar métodos do posto (já agrupados por posto)
-                          if (stationPaymentMethods.length > 0) {
-                            // Agrupar por CARTAO e ID_POSTO para evitar duplicatas
+                          // Se tem posto selecionado, usar APENAS métodos do posto (não misturar com métodos gerais)
+                          if (formData.station_id && formData.station_id !== 'none' && stationPaymentMethods.length > 0) {
+                            // Agrupar por CARTAO para evitar duplicatas do mesmo tipo de cartão
+                            // Se o mesmo CARTAO aparece múltiplas vezes, pegar apenas o primeiro (com menor ID)
                             const grouped = new Map<string, any>();
                             stationPaymentMethods
-                              .filter(m => m.TAXA != null)
+                              .filter(m => m && m.TAXA != null && m.CARTAO)
+                              .sort((a, b) => {
+                                // Ordenar por ID para pegar sempre o mesmo quando há duplicatas
+                                const idA = (a as any).id || 0;
+                                const idB = (b as any).id || 0;
+                                return idA - idB;
+                              })
                               .forEach(method => {
-                                const key = `${method.CARTAO}_${method.ID_POSTO || 'all'}`;
-                                if (!grouped.has(key)) {
-                                  grouped.set(key, method);
+                                const cardName = method.CARTAO;
+                                // Usar apenas o nome do cartão como chave para evitar duplicatas
+                                if (cardName && !grouped.has(cardName)) {
+                                  grouped.set(cardName, method);
                                 }
                               });
                             return Array.from(grouped.values()).map((method, index) => {
-                              const methodId = (method as any).id || (method as any).ID_POSTO || method.CARTAO;
+                              // Usar sempre o ID do método de pagamento como valor único
+                              const methodId = (method as any).id || String((method as any).ID_POSTO) + '_' + method.CARTAO;
                               return (
-                                <SelectItem key={`payment-station-${index}-${methodId}`} value={String(methodId)}>
+                                <SelectItem key={`payment-station-${methodId}-${index}`} value={String(methodId)}>
                                   {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
                                 </SelectItem>
                               );
@@ -3460,11 +3539,17 @@ export default function PriceRequest() {
                           }
                           
                           // Se não tem posto selecionado, agrupar por nome (CARTAO) e mostrar apenas 1 de cada
-                          if (paymentMethods && paymentMethods.length > 0) {
+                          if ((!formData.station_id || formData.station_id === 'none') && paymentMethods && paymentMethods.length > 0) {
                             // Agrupar por CARTAO - pegar apenas o primeiro de cada tipo
                             const groupedByName = new Map<string, any>();
                             paymentMethods
-                              .filter(m => m.TAXA != null)
+                              .filter(m => m && m.TAXA != null && m.CARTAO)
+                              .sort((a, b) => {
+                                // Ordenar por ID para consistência
+                                const idA = (a as any).id || 0;
+                                const idB = (b as any).id || 0;
+                                return idA - idB;
+                              })
                               .forEach(method => {
                                 const cardName = method.CARTAO;
                                 if (cardName && !groupedByName.has(cardName)) {
@@ -3472,9 +3557,10 @@ export default function PriceRequest() {
                                 }
                               });
                             return Array.from(groupedByName.values()).map((method, index) => {
-                              const methodId = method.CARTAO; // Usar CARTAO como ID quando não tem posto
+                              // Usar ID do método ou CARTAO como fallback
+                              const methodId = (method as any).id || method.CARTAO;
                               return (
-                                <SelectItem key={`payment-all-${index}-${methodId}`} value={String(methodId)}>
+                                <SelectItem key={`payment-all-${methodId}-${index}`} value={String(methodId)}>
                                   {method.CARTAO} {method.TAXA ? `(${method.TAXA}%)` : ''}
                                 </SelectItem>
                               );
@@ -3533,9 +3619,14 @@ export default function PriceRequest() {
                   {formData.product === 'arla32_granel' && (
                     <div className="space-y-2 md:col-span-2">
                       <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-lg border border-green-200 dark:border-green-800">
-                        <Label htmlFor="suggested_price_arla" className="text-sm font-semibold text-green-700 dark:text-green-300 mb-2 block">
-                          💰 Preço de VENDA do ARLA (R$/L)
-                        </Label>
+                        <div className="flex items-center justify-between mb-2">
+                          <Label htmlFor="suggested_price_arla" className="text-sm font-semibold text-green-700 dark:text-green-300">
+                            💰 Preço de VENDA do ARLA (R$/L)
+                          </Label>
+                          <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+                            Consumo: 5% do volume
+                          </span>
+                        </div>
                         <Input
                           id="suggested_price_arla"
                           type="text"
@@ -3555,9 +3646,14 @@ export default function PriceRequest() {
                   {formData.product === 's10' && (
                     <div className="space-y-2 md:col-span-2">
                       <div className="bg-slate-50 dark:bg-secondary/20 p-3 rounded-lg border border-slate-200 dark:border-border">
-                        <Label htmlFor="arla_purchase_price" className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 block">
-                          Preço de Venda ARLA (R$/L)
-                        </Label>
+                        <div className="flex items-center justify-between mb-2">
+                          <Label htmlFor="arla_purchase_price" className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                            Preço de Venda ARLA (R$/L)
+                          </Label>
+                          <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">
+                            Consumo: 5% do volume
+                          </span>
+                        </div>
                         <Input
                           id="arla_purchase_price"
                           type="text"
@@ -4177,17 +4273,8 @@ export default function PriceRequest() {
                 // Buscar taxa para este posto
                 let feePercentage = 0;
                 if (formData.payment_method_id && formData.payment_method_id !== 'none') {
-                  const stationMethod = stationPaymentMethods.find(pm => {
-                    const methodId = String((pm as any).id || (pm as any).ID_POSTO || '');
-                    return pm.CARTAO === formData.payment_method_id || methodId === String(formData.payment_method_id);
-                  });
-                  
-                  if (stationMethod) {
-                    feePercentage = stationMethod.TAXA || 0;
-                  } else {
-                    const defaultMethod = paymentMethods.find(pm => pm.CARTAO === formData.payment_method_id);
-                    feePercentage = defaultMethod?.TAXA || 0;
-                  }
+                  const method = getPaymentMethodById(formData.payment_method_id);
+                  feePercentage = method?.TAXA || 0;
                 }
                 
                 return (
@@ -4393,9 +4480,9 @@ export default function PriceRequest() {
 
         </div>
       </div>
-        )}
+        </TabsContent>
 
-        {activeTab === 'my-requests' && (
+        <TabsContent value="my-requests" className="mt-0">
             <div className="space-y-6">
               {loadingRequests && (
                 <div className="flex items-center justify-center py-12">
@@ -4656,7 +4743,316 @@ export default function PriceRequest() {
                 </>
               )}
             </div>
-        )}
+        </TabsContent>
+
+        {/* ABA TESTE */}
+        <TabsContent value="teste" className="mt-0 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card 
+              className={`cursor-pointer transition-all hover:border-primary ${testeRequestMode === 'single_station_multi_client' ? 'border-primary bg-primary/5 ring-1 ring-primary' : ''}`}
+              onClick={() => {
+                setTesteRequestMode('single_station_multi_client');
+                setTesteFixedEntityId("");
+                setTesteItems([]);
+              }}
+            >
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className="bg-blue-100 p-3 rounded-full dark:bg-blue-900">
+                  <MapPin className="h-6 w-6 text-blue-600 dark:text-blue-300" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Um Posto, Vários Clientes</h3>
+                  <p className="text-sm text-slate-500">Fixo: Posto de Saída | Variável: Clientes</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className={`cursor-pointer transition-all hover:border-primary ${testeRequestMode === 'single_client_multi_station' ? 'border-primary bg-primary/5 ring-1 ring-primary' : ''}`}
+              onClick={() => {
+                setTesteRequestMode('single_client_multi_station');
+                setTesteFixedEntityId("");
+                setTesteItems([]);
+              }}
+            >
+              <CardContent className="p-4 flex items-center gap-4">
+                <div className="bg-green-100 p-3 rounded-full dark:bg-green-900">
+                  <User className="h-6 w-6 text-green-600 dark:text-green-300" />
+                </div>
+                <div>
+                  <h3 className="font-semibold">Um Cliente, Vários Postos</h3>
+                  <p className="text-sm text-slate-500">Fixo: Cliente | Variável: Postos de Abastecimento</p>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Esquerda: Formulários */}
+            <div className="lg:col-span-4 space-y-4">
+              <Card className="border-t-4 border-t-primary">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-medium uppercase tracking-wide text-muted-foreground">
+                    1. Definição do Fixo
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                   <Label className="mb-2 block font-semibold">
+                      {testeRequestMode === 'single_station_multi_client' ? "Selecione o Posto de Saída" : "Selecione o Cliente"}
+                   </Label>
+                   {testeRequestMode === 'single_station_multi_client' ? (
+                     <SisEmpresaCombobox 
+                       value={testeFixedEntityId} 
+                       onChange={(val) => setTesteFixedEntityId(val)} 
+                     />
+                   ) : (
+                     <ClientCombobox 
+                       value={testeFixedEntityId} 
+                       onChange={(val) => setTesteFixedEntityId(val)} 
+                     />
+                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base font-medium uppercase tracking-wide text-muted-foreground">
+                    2. Adicionar Item Variável
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label className="mb-1 block">
+                      {testeRequestMode === 'single_station_multi_client' ? "Cliente Destino" : "Posto de Abastecimento"}
+                    </Label>
+                    {testeRequestMode === 'single_station_multi_client' ? (
+                      <ClientCombobox 
+                        value={testeTempTargetId}
+                        onChange={(val) => {
+                          setTesteTempTargetId(val);
+                        }}
+                      />
+                    ) : (
+                      <SisEmpresaCombobox 
+                        value={testeTempTargetId}
+                        onChange={(val) => {
+                          setTesteTempTargetId(val);
+                        }}
+                      />
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Produto</Label>
+                      <Select value={testeTempProduct} onValueChange={setTesteTempProduct}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Selecione" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="diesel_s10">Diesel S10</SelectItem>
+                          <SelectItem value="diesel_s500">Diesel S500</SelectItem>
+                          <SelectItem value="gasolina">Gasolina</SelectItem>
+                          <SelectItem value="etanol">Etanol</SelectItem>
+                          <SelectItem value="arla_32">Arla 32</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label>Volume (L)</Label>
+                      <Input 
+                        type="number" 
+                        placeholder="0"
+                        value={testeTempVolume}
+                        onChange={(e) => setTesteTempVolume(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Margem (R$)</Label>
+                      <Input 
+                        placeholder="0,00"
+                        value={testeTempMargin}
+                        onChange={(e) => setTesteTempMargin(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-primary font-bold">Preço Final</Label>
+                      <Input 
+                        placeholder="0,00"
+                        className="font-bold border-primary/50"
+                        value={testeTempPrice}
+                        onChange={(e) => setTesteTempPrice(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                     <Label>Condição de Pagamento</Label>
+                     <Select value={testeTempPayment} onValueChange={setTesteTempPayment}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="a_vista">À Vista</SelectItem>
+                          <SelectItem value="prazo_7">Prazo 7 Dias</SelectItem>
+                          <SelectItem value="prazo_15">Prazo 15 Dias</SelectItem>
+                          <SelectItem value="prazo_30">Prazo 30 Dias</SelectItem>
+                        </SelectContent>
+                     </Select>
+                  </div>
+
+                  <Button 
+                    onClick={() => {
+                      if (!testeTempTargetId || !testeTempProduct || !testeTempVolume || !testeTempPrice) {
+                        toast.error("Preencha todos os campos obrigatórios.");
+                        return;
+                      }
+                      const newItem = {
+                        id: generateUUID(),
+                        targetId: testeTempTargetId,
+                        targetName: testeTempTargetName || (testeRequestMode === 'single_station_multi_client' ? "Cliente Selecionado" : "Posto Selecionado"),
+                        product: testeTempProduct,
+                        volume: testeTempVolume,
+                        costPrice: "0,00",
+                        margin: testeTempMargin,
+                        suggestedPrice: testeTempPrice,
+                        paymentMethod: testeTempPayment,
+                        observation: ""
+                      };
+                      setTesteItems([...testeItems, newItem]);
+                      setTesteTempTargetId("");
+                      setTesteTempTargetName("");
+                      setTesteTempProduct("");
+                      setTesteTempVolume("");
+                      setTesteTempPrice("");
+                      setTesteTempMargin("");
+                    }} 
+                    className="w-full mt-2" 
+                    disabled={!testeFixedEntityId}
+                  >
+                    <Plus className="mr-2 h-4 w-4" /> Incluir na Proposta
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Direita: Grid e Ações */}
+            <div className="lg:col-span-8 flex flex-col gap-4">
+              <Card className="flex-1 flex flex-col min-h-[500px] border-l-4 border-l-slate-200 dark:border-l-slate-700">
+                <CardHeader className="pb-2 border-b">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle>Rascunho da Proposta</CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                         {testeItems.length} itens adicionados
+                      </p>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setTesteIsPreviewOpen(true)}
+                      disabled={testeItems.length === 0}
+                    >
+                      <Eye className="mr-2 h-4 w-4" /> Pré-visualizar Documento
+                    </Button>
+                  </div>
+                </CardHeader>
+                
+                <CardContent className="flex-1 p-0">
+                  <ScrollArea className="h-[400px]">
+                     <Table>
+                       <TableHeader>
+                         <TableRow>
+                           <TableHead className="w-[30%] pl-4">{testeRequestMode === 'single_station_multi_client' ? 'Cliente Destino' : 'Posto Origem'}</TableHead>
+                           <TableHead>Produto</TableHead>
+                           <TableHead className="text-right">Vol.</TableHead>
+                           <TableHead className="text-right">Margem</TableHead>
+                           <TableHead className="text-right">Preço</TableHead>
+                           <TableHead className="w-[50px]"></TableHead>
+                         </TableRow>
+                       </TableHeader>
+                       <TableBody>
+                         {testeItems.length === 0 ? (
+                           <TableRow>
+                             <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                               Nenhum item adicionado. Use o formulário à esquerda.
+                             </TableCell>
+                           </TableRow>
+                         ) : (
+                           testeItems.map((item) => (
+                             <TableRow key={item.id}>
+                               <TableCell className="font-medium pl-4">
+                                 <div className="flex flex-col">
+                                   <span>{item.targetName}</span>
+                                   <span className="text-[10px] text-muted-foreground uppercase">{item.paymentMethod.replace('_', ' ')}</span>
+                                 </div>
+                               </TableCell>
+                               <TableCell>
+                                 <Badge variant="outline" className="capitalize bg-slate-50 dark:bg-slate-900">
+                                   {item.product.replace('_', ' ')}
+                                 </Badge>
+                               </TableCell>
+                               <TableCell className="text-right">{item.volume} L</TableCell>
+                               <TableCell className="text-right text-green-600 font-medium text-xs">
+                                 {item.margin ? `+ R$ ${item.margin}` : '-'}
+                               </TableCell>
+                               <TableCell className="text-right font-bold">
+                                 R$ {item.suggestedPrice}
+                               </TableCell>
+                               <TableCell>
+                                 <Button 
+                                   variant="ghost" 
+                                   size="icon" 
+                                   className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50" 
+                                   onClick={() => setTesteItems(testeItems.filter(i => i.id !== item.id))}
+                                 >
+                                   <Trash2 className="h-4 w-4" />
+                                 </Button>
+                               </TableCell>
+                             </TableRow>
+                           ))
+                         )}
+                       </TableBody>
+                     </Table>
+                  </ScrollArea>
+                </CardContent>
+
+                <CardFooter className="bg-slate-50 dark:bg-slate-900 border-t p-6 flex flex-col gap-4">
+                   <div className="w-full flex justify-between items-center text-sm">
+                      <div className="text-muted-foreground">
+                        Total Volume: <span className="font-bold text-slate-900 dark:text-white">
+                          {testeItems.reduce((sum, item) => sum + (parseFloat(item.volume) || 0), 0).toLocaleString('pt-BR')} L
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-muted-foreground block text-xs">Valor Total Estimado</span>
+                        <span className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {formatBrazilianCurrency(
+                            testeItems.reduce((sum, item) => {
+                              const vol = parseFloat(item.volume) || 0;
+                              const price = parseBrazilianDecimal(item.suggestedPrice) || 0;
+                              return sum + (vol * price);
+                            }, 0)
+                          )}
+                        </span>
+                      </div>
+                   </div>
+
+                   <Button 
+                     size="lg" 
+                     className="w-full" 
+                     onClick={() => setTesteIsPreviewOpen(true)}
+                     disabled={loading || testeItems.length === 0}
+                   >
+                     Avançar para Revisão
+                   </Button>
+                </CardFooter>
+              </Card>
+            </div>
+          </div>
+        </TabsContent>
+        </Tabs>
       </div>
 
       {/* Image Viewer Modal */}
@@ -4695,6 +5091,139 @@ export default function PriceRequest() {
           loadMyRequests(); // Recarregar lista após edição
         }}
       />
+
+      {/* MODAL DE PREVIEW DA PROPOSTA - ABA TESTE */}
+      <Dialog open={testeIsPreviewOpen} onOpenChange={setTesteIsPreviewOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Revisão da Proposta Comercial</DialogTitle>
+            <DialogDescription>Confira os dados antes de enviar para aprovação.</DialogDescription>
+          </DialogHeader>
+
+          <div className="p-6 border rounded-lg bg-white text-black space-y-6" id="proposal-preview">
+             {/* Cabeçalho do Documento */}
+             <div className="flex justify-between border-b pb-4">
+               <div>
+                 <h2 className="font-bold text-xl text-primary">Proposta Comercial</h2>
+                 <p className="text-sm text-gray-500">Data de Emissão: {new Date().toLocaleDateString()}</p>
+                 <p className="text-sm text-gray-500">Solicitante: {user?.email}</p>
+               </div>
+               <div className="text-right">
+                  <div className="bg-slate-100 p-2 rounded">
+                    <p className="text-xs font-bold text-gray-500 uppercase">
+                      {testeRequestMode === 'single_station_multi_client' ? "Posto de Saída" : "Cliente"}
+                    </p>
+                    <p className="font-semibold text-lg">{testeFixedEntityName || testeFixedEntityId || "Não Identificado"}</p>
+                  </div>
+               </div>
+             </div>
+
+             {/* Tabela de Itens */}
+             <div>
+               <h3 className="font-semibold mb-2 text-sm uppercase text-gray-600">Itens da Proposta</h3>
+               <table className="w-full text-sm border-collapse">
+                 <thead>
+                   <tr className="border-b-2 border-gray-200 text-left">
+                     <th className="py-2">{testeRequestMode === 'single_station_multi_client' ? "Cliente" : "Posto"}</th>
+                     <th className="py-2">Produto</th>
+                     <th className="py-2">Pagamento</th>
+                     <th className="py-2 text-right">Vol (L)</th>
+                     <th className="py-2 text-right">Preço Unit.</th>
+                     <th className="py-2 text-right">Total</th>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {testeItems.map((item, idx) => (
+                     <tr key={idx} className="border-b border-gray-100">
+                       <td className="py-2">{item.targetName}</td>
+                       <td className="py-2 capitalize">{item.product.replace('_', ' ')}</td>
+                       <td className="py-2 capitalize">{item.paymentMethod.replace('_', ' ')}</td>
+                       <td className="py-2 text-right">{item.volume}</td>
+                       <td className="py-2 text-right">R$ {item.suggestedPrice}</td>
+                       <td className="py-2 text-right font-medium">
+                         {formatBrazilianCurrency((parseFloat(item.volume) || 0) * (parseBrazilianDecimal(item.suggestedPrice) || 0))}
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
+             </div>
+
+             {/* Totais */}
+             <div className="flex justify-end pt-4 border-t">
+               <div className="w-1/2 space-y-2">
+                 <div className="flex justify-between text-sm">
+                   <span>Volume Total:</span>
+                   <span>{testeItems.reduce((sum, item) => sum + (parseFloat(item.volume) || 0), 0).toLocaleString('pt-BR')} Litros</span>
+                 </div>
+                 <div className="flex justify-between font-bold text-lg text-primary">
+                   <span>Valor Total Proposta:</span>
+                   <span>{formatBrazilianCurrency(
+                     testeItems.reduce((sum, item) => {
+                       const vol = parseFloat(item.volume) || 0;
+                       const price = parseBrazilianDecimal(item.suggestedPrice) || 0;
+                       return sum + (vol * price);
+                     }, 0)
+                   )}</span>
+                 </div>
+               </div>
+             </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setTesteIsPreviewOpen(false)}>
+              Voltar e Editar
+            </Button>
+            <Button 
+              onClick={async () => {
+                setLoading(true);
+                try {
+                  const batchId = generateUUID();
+                  const batchName = `Lote ${new Date().toLocaleString('pt-BR')} - ${testeItems.length} itens`;
+
+                  const payload = testeItems.map(item => {
+                    const stationId = testeRequestMode === 'single_station_multi_client' ? testeFixedEntityId : item.targetId;
+                    const clientId = testeRequestMode === 'single_station_multi_client' ? item.targetId : testeFixedEntityId;
+
+                    return {
+                      batch_id: batchId,
+                      batch_name: batchName,
+                      station_id: stationId,
+                      client_id: clientId,
+                      product: mapProductToEnum(item.product),
+                      volume_projected: parseFloat(item.volume),
+                      suggested_price: parseBrazilianDecimal(item.suggestedPrice),
+                      payment_method: item.paymentMethod,
+                      margin_value: parseBrazilianDecimal(item.margin),
+                      status: 'pending',
+                      requested_by: user?.id,
+                      observation: item.observation
+                    };
+                  });
+
+                  const { error } = await supabase.from('price_suggestions').insert(payload);
+                  if (error) throw error;
+
+                  toast.success("Proposta enviada com sucesso!");
+                  setTesteItems([]);
+                  setTesteFixedEntityId("");
+                  setTesteIsPreviewOpen(false);
+                  setActiveTab("my-requests");
+                  loadMyRequests();
+                } catch (error) {
+                  console.error(error);
+                  toast.error("Erro ao enviar proposta.");
+                } finally {
+                  setLoading(false);
+                }
+              }} 
+              className="bg-green-600 hover:bg-green-700"
+            >
+              <Send className="mr-2 h-4 w-4" /> Confirmar Envio
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
